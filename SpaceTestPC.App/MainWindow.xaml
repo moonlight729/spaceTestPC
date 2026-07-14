@@ -1,0 +1,294 @@
+<Window x:Class="SpaceTestPC.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="检测工作台"
+        Width="1280"
+        Height="820"
+        MinWidth="1100"
+        MinHeight="720"
+        Background="#F5F9FF"
+        Loaded="Window_Loaded">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#1F2937" />
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Margin" Value="0,0,12,0" />
+            <Setter Property="Padding" Value="14,10" />
+            <Setter Property="Background" Value="#2563EB" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+        <Style x:Key="CardBorderStyle" TargetType="Border">
+            <Setter Property="CornerRadius" Value="18" />
+            <Setter Property="Padding" Value="20" />
+            <Setter Property="Background" Value="White" />
+            <Setter Property="BorderBrush" Value="#D9E8F8" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Margin" Value="0,0,0,16" />
+        </Style>
+    </Window.Resources>
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" CornerRadius="20" Background="#E8F3FF" Padding="24" Margin="0,0,0,20">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock FontSize="26" FontWeight="Bold" Text="自动检测工作台" />
+                    <TextBlock Margin="0,8,0,0" Foreground="#64748B" Text="扫描产品 SN 后，系统将自动完成全部顺序检测。" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                    <TextBlock Text="当前 SN" Foreground="#64748B" />
+                    <TextBlock FontSize="18" FontWeight="SemiBold" Text="{Binding CurrentSn}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}" Padding="18" Margin="0,0,0,20">
+            <StackPanel>
+                <TextBlock FontSize="20" FontWeight="SemiBold" Text="检测项总览" />
+                <TextBlock Margin="0,8,0,10" Foreground="#64748B" Text="灰色为待测，绿色为通过，红色为失败。" />
+                <UniformGrid Margin="0,0,0,16" Columns="5" Rows="1">
+                    <TextBlock HorizontalAlignment="Center" Foreground="#2563EB" Text="01  扫描 SN" />
+                    <TextBlock HorizontalAlignment="Center" Foreground="#2563EB" Text="02  读取板状态" />
+                    <TextBlock HorizontalAlignment="Center" Foreground="#2563EB" Text="03  进入测试模式" />
+                    <TextBlock HorizontalAlignment="Center" Foreground="#2563EB" Text="04  通信检测" />
+                    <TextBlock HorizontalAlignment="Center" Foreground="#2563EB" Text="05  完成并保存" />
+                </UniformGrid>
+                <ItemsControl ItemsSource="{Binding TestItems}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <UniformGrid Columns="15" Rows="1" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Canvas Width="72" Height="82" Margin="0,0,0,6">
+                                <Path Data="M 49,22 C 57,10 66,10 72,18"
+                                      Stroke="{Binding ConnectorBrush}"
+                                      StrokeThickness="2"
+                                      Visibility="{Binding ShowsConnector, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                <Path Data="M 66,13 L 72,18 L 65,21"
+                                      Stroke="{Binding ConnectorBrush}"
+                                      StrokeThickness="2"
+                                      Visibility="{Binding ShowsConnector, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                <Ellipse Canvas.Left="25"
+                                         Width="22"
+                                         Height="22"
+                                         Fill="{Binding StateBrush}"
+                                         Stroke="#C8D9EC"
+                                         StrokeThickness="1.2" />
+                                <TextBlock Canvas.Top="31"
+                                           Width="72"
+                                           TextAlignment="Center"
+                                           FontWeight="SemiBold"
+                                           Text="{Binding Name}" />
+                                <TextBlock Canvas.Top="53"
+                                           Width="72"
+                                           TextAlignment="Center"
+                                           Foreground="#64748B"
+                                           Text="{Binding StateLabel}" />
+                            </Canvas>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </Border>
+
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="0" />
+                <ColumnDefinition Width="0" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0">
+                <Border Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock FontSize="24"
+                                   FontWeight="SemiBold"
+                                   Text="{Binding SelectedTestResult.DisplayName}" />
+                        <TextBlock Margin="0,0,0,12"
+                                   FontSize="16"
+                                   FontWeight="SemiBold"
+                                   Foreground="#2563EB"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding OperatorInstruction}" />
+                        <Button Width="160"
+                                Margin="0,0,0,12"
+                                HorizontalAlignment="Left"
+                                Command="{Binding StartMockSessionCommand}"
+                                Content="开始 Mock 测试" />
+                        <CheckBox Visibility="Collapsed"
+                                  Margin="0,0,0,12"
+                                  Foreground="White"
+                                  IsChecked="{Binding IsAutoStartEnabled}"
+                                  Content="扫码后自动启动阶段 1" />
+                        <TextBox x:Name="ScannerInputTextBox"
+                                 Height="1"
+                                 Width="1"
+                                 Margin="0"
+                                 Padding="12,8"
+                                 Background="#F8FBFF"
+                                 Foreground="#1F2937"
+                                 BorderBrush="#B8D6F2"
+                                 Opacity="0.01"
+                                 KeyDown="ScannerInputTextBox_OnKeyDown"
+                                 Text="{Binding ScannerInput, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Visibility="Collapsed" Width="120" Command="{Binding ScanCommand}" Content="确认扫码" />
+                        <Border Margin="0,8,0,0"
+                                Padding="14"
+                                Background="#F8FBFF"
+                                BorderBrush="#D9E8F8"
+                                BorderThickness="1"
+                                CornerRadius="12">
+                            <StackPanel>
+                                <TextBlock FontSize="18"
+                                           FontWeight="SemiBold"
+                                           Foreground="{Binding SelectedTestResult.StateBrush}"
+                                           Text="{Binding SelectedTestResult.StateLabel}" />
+                                <TextBlock Margin="0,12,0,0"
+                                           FontSize="16"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding SelectedTestResult.Message}" />
+                                <TextBlock Foreground="#64748B"
+                                           Margin="0,12,0,0"
+                                           FontFamily="Consolas"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding SelectedTestResult.DataText}" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <Border Visibility="Collapsed" Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock FontSize="20" FontWeight="SemiBold" Text="执行控制" />
+                        <TextBlock Margin="0,12,0,6" Foreground="#9CA3AF" Text="PCBA 通信模式" />
+                        <ComboBox Width="180"
+                                  Margin="0,0,0,12"
+                                  Background="#0F172A"
+                                  Foreground="White"
+                                  BorderBrush="#334155"
+                                  ItemsSource="{Binding AvailableConnectionModes}"
+                                  SelectedItem="{Binding SelectedConnectionMode}" />
+                        <TextBlock Margin="0,12,0,8" Text="{Binding SessionId, StringFormat=SessionId: {0}}" />
+                        <WrapPanel Margin="0,8,0,0">
+                            <Button Width="150" Command="{Binding ReadBoardStateCommand}" Content="读取板状态" />
+                            <Button Width="150" Command="{Binding StartPhaseOneCommand}" Content="开始阶段 1" />
+                        </WrapPanel>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Margin="20,0,0,0">
+                <Border Visibility="Collapsed" Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock FontSize="20" FontWeight="SemiBold" Text="板状态" />
+                        <TextBlock Margin="0,12,0,6" Text="{Binding BoardId, StringFormat=BoardId: {0}}" />
+                        <TextBlock Margin="0,0,0,6" Text="{Binding BoardState, StringFormat=CurrentState: {0}}" />
+                        <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" Text="{Binding LastResult}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Visibility="Collapsed" Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock FontSize="20" FontWeight="SemiBold" Text="测试结果详情" />
+                        <TextBlock Margin="0,12,0,6" Text="{Binding SelectedTestResult.DisplayName, StringFormat=测试项: {0}}" />
+                        <TextBlock Margin="0,0,0,6" Text="{Binding SelectedTestResult.StateLabel, StringFormat=状态: {0}}" />
+                        <TextBlock Margin="0,0,0,6" Text="{Binding SelectedTestResult.ResultCode, StringFormat=结果码: {0}}" />
+                        <TextBlock Margin="0,0,0,6" Text="{Binding SelectedTestResult.Message, StringFormat=消息: {0}}" />
+                        <TextBlock Margin="0,0,0,6" Text="{Binding SelectedTestResult.Duration, StringFormat=耗时: {0}}" />
+                        <TextBlock Margin="0,8,0,4" FontWeight="SemiBold" Text="底层数据" />
+                        <TextBox Height="120"
+                                 Padding="10"
+                                 Background="#F8FBFF"
+                                 Foreground="#1F2937"
+                                 BorderBrush="#D9E8F8"
+                                 FontFamily="Consolas"
+                                 IsReadOnly="True"
+                                 Text="{Binding SelectedTestResult.DataText, Mode=OneWay}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Visibility="Collapsed" Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock FontSize="20" FontWeight="SemiBold" Text="调试输出" />
+                        <TextBox Margin="0,12,0,0"
+                                 Height="170"
+                                 Padding="12"
+                                 Background="#0F172A"
+                                 Foreground="#93C5FD"
+                                 BorderBrush="#334155"
+                                 FontFamily="Consolas"
+                                 IsReadOnly="True"
+                                 Text="{Binding DebugOutput, Mode=OneWay}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Visibility="Collapsed" Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock FontSize="20" FontWeight="SemiBold" Text="最近会话" />
+                        <ListBox Margin="0,12,0,0"
+                                 Height="120"
+                                 Background="#0F172A"
+                                 BorderThickness="0"
+                                 Foreground="White"
+                                 ItemsSource="{Binding RecentSessions}" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <Border Grid.Column="2" Visibility="Collapsed" Style="{StaticResource CardBorderStyle}" Margin="20,0,0,0">
+                <StackPanel>
+                    <TextBlock FontSize="20" FontWeight="SemiBold" Text="运行日志" />
+                    <TextBlock Margin="0,8,0,0" Foreground="#9CA3AF" Text="输出当前流程日志、状态变化和调试信息。" />
+                    <ListBox Margin="0,12,0,0"
+                             Background="#0F172A"
+                             BorderThickness="0"
+                             Foreground="White"
+                             ItemsSource="{Binding Logs}" />
+                </StackPanel>
+            </Border>
+        </Grid>
+        <Border Grid.Row="3"
+                CornerRadius="12"
+                Padding="12,8"
+                Background="White"
+                BorderBrush="#D9E8F8"
+                BorderThickness="1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock VerticalAlignment="Top"
+                           Margin="0,4,18,0"
+                           FontWeight="SemiBold"
+                           Text="最近日志" />
+                <ItemsControl Grid.Column="1" ItemsSource="{Binding Logs}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Margin="0,2"
+                                       Foreground="#64748B"
+                                       Text="{Binding}" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

@@ -1,0 +1,12 @@
+bin/
+obj/
+artifacts/
+data/
+*.user
+*.suo
+*.cache
+*.log
+*.tmp
+SpaceTestPC.App/bin/
+SpaceTestPC.App/obj/
+SpaceTestPC.App/**/data/

@@ -1,0 +1,33 @@
+using SpaceTestPC.App.Models;
+
+namespace SpaceTestPC.App.Services;
+
+public interface IPcbaCommandClient
+{
+    IAsyncEnumerable<TestSessionEvent> RunSessionAsync(
+        string sessionId,
+        string sn,
+        IReadOnlyList<TestPlanItem> testPlan,
+        CancellationToken cancellationToken = default);
+
+    Task<BoardState> GetBoardStateAsync(string sessionId, string sn, CancellationToken cancellationToken = default);
+    Task<CommandResponse> EnterTestModeAsync(string sessionId, string sn, string boardId, CancellationToken cancellationToken = default);
+    Task<BluetoothScanResult> ScanBluetoothTargetAsync(
+        string sessionId,
+        string sn,
+        string boardId,
+        BluetoothScanRequest request,
+        CancellationToken cancellationToken = default);
+    Task<NetworkPingResult> ConnectWifiAndPingAsync(
+        string sessionId,
+        string sn,
+        string boardId,
+        WifiPingRequest request,
+        CancellationToken cancellationToken = default);
+    Task<NetworkPingResult> ConnectEthernetAndPingAsync(
+        string sessionId,
+        string sn,
+        string boardId,
+        EthernetPingRequest request,
+        CancellationToken cancellationToken = default);
+}
