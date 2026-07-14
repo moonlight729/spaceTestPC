@@ -14,6 +14,9 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
     private readonly string? _deviceSerial;
     private readonly int _localPort;
     private readonly int _remotePort;
+    private readonly SemaphoreSlim _sessionWriteGate = new(1, 1);
+    private NetworkStream? _activeSessionStream;
+    private string? _activeSessionId;
 
     public AdbPcbaCommandClient(string adbPath = "adb", int localPort = 19001, int remotePort = 19001, string? deviceSerial = null)
     {
@@ -49,23 +52,100 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         await stream.WriteAsync(requestBytes, cancellationToken);
         await stream.FlushAsync(cancellationToken);
 
-        while (!cancellationToken.IsCancellationRequested)
+        _activeSessionStream = stream;
+        _activeSessionId = sessionId;
+
+        try
         {
-            var line = await reader.ReadLineAsync(cancellationToken);
-            if (string.IsNullOrWhiteSpace(line))
+            while (!cancellationToken.IsCancellationRequested)
             {
-                throw new InvalidOperationException("PCBA closed the test-session stream before completion.");
-            }
+                var line = await reader.ReadLineAsync(cancellationToken);
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    throw new InvalidOperationException("PCBA closed the test-session stream before completion.");
+                }
 
-            var testEvent = JsonSerializer.Deserialize<TestSessionEvent>(line, JsonOptions)
-                ?? throw new InvalidOperationException("Failed to parse PCBA test-session event.");
-            yield return testEvent;
+                var testEvent = JsonSerializer.Deserialize<TestSessionEvent>(line, JsonOptions)
+                    ?? throw new InvalidOperationException("Failed to parse PCBA test-session event.");
+                yield return testEvent;
 
-            if (testEvent.Event == "session.completed")
-            {
-                yield break;
+                if (testEvent.Event == "session.completed")
+                {
+                    yield break;
+                }
             }
         }
+        finally
+        {
+            if (ReferenceEquals(_activeSessionStream, stream))
+            {
+                _activeSessionStream = null;
+                _activeSessionId = null;
+            }
+        }
+    }
+
+    public async Task SubmitOperatorDecisionAsync(
+        string sessionId,
+        string testId,
+        bool passed,
+        CancellationToken cancellationToken = default)
+    {
+        if (_activeSessionStream is null || !string.Equals(_activeSessionId, sessionId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("No active PCBA test session is available for the operator decision.");
+        }
+
+        var decision = new
+        {
+            @event = "operator.decision",
+            sessionId,
+            testId,
+            passed,
+            timestamp = DateTimeOffset.Now.ToString("O")
+        };
+
+        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(decision, JsonOptions) + "\n");
+        await _sessionWriteGate.WaitAsync(cancellationToken);
+        try
+        {
+            await _activeSessionStream.WriteAsync(bytes, cancellationToken);
+            await _activeSessionStream.FlushAsync(cancellationToken);
+        }
+        finally
+        {
+            _sessionWriteGate.Release();
+        }
+    }
+
+    public Task SubmitTestDecisionAsync(string sessionId, string testId, bool passed, string reason, CancellationToken cancellationToken = default) =>
+        SubmitSessionDecisionAsync("test.decision", "host_auto", sessionId, testId, passed, reason, cancellationToken);
+
+    public Task SubmitTestControlAsync(string sessionId, string testId, string level, CancellationToken cancellationToken = default) =>
+        SubmitSessionControlAsync(sessionId, testId, level, cancellationToken);
+
+    private async Task SubmitSessionControlAsync(string sessionId, string testId, string level, CancellationToken cancellationToken)
+    {
+        if (_activeSessionStream is null || !string.Equals(_activeSessionId, sessionId, StringComparison.Ordinal)) throw new InvalidOperationException("No active PCBA test session is available for test control.");
+        var command = new { @event = "test.control", sessionId, testId, command = "set_output_level", level, timestamp = DateTimeOffset.Now.ToString("O") };
+        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(command, JsonOptions) + "\n");
+        await _sessionWriteGate.WaitAsync(cancellationToken);
+        try { await _activeSessionStream.WriteAsync(bytes, cancellationToken); await _activeSessionStream.FlushAsync(cancellationToken); }
+        finally { _sessionWriteGate.Release(); }
+    }
+
+    private async Task SubmitSessionDecisionAsync(string eventName, string source, string sessionId, string testId, bool passed, string reason, CancellationToken cancellationToken)
+    {
+        if (_activeSessionStream is null || !string.Equals(_activeSessionId, sessionId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("No active PCBA test session is available for the test decision.");
+        }
+
+        var decision = new { @event = eventName, source, sessionId, testId, passed, reason, timestamp = DateTimeOffset.Now.ToString("O") };
+        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(decision, JsonOptions) + "\n");
+        await _sessionWriteGate.WaitAsync(cancellationToken);
+        try { await _activeSessionStream.WriteAsync(bytes, cancellationToken); await _activeSessionStream.FlushAsync(cancellationToken); }
+        finally { _sessionWriteGate.Release(); }
     }
 
     public async Task<BoardState> GetBoardStateAsync(string sessionId, string sn, CancellationToken cancellationToken = default)

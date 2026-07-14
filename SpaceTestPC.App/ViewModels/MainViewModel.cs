@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Reflection;
+using System.Text.Json;
 using SpaceTestPC.App.Models;
 using SpaceTestPC.App.Services;
 
@@ -8,24 +9,18 @@ namespace SpaceTestPC.App.ViewModels;
 public sealed class MainViewModel : ObservableObject
 {
     private static bool UseUnifiedSessionProtocol => true;
-    private static readonly IReadOnlyList<TestPlanItem> TestPlan =
+    private static readonly IReadOnlyList<TestPlanItem> AllTestPlan =
     [
-        new() { Id = "board_state" }, new() { Id = "test_mode" }, new() { Id = "bluetooth" },
-        new() { Id = "wifi" }, new() { Id = "ethernet" }, new() { Id = "tf" }, new() { Id = "lcd" },
-        new() { Id = "fingerprint" }, new() { Id = "keys" }, new() { Id = "hdmi" }, new() { Id = "typec" },
-        new() { Id = "battery" }, new() { Id = "fan" }, new() { Id = "otg" }, new() { Id = "camera" }
+        new() { Id = "board_state" }, new() { Id = "hdmi" }, new() { Id = "keys" }, new() { Id = "lcd" },
+        new() { Id = "wifi" }, new() { Id = "bluetooth" }, new() { Id = "fingerprint" },
+        new() { Id = "typec_fast_charge" }, new() { Id = "typec_camera" }, new() { Id = "tf" },
+        new() { Id = "indicator_led" }, new() { Id = "fan" }, new() { Id = "otg" },
+        new() { Id = "battery_management" }
     ];
 
-    private static readonly IReadOnlyDictionary<string, int> TestItemIndexes = new Dictionary<string, int>
-    {
-        ["board_state"] = 0, ["test_mode"] = 0, ["bluetooth"] = 1, ["wifi"] = 2, ["ethernet"] = 3,
-        ["tf"] = 4, ["lcd"] = 5, ["fingerprint"] = 6, ["keys"] = 7, ["hdmi"] = 8,
-        ["typec"] = 9, ["battery"] = 10, ["fan"] = 11, ["otg"] = 12, ["camera"] = 13
-    };
     // Change this value during deployment; operators do not choose the transport mode.
     private const PcbaConnectionMode ConnectionMode = PcbaConnectionMode.Mock;
     private const string BoardStateItemName = "板状态";
-    private const string TestModeItemName = "测试模式";
     private const string BluetoothItemName = "蓝牙";
     private const string WifiItemName = "WiFi";
     private const string EthernetItemName = "网线";
@@ -37,6 +32,14 @@ public sealed class MainViewModel : ObservableObject
     private readonly IStatusMonitorService _batterySimulatorService;
     private readonly IDatabaseRepository _databaseRepository;
     private readonly ILogService _logService;
+    private readonly ManualTestInteractionService? _manualTestInteractionService;
+    private readonly Jk5506Service? _jk5506Service;
+    private readonly JxTvmService? _jxTvmService;
+    private readonly BluetoothBroadcasterService? _bluetoothBroadcasterService;
+    private readonly Dictionary<string, bool> _voltagePhaseResults = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _voltageControlCommands = new(StringComparer.OrdinalIgnoreCase);
+    private readonly IReadOnlyList<TestPlanItem> _testPlan;
+    private readonly IReadOnlyDictionary<string, int> _testItemIndexes;
     private readonly BluetoothScanRequest _bluetoothRequest = new()
     {
         TargetName = "NODE_A_01",
@@ -71,6 +74,9 @@ public sealed class MainViewModel : ObservableObject
     private string _operatorInstruction = "请扫描产品 SN，系统将自动按顺序执行检测。";
     private string _debugOutput = "Waiting for scan...";
     private TestResultViewModel? _selectedTestResult;
+    private string? _manualDecisionTestId;
+    private IPcbaCommandClient? _activeSessionClient;
+    private readonly HashSet<string> _automaticDecisionTests = new(StringComparer.OrdinalIgnoreCase);
 
     public MainViewModel(
         IScannerService scannerService,
@@ -78,7 +84,12 @@ public sealed class MainViewModel : ObservableObject
         IStatusMonitorService voltageMonitorService,
         IStatusMonitorService batterySimulatorService,
         IDatabaseRepository databaseRepository,
-        ILogService logService)
+        ILogService logService,
+        AppConfiguration? configuration = null,
+        ManualTestInteractionService? manualTestInteractionService = null,
+        Jk5506Service? jk5506Service = null,
+        JxTvmService? jxTvmService = null,
+        BluetoothBroadcasterService? bluetoothBroadcasterService = null)
     {
         _scannerService = scannerService;
         _pcbaCommandClientFactory = pcbaCommandClientFactory;
@@ -86,19 +97,35 @@ public sealed class MainViewModel : ObservableObject
         _batterySimulatorService = batterySimulatorService;
         _databaseRepository = databaseRepository;
         _logService = logService;
+        _manualTestInteractionService = manualTestInteractionService;
+        _jk5506Service = jk5506Service;
+        _jxTvmService = jxTvmService;
+        _bluetoothBroadcasterService = bluetoothBroadcasterService;
+        var appConfiguration = configuration ?? new AppConfiguration();
+        _testPlan = BuildActiveTestPlan(appConfiguration);
+        _testItemIndexes = _testPlan
+            .Select((item, index) => new { item.Id, index })
+            .ToDictionary(item => item.Id, item => item.index);
 
         ScanCommand = new RelayCommand(HandleScan, () => !string.IsNullOrWhiteSpace(ScannerInput));
         StartMockSessionCommand = new RelayCommand(StartMockSession);
+        ConfirmManualPassCommand = new RelayCommand(() => SubmitManualDecision(true), () => IsManualDecisionVisible);
+        ConfirmManualFailCommand = new RelayCommand(() => SubmitManualDecision(false), () => IsManualDecisionVisible);
         ReadBoardStateCommand = new AsyncRelayCommand(ReadBoardStateAsync, () => !string.IsNullOrWhiteSpace(CurrentSn));
         StartPhaseOneCommand = new AsyncRelayCommand(StartPhaseOneAsync, () => !string.IsNullOrWhiteSpace(CurrentSn));
 
         Logs = new ObservableCollection<string>();
         RecentSessions = new ObservableCollection<string>();
-        TestItems = new ObservableCollection<TestItemViewModel>(BuildTestItems());
+        TestItems = new ObservableCollection<TestItemViewModel>(BuildTestItems(_testPlan));
         TestResults = new ObservableCollection<TestResultViewModel>(
-            TestPlan
+            _testPlan
                 .Select(item => new TestResultViewModel(item.Id, GetTestDisplayName(item.Id))));
+        DirectionalKeys = new ObservableCollection<DirectionalKeyViewModel>
+        {
+            new("up", "上"), new("down", "下"), new("left", "左"), new("right", "右")
+        };
         SelectedTestResult = TestResults.FirstOrDefault();
+        TestOverviewColumns = Math.Max(1, TestItems.Count);
 
         AppendLog("Stage 1 UI ready.");
         UpdateDebugOutput();
@@ -185,20 +212,53 @@ public sealed class MainViewModel : ObservableObject
 
     public string AppVersion { get; } = GetAppVersion();
     public string WindowTitle => $"检测工作台 {AppVersion}";
+    public int TestOverviewColumns { get; }
 
     public ObservableCollection<string> Logs { get; }
     public ObservableCollection<string> RecentSessions { get; }
     public ObservableCollection<TestItemViewModel> TestItems { get; }
     public ObservableCollection<TestResultViewModel> TestResults { get; }
+    public ObservableCollection<DirectionalKeyViewModel> DirectionalKeys { get; }
     public TestResultViewModel? SelectedTestResult
     {
         get => _selectedTestResult;
-        set => SetProperty(ref _selectedTestResult, value);
+        set
+        {
+            if (SetProperty(ref _selectedTestResult, value))
+            {
+                RaisePropertyChanged(nameof(IsManualDecisionVisible));
+                RaisePropertyChanged(nameof(ManualDecisionPrompt));
+                RaisePropertyChanged(nameof(IsKeyTestDetailVisible));
+                ConfirmManualPassCommand.NotifyCanExecuteChanged();
+                ConfirmManualFailCommand.NotifyCanExecuteChanged();
+            }
+        }
     }
     public RelayCommand ScanCommand { get; }
     public RelayCommand StartMockSessionCommand { get; }
+    public RelayCommand ConfirmManualPassCommand { get; }
+    public RelayCommand ConfirmManualFailCommand { get; }
     public AsyncRelayCommand ReadBoardStateCommand { get; }
     public AsyncRelayCommand StartPhaseOneCommand { get; }
+    public bool IsManualDecisionVisible => _manualDecisionTestId == SelectedTestResult?.TestId;
+    public bool IsKeyTestDetailVisible => SelectedTestResult?.TestId == "keys";
+    public string ManualDecisionPrompt => _manualDecisionTestId switch
+    {
+        "hdmi" => "请观察 HDMI 输出是否正常，然后手动选择通过或失败。",
+        "keys" => "请依次按下 PCBA 的上、下、左、右方向键；四键均识别后将自动通过。",
+        "lcd" => "请观察 SPI LCD：背光正常、RGB 测试图案完整且稳定，无花屏、缺线、闪烁或明显亮暗异常后再判定。",
+        _ => string.Empty
+    };
+    public string ManualPassButtonText => _manualDecisionTestId switch
+    {
+        "lcd" => "LCD 通过",
+        _ => "HDMI 通过"
+    };
+    public string ManualFailButtonText => _manualDecisionTestId switch
+    {
+        "lcd" => "LCD 失败",
+        _ => "HDMI 失败"
+    };
 
     private static string GetAppVersion()
     {
@@ -356,6 +416,7 @@ public sealed class MainViewModel : ObservableObject
                 TestMode = TestMode,
                 CurrentState = BoardState
             },
+            TestResults = BuildTestResultRecords(),
             Logs = _logService.Snapshot().Select(message => new LogEntry { Message = message }).ToArray()
         };
 
@@ -372,12 +433,13 @@ public sealed class MainViewModel : ObservableObject
         OperatorInstruction = "正在接收底层测试结果，请勿断开产品连接。";
 
         var client = _pcbaCommandClientFactory.Create(ConnectionMode);
+        _activeSessionClient = client;
         var finalVerdict = "Fail";
         BoardState? state = null;
 
         try
         {
-            await foreach (var testEvent in client.RunSessionAsync(SessionId, CurrentSn, TestPlan))
+            await foreach (var testEvent in client.RunSessionAsync(SessionId, CurrentSn, _testPlan))
             {
                 if (testEvent.Event == "test.report")
                 {
@@ -411,6 +473,10 @@ public sealed class MainViewModel : ObservableObject
             OperatorInstruction = "通信异常，检测已停止。请检查连接后重新扫描。";
             AppendLog($"Session failed: {ex.Message}");
         }
+        finally
+        {
+            _activeSessionClient = null;
+        }
 
         var record = new TestSessionRecord
         {
@@ -425,6 +491,7 @@ public sealed class MainViewModel : ObservableObject
                 FinalVerdict = finalVerdict
             },
             BoardState = state,
+            TestResults = BuildTestResultRecords(),
             Logs = _logService.Snapshot().Select(message => new LogEntry { Message = message }).ToArray()
         };
 
@@ -443,7 +510,39 @@ public sealed class MainViewModel : ObservableObject
             SelectedTestResult = result;
         }
 
-        if (TestItemIndexes.TryGetValue(testEvent.TestId, out var index) && index < TestItems.Count)
+        if (testEvent.TestId == "keys" && testEvent.Status == "running")
+        {
+            ApplyDetectedKeys(testEvent.Data);
+        }
+
+        if (testEvent.TestId == "typec_fast_charge" && testEvent.Status == "running")
+        {
+            HandleTypecChargingReport(testEvent);
+        }
+
+        if (testEvent.TestId == "battery_management" && testEvent.Status == "running")
+        {
+            HandleBatteryDischargeReport(testEvent);
+        }
+
+        if (testEvent.TestId is "indicator_led" or "fan" && testEvent.Status == "running")
+        {
+            HandleVoltageMeasurementReport(testEvent);
+        }
+
+        _manualDecisionTestId = testEvent.Status == "running" && testEvent.TestId is "hdmi" or "lcd"
+            ? testEvent.TestId
+            : testEvent.Status is "passed" or "failed" && testEvent.TestId == _manualDecisionTestId
+                    ? null
+                    : _manualDecisionTestId;
+        RaisePropertyChanged(nameof(IsManualDecisionVisible));
+        RaisePropertyChanged(nameof(ManualDecisionPrompt));
+        RaisePropertyChanged(nameof(ManualPassButtonText));
+        RaisePropertyChanged(nameof(ManualFailButtonText));
+        ConfirmManualPassCommand.NotifyCanExecuteChanged();
+        ConfirmManualFailCommand.NotifyCanExecuteChanged();
+
+        if (_testItemIndexes.TryGetValue(testEvent.TestId, out var index) && index < TestItems.Count)
         {
             TestItems[index].State = testEvent.Status switch
             {
@@ -453,12 +552,14 @@ public sealed class MainViewModel : ObservableObject
             };
         }
 
-        if (testEvent.TestId == "battery")
+        if (testEvent.TestId == "battery_management")
         {
             BatteryStatus = testEvent.Status;
         }
 
-        OperatorInstruction = testEvent.Status == "running"
+        OperatorInstruction = testEvent.TestId == "typec_fast_charge" && testEvent.Status == "running"
+            ? "请插入 TYPE-C 充电器，系统将自动检测充电电压和电流。"
+            : testEvent.Status == "running"
             ? $"正在检测：{testEvent.TestId}。"
             : $"{testEvent.TestId}：{testEvent.Status}。";
         AppendLog($"{testEvent.TestId}: {testEvent.Status} ({testEvent.Message})");
@@ -467,20 +568,19 @@ public sealed class MainViewModel : ObservableObject
     private static string GetTestDisplayName(string testId) => testId switch
     {
         "board_state" => "板状态",
-        "test_mode" => "测试模式",
-        "bluetooth" => "蓝牙",
-        "wifi" => "WiFi",
-        "ethernet" => "网口",
-        "tf" => "TF 卡",
-        "lcd" => "LCD",
-        "fingerprint" => "指纹",
-        "keys" => "按键",
         "hdmi" => "HDMI",
-        "typec" => "Type-C",
-        "battery" => "电池",
+        "keys" => "按键",
+        "lcd" => "SPI LCD屏",
+        "wifi" => "WiFi",
+        "bluetooth" => "蓝牙",
+        "fingerprint" => "SPI 指纹模组",
+        "typec_fast_charge" => "TYPE-C 快充",
+        "typec_camera" => "TYPE-C 相机",
+        "tf" => "TF 卡",
+        "indicator_led" => "指示灯板",
         "fan" => "风扇",
-        "otg" => "OTG",
-        "camera" => "相机",
+        "otg" => "USB OTG口",
+        "battery_management" => "放电测试",
         _ => testId
     };
 
@@ -496,8 +596,161 @@ public sealed class MainViewModel : ObservableObject
             : value.ToString() ?? fallback;
     }
 
+    private void ApplyDetectedKeys(IReadOnlyDictionary<string, object?> data)
+    {
+        foreach (var keyId in GetStringValues(data, "detectedKeys"))
+        {
+            SetDirectionalKeyDetected(keyId);
+        }
+
+        SetDirectionalKeyDetected(GetDataString(data, "key", string.Empty));
+        RaisePropertyChanged(nameof(ManualDecisionPrompt));
+    }
+
+    private void SetDirectionalKeyDetected(string keyId)
+    {
+        var key = DirectionalKeys.FirstOrDefault(item => item.Id.Equals(keyId, StringComparison.OrdinalIgnoreCase));
+        if (key is not null)
+        {
+            key.IsDetected = true;
+        }
+    }
+
+    private bool AreAllDirectionalKeysDetected() => DirectionalKeys.All(key => key.IsDetected);
+
+    private static IEnumerable<string> GetStringValues(IReadOnlyDictionary<string, object?> data, string key)
+    {
+        if (!data.TryGetValue(key, out var value) || value is null)
+        {
+            return [];
+        }
+
+        if (value is JsonElement element && element.ValueKind == JsonValueKind.Array)
+        {
+            return element.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString())
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Select(item => item!)
+                .ToArray();
+        }
+
+        return value is IEnumerable<string> values ? values : [];
+    }
+
+    private async void HandleTypecChargingReport(TestSessionEvent testEvent)
+    {
+        if (_activeSessionClient is null || !_automaticDecisionTests.Add(testEvent.TestId) || !GetDataBoolean(testEvent.Data, "readyForHostDecision"))
+        {
+            return;
+        }
+
+        var parameters = _testPlan.First(item => item.Id == testEvent.TestId).Parameters;
+        try
+        {
+            if (_jk5506Service is not null)
+            {
+                await _jk5506Service.PrepareChargeTestAsync(GetParameterInt(parameters, "batterySimulationVoltageMv", 7400));
+                AppendLog("JK5506 battery simulator set for TYPE-C charging test.");
+            }
+        }
+        catch (Exception ex)
+        {
+            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, false, "battery_simulator_communication_error");
+            AppendLog($"JK5506 preparation failed: {ex.Message}");
+            return;
+        }
+        var voltage = GetDataInt(testEvent.Data, "chargeVoltageMv");
+        var current = GetDataInt(testEvent.Data, "chargeCurrentMa");
+        var passed = GetDataBoolean(testEvent.Data, "pmicCommunicationOk") &&
+            GetDataBoolean(testEvent.Data, "chargerConnected") &&
+            voltage >= GetParameterInt(parameters, "chargeVoltageMinMv", 7400) &&
+            voltage <= GetParameterInt(parameters, "chargeVoltageMaxMv", 8400) &&
+            current >= GetParameterInt(parameters, "chargeCurrentMinMa", 500) &&
+            current <= GetParameterInt(parameters, "chargeCurrentMaxMa", 3000);
+        var reason = passed ? "charge_values_in_range" : "charge_values_out_of_range";
+        await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, passed, reason);
+        AppendLog($"TYPE-C charging automatic decision: {(passed ? "PASS" : "FAIL")} ({reason})");
+    }
+
+    private async void HandleVoltageMeasurementReport(TestSessionEvent testEvent)
+    {
+        if (_activeSessionClient is null) return;
+        if (!GetDataBoolean(testEvent.Data, "measureRequest"))
+        {
+            if (_voltageControlCommands.Add($"{testEvent.TestId}:high"))
+            {
+                await _activeSessionClient.SubmitTestControlAsync(SessionId, testEvent.TestId, "high");
+                AppendLog($"{testEvent.TestId} control: high");
+            }
+            return;
+        }
+        var phase = GetDataString(testEvent.Data, "phase", string.Empty);
+        if (phase is not "high" and not "low") return;
+        var parameters = _testPlan.First(item => item.Id == testEvent.TestId).Parameters;
+        try
+        {
+            var expected = GetParameterInt(parameters, phase == "high" ? "highCommandExpectedVoltageMv" : "lowCommandExpectedVoltageMv", 0);
+            var voltage = ConnectionMode == PcbaConnectionMode.AdbForward && _jxTvmService?.IsEnabled == true
+                ? await _jxTvmService.ReadChannelVoltageMvAsync(GetParameterInt(parameters, "channel", 1))
+                : expected;
+            var passed = Math.Abs(voltage - expected) <= GetParameterInt(parameters, "toleranceMv", 150);
+            _voltagePhaseResults[$"{testEvent.TestId}:{phase}"] = passed;
+            AppendLog($"{testEvent.TestId} {phase}: {voltage}mV, expected {expected}mV, {(passed ? "PASS" : "FAIL")}");
+            if (phase == "low")
+            {
+                var finalPassed = _voltagePhaseResults.GetValueOrDefault($"{testEvent.TestId}:high") && passed;
+                await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, finalPassed, finalPassed ? "voltage_in_range" : "voltage_out_of_range");
+            }
+            else if (_voltageControlCommands.Add($"{testEvent.TestId}:low"))
+            {
+                await _activeSessionClient.SubmitTestControlAsync(SessionId, testEvent.TestId, "low");
+                AppendLog($"{testEvent.TestId} control: low");
+            }
+        }
+        catch (Exception ex)
+        {
+            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, false, "voltage_meter_communication_error");
+            AppendLog($"JX-TVM measurement failed: {ex.Message}");
+        }
+    }
+
+    private async void HandleBatteryDischargeReport(TestSessionEvent testEvent)
+    {
+        if (_activeSessionClient is null || !_automaticDecisionTests.Add(testEvent.TestId) || !GetDataBoolean(testEvent.Data, "readyForHostDecision")) return;
+        var parameters = _testPlan.First(item => item.Id == testEvent.TestId).Parameters;
+        var voltage = GetDataInt(testEvent.Data, "dischargeVoltageMv");
+        var current = GetDataInt(testEvent.Data, "dischargeCurrentMa");
+        var passed = voltage >= GetParameterInt(parameters, "dischargeVoltageMinMv", 7000) &&
+            voltage <= GetParameterInt(parameters, "dischargeVoltageMaxMv", 7600) &&
+            current >= GetParameterInt(parameters, "dischargeCurrentMinMa", 100) &&
+            current <= GetParameterInt(parameters, "dischargeCurrentMaxMa", 1500);
+        await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, passed, passed ? "discharge_values_in_range" : "discharge_values_out_of_range");
+        AppendLog($"Battery discharge automatic decision: {(passed ? "PASS" : "FAIL")}");
+    }
+
+    private static int GetDataInt(IReadOnlyDictionary<string, object?> data, string key)
+    {
+        return int.TryParse(GetDataString(data, key, "0"), out var value) ? value : 0;
+    }
+
+    private static bool GetDataBoolean(IReadOnlyDictionary<string, object?> data, string key)
+    {
+        if (!data.TryGetValue(key, out var value) || value is null) return false;
+        if (value is JsonElement element && element.ValueKind is JsonValueKind.True or JsonValueKind.False) return element.GetBoolean();
+        return bool.TryParse(value.ToString(), out var result) && result;
+    }
+
+    private static int GetParameterInt(IReadOnlyDictionary<string, object?> parameters, string key, int fallback) =>
+        int.TryParse(GetDataString(parameters, key, fallback.ToString()), out var value) ? value : fallback;
+
     public async Task InitializeAsync()
     {
+        if (_bluetoothBroadcasterService is not null)
+        {
+            try { await _bluetoothBroadcasterService.ConfigureAsync(); AppendLog("Bluetooth broadcaster configured."); }
+            catch (Exception ex) { AppendLog($"Bluetooth broadcaster setup failed: {ex.Message}"); }
+        }
         await LoadRecentSessionsAsync();
     }
 
@@ -521,23 +774,78 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    private static IReadOnlyList<TestItemViewModel> BuildTestItems()
-    {
-        var names = new[]
+    private IReadOnlyList<TestResultRecord> BuildTestResultRecords() => TestResults
+        .Select(result => new TestResultRecord
         {
-            BoardStateItemName, TestModeItemName, BluetoothItemName, WifiItemName, EthernetItemName, "TF卡", "LCD", "指纹", "按键",
-            "HDMI", "TypeC", BatteryItemName, "风扇", "OTG", "相机"
-        };
+            TestId = result.TestId,
+            Status = result.StateLabel,
+            ResultCode = result.ResultCode,
+            Message = result.Message,
+            Data = result.Data
+        })
+        .ToArray();
 
-        var visibleNames = names.Where(name => name != TestModeItemName).ToArray();
+    private static IReadOnlyList<TestPlanItem> BuildActiveTestPlan(AppConfiguration configuration)
+    {
+        var enabled = configuration.TestPlan.EnabledTests
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var disabled = configuration.TestPlan.DisabledTests
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        return visibleNames
-            .Select((name, index) => new TestItemViewModel(name, index < visibleNames.Length - 1))
+        var plan = enabled.Count > 0
+            ? AllTestPlan.Where(item => enabled.Contains(item.Id)).ToList()
+            : AllTestPlan.Where(item => !disabled.Contains(item.Id)).ToList();
+
+        if (plan.All(item => item.Id != "board_state"))
+        {
+            plan.Insert(0, AllTestPlan[0]);
+        }
+
+        return plan
+            .Select(item => new TestPlanItem
+            {
+                Id = item.Id,
+                Parameters = GetTestParameters(configuration, item.Id)
+            })
+            .ToArray();
+    }
+
+    private static IReadOnlyDictionary<string, object?> GetTestParameters(AppConfiguration configuration, string testId)
+    {
+        if (!configuration.TestPlan.TestParameters.TryGetValue(testId, out var parameters))
+        {
+            return new Dictionary<string, object?>();
+        }
+
+        var result = parameters.ToDictionary(pair => pair.Key, pair => (object?)pair.Value, StringComparer.OrdinalIgnoreCase);
+        if (testId == "bluetooth" && !string.IsNullOrWhiteSpace(configuration.BluetoothBroadcaster.BroadcastName))
+        {
+            result["targetName"] = configuration.BluetoothBroadcaster.BroadcastName;
+        }
+        return result;
+    }
+
+    private static IReadOnlyList<TestItemViewModel> BuildTestItems(IReadOnlyList<TestPlanItem> testPlan)
+    {
+        return testPlan
+            .Select((item, index) => new TestItemViewModel(GetTestDisplayName(item.Id), index < testPlan.Count - 1))
             .ToArray();
     }
 
     private void ResetTestItems()
     {
+        _manualDecisionTestId = null;
+        _automaticDecisionTests.Clear();
+        _voltagePhaseResults.Clear();
+        _voltageControlCommands.Clear();
+        foreach (var key in DirectionalKeys)
+        {
+            key.IsDetected = false;
+        }
         foreach (var item in TestItems)
         {
             item.State = TestItemState.Pending;
@@ -549,6 +857,43 @@ public sealed class MainViewModel : ObservableObject
         }
 
         SelectedTestResult = TestResults.FirstOrDefault();
+        RaisePropertyChanged(nameof(IsManualDecisionVisible));
+        RaisePropertyChanged(nameof(ManualDecisionPrompt));
+        RaisePropertyChanged(nameof(ManualPassButtonText));
+        RaisePropertyChanged(nameof(ManualFailButtonText));
+        ConfirmManualPassCommand.NotifyCanExecuteChanged();
+        ConfirmManualFailCommand.NotifyCanExecuteChanged();
+    }
+
+    private async void SubmitManualDecision(bool passed)
+    {
+        if (!IsManualDecisionVisible || _activeSessionClient is null)
+        {
+            return;
+        }
+
+        var testId = _manualDecisionTestId!;
+        _manualDecisionTestId = null;
+        var displayName = GetTestDisplayName(testId);
+        OperatorInstruction = passed ? $"{displayName} 已确认通过，继续后续测试。" : $"{displayName} 已确认失败，测试将停止。";
+        AppendLog($"{testId} manual decision: {(passed ? "PASS" : "FAIL")}");
+        RaisePropertyChanged(nameof(IsManualDecisionVisible));
+        RaisePropertyChanged(nameof(ManualDecisionPrompt));
+        RaisePropertyChanged(nameof(ManualPassButtonText));
+        RaisePropertyChanged(nameof(ManualFailButtonText));
+        ConfirmManualPassCommand.NotifyCanExecuteChanged();
+        ConfirmManualFailCommand.NotifyCanExecuteChanged();
+
+        try
+        {
+            await _activeSessionClient.SubmitOperatorDecisionAsync(SessionId, testId, passed);
+        }
+        catch (Exception ex)
+        {
+            LastResult = "Manual decision send failed";
+            OperatorInstruction = $"{displayName} 判定未发送到设备，请检查连接后重新测试。";
+            AppendLog($"{testId} operator decision send failed: {ex.Message}");
+        }
     }
 
     private void SetTestItemState(string name, TestItemState state)

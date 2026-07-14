@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Text.Json;
 using SpaceTestPC.App.Models;
 
 namespace SpaceTestPC.App.ViewModels;
@@ -38,6 +39,7 @@ public sealed class TestResultViewModel : ObservableObject
     public string DataText { get => _dataText; private set => SetProperty(ref _dataText, value); }
     public DateTimeOffset? StartedAt { get => _startedAt; private set => SetProperty(ref _startedAt, value); }
     public TimeSpan? Duration { get => _duration; private set => SetProperty(ref _duration, value); }
+    public IReadOnlyDictionary<string, object?> Data { get; private set; } = new Dictionary<string, object?>();
 
     public string StateLabel => State switch
     {
@@ -70,13 +72,41 @@ public sealed class TestResultViewModel : ObservableObject
         };
         ResultCode = testEvent.ResultCode;
         Message = testEvent.Message;
+        Data = testEvent.Data;
         DataText = testEvent.Data.Count == 0
             ? "No result data"
-            : string.Join(Environment.NewLine, testEvent.Data.Select(pair => $"{pair.Key}: {pair.Value}"));
+            : string.Join(Environment.NewLine, testEvent.Data.Select(pair => $"{pair.Key}: {FormatValue(pair.Value)}"));
         if (StartedAt is { } startedAt && State is TestItemState.Passed or TestItemState.Failed)
         {
             Duration = testEvent.Timestamp - startedAt;
         }
+    }
+
+    private static string FormatValue(object? value)
+    {
+        if (value is null)
+        {
+            return string.Empty;
+        }
+
+        if (value is JsonElement element)
+        {
+            return element.ValueKind == JsonValueKind.String
+                ? element.GetString() ?? string.Empty
+                : element.GetRawText();
+        }
+
+        if (value is string text)
+        {
+            return text;
+        }
+
+        if (value is System.Collections.IEnumerable enumerable)
+        {
+            return string.Join(", ", enumerable.Cast<object?>().Select(FormatValue));
+        }
+
+        return value.ToString() ?? string.Empty;
     }
 
     public void Reset()
@@ -87,5 +117,6 @@ public sealed class TestResultViewModel : ObservableObject
         DataText = "No result data";
         StartedAt = null;
         Duration = null;
+        Data = new Dictionary<string, object?>();
     }
 }

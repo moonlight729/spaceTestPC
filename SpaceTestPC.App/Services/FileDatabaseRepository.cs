@@ -72,7 +72,7 @@ public sealed class FileDatabaseRepository : IDatabaseRepository
 
         if (writeHeader)
         {
-            await writer.WriteLineAsync("session_id,sn,start_time,end_time,verdict,board_id");
+            await writer.WriteLineAsync("session_id,sn,start_time,end_time,verdict,board_id,test_results");
         }
 
         var session = record.Session;
@@ -82,7 +82,8 @@ public sealed class FileDatabaseRepository : IDatabaseRepository
             Escape(session.StartTime.ToString("O")),
             Escape(session.EndTime?.ToString("O") ?? string.Empty),
             Escape(session.FinalVerdict),
-            Escape(record.BoardState?.BoardId ?? string.Empty));
+            Escape(record.BoardState?.BoardId ?? string.Empty),
+            Escape(string.Join(";", record.TestResults.Select(result => $"{result.TestId}:{result.Status}:{result.ResultCode}"))));
         await writer.WriteLineAsync(row);
     }
 

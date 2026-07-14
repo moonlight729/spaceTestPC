@@ -14,10 +14,12 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
+        var configuration = new ConfigurationService().Load(Path.Combine(AppContext.BaseDirectory, "appsettings.json"));
+        var manualTestInteractionService = new ManualTestInteractionService();
         var dataDir = Path.Combine(AppContext.BaseDirectory, "data");
         var repository = new FileDatabaseRepository(Path.Combine(dataDir, "stage1-db.json"));
         var pcbaClientFactory = new PcbaCommandClientFactory(
-            new MockPcbaCommandClient(),
+            new MockPcbaCommandClient(mockConfiguration: configuration.TestPlan.Mock, manualTestInteractionService: manualTestInteractionService),
             new AdbPcbaCommandClient());
 
         _viewModel = new MainViewModel(
@@ -26,7 +28,12 @@ public partial class MainWindow : Window
             new StatusMonitorService("Voltage"),
             new StatusMonitorService("Battery"),
             repository,
-            new LogService());
+            new LogService(),
+            configuration,
+            manualTestInteractionService,
+            new Jk5506Service(configuration.Jk5506),
+            new JxTvmService(configuration.JxTvm),
+            new BluetoothBroadcasterService(configuration.BluetoothBroadcaster));
 
         DataContext = _viewModel;
         Loaded += async (_, _) => await _viewModel.InitializeAsync();

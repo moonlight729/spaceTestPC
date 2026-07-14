@@ -74,7 +74,7 @@
                 <ItemsControl ItemsSource="{Binding TestItems}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
-                            <UniformGrid Columns="15" Rows="1" />
+                            <UniformGrid Columns="{Binding TestOverviewColumns}" Rows="1" />
                         </ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
@@ -172,6 +172,51 @@
                                            FontSize="16"
                                            TextWrapping="Wrap"
                                            Text="{Binding SelectedTestResult.Message}" />
+                                <ItemsControl Margin="0,16,0,0"
+                                              ItemsSource="{Binding DirectionalKeys}"
+                                              Visibility="{Binding IsKeyTestDetailVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <UniformGrid Columns="4" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Margin="0,0,10,0"
+                                                    Padding="14,12"
+                                                    Background="{Binding Background}"
+                                                    CornerRadius="10">
+                                                <StackPanel>
+                                                    <TextBlock HorizontalAlignment="Center"
+                                                               FontSize="20"
+                                                               FontWeight="Bold"
+                                                               Foreground="White"
+                                                               Text="{Binding Label}" />
+                                                    <TextBlock Margin="0,5,0,0"
+                                                               HorizontalAlignment="Center"
+                                                               Foreground="White"
+                                                               Text="{Binding StatusText}" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Margin="0,12,0,0"
+                                           FontWeight="SemiBold"
+                                           Foreground="#EA580C"
+                                           TextWrapping="Wrap"
+                                           Visibility="{Binding IsManualDecisionVisible, Converter={StaticResource BoolToVisibilityConverter}}"
+                                           Text="{Binding ManualDecisionPrompt}" />
+                                <WrapPanel Margin="0,12,0,0"
+                                           Visibility="{Binding IsManualDecisionVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                                    <Button Width="120"
+                                            Command="{Binding ConfirmManualPassCommand}"
+                                            Content="{Binding ManualPassButtonText}" />
+                                    <Button Width="120"
+                                            Background="#DC2626"
+                                            Command="{Binding ConfirmManualFailCommand}"
+                                            Content="{Binding ManualFailButtonText}" />
+                                </WrapPanel>
                                 <TextBlock Foreground="#64748B"
                                            Margin="0,12,0,0"
                                            FontFamily="Consolas"

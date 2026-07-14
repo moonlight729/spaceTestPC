@@ -1,0 +1,73 @@
+{
+  "testPlan": {
+    // enabledTests 非空时，只运行这里列出的测试项。
+    // 顺序仍按程序内固定顺序执行，不按这里的书写顺序执行。
+    // 常用开发示例:
+    // "enabledTests": ["board_state", "wifi"],
+    "enabledTests": [],
+
+    // enabledTests 为空时，运行完整测试计划，再排除这里列出的测试项。
+    "disabledTests": [],
+    // 每个测试项下发给设备的参数。示例：WiFi 测试连接目标路由器后再 Ping 网关。
+    "testParameters": {
+      "wifi": {
+        "ssid": "test_router_001",
+        "password": "test_router_001",
+        "routerIp": "192.168.1.1",
+        "pingCount": 4,
+        "timeoutMs": 15000
+      },
+      "bluetooth": {
+        "mode": "observer",
+        "targetName": "NODE_A_01",
+        "minRssi": -80,
+        "scanWindowMs": 10000
+      },
+      "fingerprint": {
+        "bus": "spi",
+        "command": "get_status",
+        "timeoutMs": 3000
+      },
+      "typec_fast_charge": {
+        "batterySimulationVoltageMv": 7400,
+        "chargeVoltageMinMv": 7400,
+        "chargeVoltageMaxMv": 8400,
+        "chargeCurrentMinMa": 500,
+        "chargeCurrentMaxMa": 3000,
+        "stableSampleCount": 3,
+        "sampleIntervalMs": 500,
+        "timeoutMs": 20000,
+        "pmicBus": "i2c",
+        "pmicCommand": "read_charge_status"
+      },
+      "typec_camera": {
+        "streamProfile": "1080p30",
+        "minInterruptCount": 200,
+        "timeoutMs": 10000
+      },
+      "tf": {
+        "command": "read_card_info",
+        "mountTimeoutMs": 5000,
+        "requireMounted": true
+      }
+    },
+
+    "mock": {
+      // 指定某一项 Mock 失败；null 表示不注入失败。
+      // 示例: "wifi"
+      "failingTestId": null,
+
+      // 普通测试项 running 阶段停留时间，单位毫秒。
+      "runningDelayMs": 2000,
+
+      // 普通测试项 passed/failed 结果停留时间，单位毫秒。
+      "resultHoldMs": 1000,
+
+      // 板状态 running 阶段停留时间，单位毫秒。
+      "boardStateRunningDelayMs": 3000,
+
+      // 板状态结果停留时间，单位毫秒。
+      "boardStateResultHoldMs": 5000
+    }
+  }
+}

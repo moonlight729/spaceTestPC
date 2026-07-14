@@ -10,6 +10,21 @@ public interface IPcbaCommandClient
         IReadOnlyList<TestPlanItem> testPlan,
         CancellationToken cancellationToken = default);
 
+    Task SubmitOperatorDecisionAsync(
+        string sessionId,
+        string testId,
+        bool passed,
+        CancellationToken cancellationToken = default);
+
+    Task SubmitTestDecisionAsync(
+        string sessionId,
+        string testId,
+        bool passed,
+        string reason,
+        CancellationToken cancellationToken = default);
+
+    Task SubmitTestControlAsync(string sessionId, string testId, string level, CancellationToken cancellationToken = default);
+
     Task<BoardState> GetBoardStateAsync(string sessionId, string sn, CancellationToken cancellationToken = default);
     Task<CommandResponse> EnterTestModeAsync(string sessionId, string sn, string boardId, CancellationToken cancellationToken = default);
     Task<BluetoothScanResult> ScanBluetoothTargetAsync(
