@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Reflection;
 using SpaceTestPC.App.Models;
 using SpaceTestPC.App.Services;
 
@@ -182,6 +183,9 @@ public sealed class MainViewModel : ObservableObject
         private set => SetProperty(ref _debugOutput, value);
     }
 
+    public string AppVersion { get; } = GetAppVersion();
+    public string WindowTitle => $"检测工作台 {AppVersion}";
+
     public ObservableCollection<string> Logs { get; }
     public ObservableCollection<string> RecentSessions { get; }
     public ObservableCollection<TestItemViewModel> TestItems { get; }
@@ -195,6 +199,16 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand StartMockSessionCommand { get; }
     public AsyncRelayCommand ReadBoardStateCommand { get; }
     public AsyncRelayCommand StartPhaseOneCommand { get; }
+
+    private static string GetAppVersion()
+    {
+        var assembly = typeof(MainViewModel).Assembly;
+        var version = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? assembly.GetName().Version?.ToString()
+            ?? "0.0.0";
+
+        return $"v{version}";
+    }
 
     private void StartMockSession()
     {

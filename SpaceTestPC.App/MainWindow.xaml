@@ -4,7 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="检测工作台"
+        Title="{Binding WindowTitle, Mode=OneWay}"
         Width="1280"
         Height="820"
         MinWidth="1100"
@@ -47,10 +47,13 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel>
-                    <TextBlock FontSize="26" FontWeight="Bold" Text="自动检测工作台" />
+                    <TextBlock FontSize="26"
+                               FontWeight="Bold"
+                               Text="自动检测工作台" />
                     <TextBlock Margin="0,8,0,0" Foreground="#64748B" Text="扫描产品 SN 后，系统将自动完成全部顺序检测。" />
                 </StackPanel>
-                <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                <StackPanel Grid.Column="1"
+                            HorizontalAlignment="Right">
                     <TextBlock Text="当前 SN" Foreground="#64748B" />
                     <TextBlock FontSize="18" FontWeight="SemiBold" Text="{Binding CurrentSn}" />
                 </StackPanel>
@@ -76,14 +79,19 @@
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <Canvas Width="72" Height="82" Margin="0,0,0,6">
-                                <Path Data="M 49,22 C 57,10 66,10 72,18"
-                                      Stroke="{Binding ConnectorBrush}"
-                                      StrokeThickness="2"
+                            <Canvas Width="100" Height="82" Margin="0,0,0,6">
+                                <Path Data="M 52,11 L 94,11"
+                                      Stroke="#F97316"
+                                      StrokeThickness="2.4"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
                                       Visibility="{Binding ShowsConnector, Converter={StaticResource BoolToVisibilityConverter}}" />
-                                <Path Data="M 66,13 L 72,18 L 65,21"
-                                      Stroke="{Binding ConnectorBrush}"
-                                      StrokeThickness="2"
+                                <Path Data="M 88,6 L 94,11 L 88,16"
+                                      Stroke="#F97316"
+                                      StrokeThickness="2.4"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
+                                      StrokeLineJoin="Round"
                                       Visibility="{Binding ShowsConnector, Converter={StaticResource BoolToVisibilityConverter}}" />
                                 <Ellipse Canvas.Left="25"
                                          Width="22"
