@@ -135,7 +135,7 @@ public sealed class MainViewModel : ObservableObject
                 .Select(item => new TestResultViewModel(item.Id, GetTestDisplayName(item.Id))));
         DirectionalKeys = new ObservableCollection<DirectionalKeyViewModel>
         {
-            new("up", "上"), new("down", "下"), new("left", "左"), new("right", "右")
+            new("up", "上"), new("down", "下"), new("left", "左"), new("right", "右"), new("confirm", "确认")
         };
         SelectedTestResult = TestResults.FirstOrDefault();
         TestOverviewColumns = Math.Max(1, TestItems.Count);
@@ -286,12 +286,18 @@ public sealed class MainViewModel : ObservableObject
         get => _currentTestItem;
         private set => SetProperty(ref _currentTestItem, value);
     }
+
+    public void SelectTestResult(string testId)
+    {
+        var result = TestResults.FirstOrDefault(item => item.TestId == testId);
+        if (result is not null) SelectedTestResult = result;
+    }
     public bool IsManualDecisionVisible => _manualDecisionTestId == SelectedTestResult?.TestId;
     public bool IsKeyTestDetailVisible => SelectedTestResult?.TestId == "keys";
     public string ManualDecisionPrompt => _manualDecisionTestId switch
     {
         "hdmi" => "请观察 HDMI 输出是否正常，然后手动选择通过或失败。",
-        "keys" => "请依次按下 PCBA 的上、下、左、右方向键；四键均识别后将自动通过。",
+        "keys" => "请依次按下 PCBA 的上、下、左、右方向键和确认键；五键均识别后将自动通过。",
         "lcd" => "请观察 SPI LCD：背光正常、RGB 测试图案完整且稳定，无花屏、缺线、闪烁或明显亮暗异常后再判定。",
         _ => string.Empty
     };
@@ -751,6 +757,7 @@ public sealed class MainViewModel : ObservableObject
 
     private void SetDirectionalKeyDetected(string keyId)
     {
+        if (string.Equals(keyId, "ok", StringComparison.OrdinalIgnoreCase)) keyId = "confirm";
         var key = DirectionalKeys.FirstOrDefault(item => item.Id.Equals(keyId, StringComparison.OrdinalIgnoreCase));
         if (key is not null)
         {
@@ -1001,7 +1008,7 @@ public sealed class MainViewModel : ObservableObject
     private static IReadOnlyList<TestItemViewModel> BuildTestItems(IReadOnlyList<TestPlanItem> testPlan)
     {
         return testPlan
-            .Select((item, index) => new TestItemViewModel(GetTestDisplayName(item.Id), index < testPlan.Count - 1))
+            .Select((item, index) => new TestItemViewModel(item.Id, GetTestDisplayName(item.Id), index < testPlan.Count - 1))
             .ToArray();
     }
 

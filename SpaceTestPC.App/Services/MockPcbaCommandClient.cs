@@ -95,7 +95,7 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
             else if (test.Id == "keys")
             {
                 var detectedKeys = new List<string>();
-                foreach (var key in new[] { "up", "down", "left", "right" })
+                foreach (var key in new[] { "up", "down", "left", "right", "confirm" })
                 {
                     await Task.Delay(GetMockRunningDelay(test.Id), cancellationToken);
                     detectedKeys.Add(key);
@@ -110,8 +110,8 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                             ["inputSubsystem"] = "evdev",
                             ["key"] = key,
                             ["detectedKeys"] = detectedKeys.ToArray(),
-                            ["expectedKeys"] = new[] { "up", "down", "left", "right" },
-                            ["allKeysDetected"] = detectedKeys.Count == 4
+                            ["expectedKeys"] = new[] { "up", "down", "left", "right", "confirm" },
+                            ["allKeysDetected"] = detectedKeys.Count == 5
                         }
                     };
                 }
@@ -396,8 +396,8 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 break;
             case "keys":
                 data["inputSubsystem"] = "evdev";
-                data["expectedKeys"] = 4;
-                data["pressedKeys"] = 4;
+                data["expectedKeys"] = 5;
+                data["pressedKeys"] = 5;
                 data["allKeysOk"] = true;
                 break;
             case "lcd":

@@ -6,12 +6,14 @@ public sealed class TestItemViewModel : ObservableObject
 {
     private TestItemState _state;
 
-    public TestItemViewModel(string name, bool showsConnector = true)
+    public TestItemViewModel(string testId, string name, bool showsConnector = true)
     {
+        TestId = testId;
         Name = name;
         ShowsConnector = showsConnector;
     }
 
+    public string TestId { get; }
     public string Name { get; }
     public bool ShowsConnector { get; }
 

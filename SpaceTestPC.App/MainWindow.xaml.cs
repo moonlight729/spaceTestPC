@@ -64,6 +64,14 @@ public partial class MainWindow : Window
         }
     }
 
+    private void TestSequenceListBox_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (TestSequenceListBox.SelectedItem is TestItemViewModel item)
+        {
+            _viewModel.SelectTestResult(item.TestId);
+        }
+    }
+
     private async void SequenceAdvanceRequested(object? sender, TestItemViewModel testItem)
     {
         _sequenceScrollCancellation?.Cancel();

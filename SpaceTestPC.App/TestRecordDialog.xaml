@@ -19,9 +19,9 @@
                 <StackPanel Grid.Column="2"><TextBlock Foreground="#667085" Text="TEST TIME" /><TextBlock Margin="0,4,0,0" FontSize="15" FontWeight="SemiBold" Text="{Binding Session.StartTime, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" /></StackPanel>
             </Grid>
         </Border>
-        <DataGrid Grid.Row="2" ItemsSource="{Binding TestResults}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" RowHeight="40" AlternatingRowBackground="#F8FAFC" BorderBrush="#D8E0EA">
+        <DataGrid Grid.Row="2" ItemsSource="{Binding Items}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" RowHeight="40" AlternatingRowBackground="#F8FAFC" BorderBrush="#D8E0EA">
             <DataGrid.Columns>
-                <DataGridTextColumn Header="TEST ITEM" Binding="{Binding TestId}" Width="2*" />
+                <DataGridTextColumn Header="TEST ITEM" Binding="{Binding TestName}" Width="2*" />
                 <DataGridTextColumn Header="RESULT" Binding="{Binding Status}" Width="*" />
                 <DataGridTextColumn Header="CODE" Binding="{Binding ResultCode}" Width="120" />
             </DataGrid.Columns>
