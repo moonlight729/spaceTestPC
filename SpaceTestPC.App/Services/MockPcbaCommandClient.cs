@@ -7,6 +7,7 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
     private readonly string? _failingTestId;
     private readonly MockConfiguration _mockConfiguration;
     private readonly ManualTestInteractionService? _manualTestInteractionService;
+    private string _boardSn = string.Empty;
 
     public MockPcbaCommandClient(
         string? failingTestId = null,
@@ -261,7 +262,7 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
         var state = new BoardState
         {
             BoardId = "PCB001",
-            BoardSn = sn,
+            BoardSn = _boardSn,
             TestMode = "ready",
             CurrentState = "idle",
             LastSessionId = sessionId,
@@ -275,6 +276,17 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
         };
 
         return Task.FromResult(state);
+    }
+
+    public Task<CommandResponse> WriteSnAsync(string sessionId, string sn, string boardId, CancellationToken cancellationToken = default)
+    {
+        if (!string.IsNullOrEmpty(_boardSn) && !string.Equals(_boardSn, sn, StringComparison.Ordinal))
+        {
+            return Task.FromResult(new CommandResponse { SessionId = sessionId, Sn = sn, BoardId = boardId, ResultCode = 3001, Message = "SN already programmed", Timestamp = DateTimeOffset.Now.ToString("O") });
+        }
+
+        _boardSn = sn;
+        return Task.FromResult(new CommandResponse { SessionId = sessionId, Sn = sn, BoardId = boardId, ResultCode = 0, Message = "ok", Timestamp = DateTimeOffset.Now.ToString("O") });
     }
 
     public Task<CommandResponse> EnterTestModeAsync(string sessionId, string sn, string boardId, CancellationToken cancellationToken = default)

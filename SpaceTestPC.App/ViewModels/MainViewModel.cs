@@ -307,6 +307,7 @@ public sealed class MainViewModel : ObservableObject
             SetTestItemState(BoardStateItemName, TestItemState.Running);
             var state = await client.GetBoardStateAsync(SessionId, CurrentSn);
             ApplyBoardState(state);
+            await EnsureBoardSnAsync(client, state);
             LastResult = "Board state loaded";
             SetTestItemState(BoardStateItemName, TestItemState.Passed);
             AppendLog($"Board state loaded: {BoardId} / {BoardState}");
@@ -347,6 +348,7 @@ public sealed class MainViewModel : ObservableObject
             SetTestItemState(BoardStateItemName, TestItemState.Running);
             state = await client.GetBoardStateAsync(SessionId, CurrentSn);
             ApplyBoardState(state);
+            state = await EnsureBoardSnAsync(client, state);
             AppendLog($"Board state ok: {BoardId} / {BoardState} / {TestMode}");
 
             SetTestItemState(BatteryItemName, TestItemState.Running);
@@ -439,6 +441,12 @@ public sealed class MainViewModel : ObservableObject
 
         try
         {
+            SetTestItemState(BoardStateItemName, TestItemState.Running);
+            state = await client.GetBoardStateAsync(SessionId, CurrentSn);
+            ApplyBoardState(state);
+            state = await EnsureBoardSnAsync(client, state);
+            SetTestItemState(BoardStateItemName, TestItemState.Passed);
+
             await foreach (var testEvent in client.RunSessionAsync(SessionId, CurrentSn, _testPlan))
             {
                 if (testEvent.Event == "test.report")
@@ -499,6 +507,37 @@ public sealed class MainViewModel : ObservableObject
         await LoadRecentSessionsAsync();
         AppendLog("Session persisted.");
         UpdateDebugOutput();
+    }
+
+    private async Task<BoardState> EnsureBoardSnAsync(IPcbaCommandClient client, BoardState state)
+    {
+        if (string.Equals(state.BoardSn, CurrentSn, StringComparison.Ordinal))
+        {
+            AppendLog($"Board SN already matches scanned SN: {CurrentSn}");
+            return state;
+        }
+
+        if (!string.IsNullOrWhiteSpace(state.BoardSn))
+        {
+            throw new InvalidOperationException($"Board already has a different SN ({state.BoardSn}); scanned SN is {CurrentSn}.");
+        }
+
+        AppendLog($"Writing scanned SN to board: {CurrentSn}");
+        var response = await client.WriteSnAsync(SessionId, CurrentSn, state.BoardId);
+        if (response.ResultCode != 0)
+        {
+            throw new InvalidOperationException($"Board SN write failed ({response.ResultCode}): {response.Message}");
+        }
+
+        var updatedState = await client.GetBoardStateAsync(SessionId, CurrentSn);
+        if (!string.Equals(updatedState.BoardSn, CurrentSn, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"Board SN verification failed: expected {CurrentSn}, got {updatedState.BoardSn}.");
+        }
+
+        ApplyBoardState(updatedState);
+        AppendLog($"Board SN written and verified: {CurrentSn}");
+        return updatedState;
     }
 
     private void ApplyTestReport(TestSessionEvent testEvent)

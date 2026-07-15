@@ -178,7 +178,20 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         };
     }
 
-    public async Task<CommandResponse> EnterTestModeAsync(string sessionId, string sn, string boardId, CancellationToken cancellationToken = default)
+    public Task<CommandResponse> EnterTestModeAsync(string sessionId, string sn, string boardId, CancellationToken cancellationToken = default) =>
+        SendSystemCommandAsync(sessionId, sn, boardId, "enter_test_mode", cancellationToken);
+
+    public Task<CommandResponse> WriteSnAsync(string sessionId, string sn, string boardId, CancellationToken cancellationToken = default) =>
+        SendSystemCommandAsync(sessionId, sn, boardId, "write_sn", cancellationToken,
+            new Dictionary<string, object?> { ["verifyReadBack"] = true });
+
+    private async Task<CommandResponse> SendSystemCommandAsync(
+        string sessionId,
+        string sn,
+        string boardId,
+        string commandName,
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, object?>? parameters = null)
     {
         var command = new HostCommand
         {
@@ -186,7 +199,8 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
             Sn = sn,
             BoardId = boardId,
             CommandGroup = "sys",
-            Command = "enter_test_mode"
+            Command = commandName,
+            Parameters = parameters ?? new Dictionary<string, object?>()
         };
 
         var payload = await SendCommandAsync(command, cancellationToken);

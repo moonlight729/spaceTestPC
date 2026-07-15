@@ -11,6 +11,8 @@ try
     await VerifyAsync(root, "PASS-SN", null, "Pass");
     await VerifyAsync(root, "FAIL-SN", "wifi", "Fail");
     await VerifyFilteredPlanAsync(root);
+    await VerifySqliteStorageAsync(root);
+    await VerifySnWriteSafetyAsync();
     Console.WriteLine("Mock flow verification passed: success and failure paths both persisted.");
 }
 finally
@@ -170,6 +172,36 @@ static async Task VerifyFilteredPlanAsync(string root)
     if (record.Single().TestResults.Single(result => result.TestId == "bluetooth").Data.Count == 0)
     {
         throw new InvalidOperationException("Bluetooth result data was not persisted by the PC application.");
+    }
+}
+
+static async Task VerifySqliteStorageAsync(string root)
+{
+    var databasePath = Path.Combine(root, "sqlite", "stage1.db");
+    var repository = new SqliteDatabaseRepository(databasePath);
+    await repository.SaveSessionAsync(new TestSessionRecord
+    {
+        Session = new TestSession { SessionId = "sqlite-session", Sn = "SQLITE-SN", StartTime = DateTimeOffset.Now, EndTime = DateTimeOffset.Now, FinalVerdict = "Pass" },
+        TestResults = [new TestResultRecord { TestId = "wifi", Status = "PASS", ResultCode = 0, Message = "ok", Data = new Dictionary<string, object?> { ["pingOk"] = true } }]
+    });
+    var records = await repository.GetRecentSessionsAsync(1);
+    if (records.Single().Session.Sn != "SQLITE-SN" || !File.Exists(Path.Combine(Path.GetDirectoryName(databasePath)!, "records", "SQLITE-SN.csv")))
+    {
+        throw new InvalidOperationException("SQLite database or per-SN CSV output was not created.");
+    }
+}
+
+static async Task VerifySnWriteSafetyAsync()
+{
+    var client = new MockPcbaCommandClient();
+    var initialState = await client.GetBoardStateAsync("sn-session", "SN-001");
+    if (!string.IsNullOrEmpty(initialState.BoardSn)) throw new InvalidOperationException("Mock board must start without an SN.");
+    var write = await client.WriteSnAsync("sn-session", "SN-001", initialState.BoardId);
+    var verifiedState = await client.GetBoardStateAsync("sn-session", "SN-001");
+    var overwrite = await client.WriteSnAsync("sn-session", "SN-002", initialState.BoardId);
+    if (write.ResultCode != 0 || verifiedState.BoardSn != "SN-001" || overwrite.ResultCode == 0)
+    {
+        throw new InvalidOperationException("SN write/verification or overwrite protection failed.");
     }
 }
 

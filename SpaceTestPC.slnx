@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="SpaceTestPC.App\SpaceTestPC.App.csproj" />
+  <Project Path="tests\SpaceTestPC.App.Tests\SpaceTestPC.App.Tests.csproj" />
 </Solution>

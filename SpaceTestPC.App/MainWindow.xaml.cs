@@ -17,7 +17,7 @@ public partial class MainWindow : Window
         var configuration = new ConfigurationService().Load(Path.Combine(AppContext.BaseDirectory, "appsettings.json"));
         var manualTestInteractionService = new ManualTestInteractionService();
         var dataDir = Path.Combine(AppContext.BaseDirectory, "data");
-        var repository = new FileDatabaseRepository(Path.Combine(dataDir, "stage1-db.json"));
+        var repository = new SqliteDatabaseRepository(Path.Combine(dataDir, "box-test-records.db"));
         var pcbaClientFactory = new PcbaCommandClientFactory(
             new MockPcbaCommandClient(mockConfiguration: configuration.TestPlan.Mock, manualTestInteractionService: manualTestInteractionService),
             new AdbPcbaCommandClient());
