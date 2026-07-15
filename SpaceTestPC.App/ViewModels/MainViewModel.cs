@@ -8,6 +8,8 @@ namespace SpaceTestPC.App.ViewModels;
 
 public sealed class MainViewModel : ObservableObject
 {
+    public event EventHandler<TestItemViewModel>? SequenceAdvanceRequested;
+    public event EventHandler<TestSessionRecord>? HistoryRecordFound;
     private static bool UseUnifiedSessionProtocol => true;
     private static readonly IReadOnlyList<TestPlanItem> AllTestPlan =
     [
@@ -74,6 +76,12 @@ public sealed class MainViewModel : ObservableObject
     private string _operatorInstruction = "请扫描产品 SN，系统将自动按顺序执行检测。";
     private string _debugOutput = "Waiting for scan...";
     private TestResultViewModel? _selectedTestResult;
+    private bool _isHistoryLoaded;
+    private bool _isQueryPage;
+    private string _queryText = string.Empty;
+    private TestItemViewModel? _currentTestItem;
+    private bool _isMockSession;
+    private string _historySummary = string.Empty;
     private string? _manualDecisionTestId;
     private IPcbaCommandClient? _activeSessionClient;
     private readonly HashSet<string> _automaticDecisionTests = new(StringComparer.OrdinalIgnoreCase);
@@ -107,16 +115,21 @@ public sealed class MainViewModel : ObservableObject
             .Select((item, index) => new { item.Id, index })
             .ToDictionary(item => item.Id, item => item.index);
 
-        ScanCommand = new RelayCommand(HandleScan, () => !string.IsNullOrWhiteSpace(ScannerInput));
+        ScanCommand = new AsyncRelayCommand(() => HandleScanAsync(isMockSession: false), () => !string.IsNullOrWhiteSpace(ScannerInput));
         StartMockSessionCommand = new RelayCommand(StartMockSession);
         ConfirmManualPassCommand = new RelayCommand(() => SubmitManualDecision(true), () => IsManualDecisionVisible);
         ConfirmManualFailCommand = new RelayCommand(() => SubmitManualDecision(false), () => IsManualDecisionVisible);
         ReadBoardStateCommand = new AsyncRelayCommand(ReadBoardStateAsync, () => !string.IsNullOrWhiteSpace(CurrentSn));
         StartPhaseOneCommand = new AsyncRelayCommand(StartPhaseOneAsync, () => !string.IsNullOrWhiteSpace(CurrentSn));
+        ShowTestPageCommand = new RelayCommand(() => IsQueryPage = false);
+        ShowQueryPageCommand = new AsyncRelayCommand(ShowQueryPageAsync);
+        QueryRecordsCommand = new AsyncRelayCommand(RefreshQueryRecordsAsync);
 
         Logs = new ObservableCollection<string>();
         RecentSessions = new ObservableCollection<string>();
+        QuerySessions = new ObservableCollection<TestSessionRecord>();
         TestItems = new ObservableCollection<TestItemViewModel>(BuildTestItems(_testPlan));
+        CurrentTestItem = TestItems.FirstOrDefault();
         TestResults = new ObservableCollection<TestResultViewModel>(
             _testPlan
                 .Select(item => new TestResultViewModel(item.Id, GetTestDisplayName(item.Id))));
@@ -216,9 +229,20 @@ public sealed class MainViewModel : ObservableObject
 
     public ObservableCollection<string> Logs { get; }
     public ObservableCollection<string> RecentSessions { get; }
+    public ObservableCollection<TestSessionRecord> QuerySessions { get; }
     public ObservableCollection<TestItemViewModel> TestItems { get; }
     public ObservableCollection<TestResultViewModel> TestResults { get; }
     public ObservableCollection<DirectionalKeyViewModel> DirectionalKeys { get; }
+    public bool IsHistoryLoaded
+    {
+        get => _isHistoryLoaded;
+        private set => SetProperty(ref _isHistoryLoaded, value);
+    }
+    public string HistorySummary
+    {
+        get => _historySummary;
+        private set => SetProperty(ref _historySummary, value);
+    }
     public TestResultViewModel? SelectedTestResult
     {
         get => _selectedTestResult;
@@ -234,12 +258,34 @@ public sealed class MainViewModel : ObservableObject
             }
         }
     }
-    public RelayCommand ScanCommand { get; }
+    public AsyncRelayCommand ScanCommand { get; }
     public RelayCommand StartMockSessionCommand { get; }
     public RelayCommand ConfirmManualPassCommand { get; }
     public RelayCommand ConfirmManualFailCommand { get; }
     public AsyncRelayCommand ReadBoardStateCommand { get; }
     public AsyncRelayCommand StartPhaseOneCommand { get; }
+    public RelayCommand ShowTestPageCommand { get; }
+    public AsyncRelayCommand ShowQueryPageCommand { get; }
+    public AsyncRelayCommand QueryRecordsCommand { get; }
+    public bool IsQueryPage
+    {
+        get => _isQueryPage;
+        private set
+        {
+            if (SetProperty(ref _isQueryPage, value)) RaisePropertyChanged(nameof(IsTestPage));
+        }
+    }
+    public bool IsTestPage => !IsQueryPage;
+    public string QueryText
+    {
+        get => _queryText;
+        set => SetProperty(ref _queryText, value);
+    }
+    public TestItemViewModel? CurrentTestItem
+    {
+        get => _currentTestItem;
+        private set => SetProperty(ref _currentTestItem, value);
+    }
     public bool IsManualDecisionVisible => _manualDecisionTestId == SelectedTestResult?.TestId;
     public bool IsKeyTestDetailVisible => SelectedTestResult?.TestId == "keys";
     public string ManualDecisionPrompt => _manualDecisionTestId switch
@@ -273,10 +319,10 @@ public sealed class MainViewModel : ObservableObject
     private void StartMockSession()
     {
         ScannerInput = $"MOCK-{DateTimeOffset.Now:yyyyMMdd-HHmmss}";
-        HandleScan();
+        _ = HandleScanAsync(isMockSession: true);
     }
 
-    private void HandleScan()
+    private async Task HandleScanAsync(bool isMockSession)
     {
         var sn = _scannerService.Normalize(ScannerInput);
         if (string.IsNullOrWhiteSpace(sn))
@@ -285,17 +331,57 @@ public sealed class MainViewModel : ObservableObject
         }
 
         CurrentSn = sn;
+        _isMockSession = isMockSession;
         SessionId = Guid.NewGuid().ToString("N");
         LastResult = "SN scanned";
         OperatorInstruction = "SN 已确认，正在自动执行检测。请保持产品连接稳定。";
         ScannerInput = string.Empty;
         ResetTestItems();
+        IsHistoryLoaded = false;
+        HistorySummary = string.Empty;
         AppendLog($"Scan received: {CurrentSn}");
         AppendLog($"Session created: {SessionId}");
         UpdateDebugOutput();
 
-        AppendLog("Auto-starting Stage 1.");
+        var history = await _databaseRepository.GetLatestSessionBySnAsync(CurrentSn);
+        if (history is not null)
+        {
+            HistoryRecordFound?.Invoke(this, history);
+            return;
+        }
+
+        AppendLog("No history found. Auto-starting Stage 1.");
         StartPhaseOneCommand.Execute(null);
+    }
+
+    private void LoadHistoryRecord(TestSessionRecord record)
+    {
+        IsHistoryLoaded = true;
+        HistorySummary = $"Latest record: {record.Session.FinalVerdict} · {record.Session.EndTime?.LocalDateTime:yyyy-MM-dd HH:mm:ss}";
+        LastResult = $"History: {record.Session.FinalVerdict}";
+        OperatorInstruction = "Historical test result loaded. Review the details or select Re-test to start a new session.";
+        if (record.BoardState is not null) ApplyBoardState(record.BoardState);
+
+        ResetTestItems();
+        foreach (var result in record.TestResults)
+        {
+            ApplyTestReport(new TestSessionEvent
+            {
+                Event = "test.report",
+                TestId = result.TestId,
+                Status = string.Equals(result.Status, "PASS", StringComparison.OrdinalIgnoreCase) ? "passed" : "failed",
+                ResultCode = result.ResultCode,
+                Message = result.Message,
+                Data = result.Data,
+                Timestamp = record.Session.EndTime ?? record.Session.StartTime
+            });
+        }
+
+        SelectedTestResult = TestResults.FirstOrDefault(item => item.State == TestItemState.Failed)
+            ?? TestResults.FirstOrDefault(item => item.State == TestItemState.Passed)
+            ?? TestResults.FirstOrDefault();
+        AppendLog($"Historical record loaded: {record.Session.SessionId}");
+        UpdateDebugOutput();
     }
 
     private async Task ReadBoardStateAsync()
@@ -324,6 +410,16 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task StartPhaseOneAsync()
     {
+        if (IsHistoryLoaded)
+        {
+            IsHistoryLoaded = false;
+            HistorySummary = string.Empty;
+            SessionId = Guid.NewGuid().ToString("N");
+            ResetTestItems();
+            LastResult = "Re-test started";
+            AppendLog($"Re-test requested for SN: {CurrentSn}");
+        }
+
         if (string.IsNullOrWhiteSpace(SessionId))
         {
             SessionId = Guid.NewGuid().ToString("N");
@@ -424,6 +520,7 @@ public sealed class MainViewModel : ObservableObject
 
         await _databaseRepository.SaveSessionAsync(record);
         await LoadRecentSessionsAsync();
+        await SetMockQueryDefaultAsync();
         AppendLog("Session persisted.");
         UpdateDebugOutput();
     }
@@ -505,6 +602,7 @@ public sealed class MainViewModel : ObservableObject
 
         await _databaseRepository.SaveSessionAsync(record);
         await LoadRecentSessionsAsync();
+        await SetMockQueryDefaultAsync();
         AppendLog("Session persisted.");
         UpdateDebugOutput();
     }
@@ -589,6 +687,11 @@ public sealed class MainViewModel : ObservableObject
                 "passed" => TestItemState.Passed,
                 _ => TestItemState.Failed
             };
+            if (testEvent.Status == "running" && !ReferenceEquals(CurrentTestItem, TestItems[index]))
+            {
+                CurrentTestItem = TestItems[index];
+                SequenceAdvanceRequested?.Invoke(this, CurrentTestItem);
+            }
         }
 
         if (testEvent.TestId == "battery_management")
@@ -803,6 +906,33 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    private async Task ShowQueryPageAsync()
+    {
+        IsQueryPage = true;
+        await RefreshQueryRecordsAsync();
+    }
+
+    private async Task RefreshQueryRecordsAsync()
+    {
+        var filter = QueryText.Trim();
+        var sessions = await _databaseRepository.GetRecentSessionsAsync(200);
+        var filtered = string.IsNullOrEmpty(filter)
+            ? sessions
+            : sessions.Where(session => session.Session.Sn.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                || session.BoardState?.BoardId.Contains(filter, StringComparison.OrdinalIgnoreCase) == true);
+
+        QuerySessions.Clear();
+        foreach (var session in filtered) QuerySessions.Add(session);
+    }
+
+    private async Task SetMockQueryDefaultAsync()
+    {
+        if (!_isMockSession) return;
+
+        QueryText = CurrentSn;
+        if (IsQueryPage) await RefreshQueryRecordsAsync();
+    }
+
     private void AppendLog(string message)
     {
         _logService.Info(message);
@@ -889,6 +1019,8 @@ public sealed class MainViewModel : ObservableObject
         {
             item.State = TestItemState.Pending;
         }
+
+        CurrentTestItem = TestItems.FirstOrDefault();
 
         foreach (var result in TestResults)
         {

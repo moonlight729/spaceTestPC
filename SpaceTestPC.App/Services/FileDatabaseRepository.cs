@@ -52,6 +52,22 @@ public sealed class FileDatabaseRepository : IDatabaseRepository
         }
     }
 
+    public async Task<TestSessionRecord?> GetLatestSessionBySnAsync(string sn, CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            return (await LoadAsync(cancellationToken))
+                .Where(record => string.Equals(record.Session.Sn, sn, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(record => record.Session.StartTime)
+                .FirstOrDefault();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     private async Task<List<TestSessionRecord>> LoadAsync(CancellationToken cancellationToken)
     {
         if (!File.Exists(_databasePath))

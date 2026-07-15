@@ -18,6 +18,13 @@ public sealed class SqliteDatabaseRepositoryTests : IDisposable
 
         var session = Assert.Single(await repository.GetRecentSessionsAsync(1));
         Assert.Equal("SN-001", session.Session.Sn);
+        var result = Assert.Single(session.TestResults);
+        Assert.Equal("wifi", result.TestId);
+        Assert.Equal("PASS", result.Status);
+        Assert.True(Assert.IsType<System.Text.Json.JsonElement>(result.Data["pingOk"]).GetBoolean());
+        var history = await repository.GetLatestSessionBySnAsync("SN-001");
+        Assert.NotNull(history);
+        Assert.Equal("wifi", Assert.Single(history.TestResults).TestId);
         var csv = await File.ReadAllTextAsync(Path.Combine(_root, "records", "SN-001.csv"));
         Assert.Contains("session-1", csv);
         Assert.Contains("wifi", csv);

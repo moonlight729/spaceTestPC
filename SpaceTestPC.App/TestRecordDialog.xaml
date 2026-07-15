@@ -1,0 +1,31 @@
+<Window x:Class="SpaceTestPC.App.TestRecordDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Test Record" Width="900" Height="620" MinWidth="720" MinHeight="460"
+        WindowStartupLocation="CenterOwner" Background="#EEF2F6" FontFamily="Microsoft YaHei UI">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock FontSize="24" FontWeight="SemiBold" Text="SCANNED TEST RECORD" />
+        <Border Grid.Row="1" Margin="0,18,0,18" Padding="18" Background="White" BorderBrush="#D8E0EA" BorderThickness="1" CornerRadius="8">
+            <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="2*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <StackPanel><TextBlock Foreground="#667085" Text="SN" /><TextBlock Margin="0,4,0,0" FontSize="18" FontWeight="SemiBold" Text="{Binding Session.Sn}" /></StackPanel>
+                <StackPanel Grid.Column="1"><TextBlock Foreground="#667085" Text="RESULT" /><TextBlock Margin="0,4,0,0" FontSize="18" FontWeight="SemiBold" Text="{Binding Session.FinalVerdict}" /></StackPanel>
+                <StackPanel Grid.Column="2"><TextBlock Foreground="#667085" Text="TEST TIME" /><TextBlock Margin="0,4,0,0" FontSize="15" FontWeight="SemiBold" Text="{Binding Session.StartTime, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" /></StackPanel>
+            </Grid>
+        </Border>
+        <DataGrid Grid.Row="2" ItemsSource="{Binding TestResults}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" RowHeight="40" AlternatingRowBackground="#F8FAFC" BorderBrush="#D8E0EA">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="TEST ITEM" Binding="{Binding TestId}" Width="2*" />
+                <DataGridTextColumn Header="RESULT" Binding="{Binding Status}" Width="*" />
+                <DataGridTextColumn Header="CODE" Binding="{Binding ResultCode}" Width="120" />
+            </DataGrid.Columns>
+        </DataGrid>
+        <Button Grid.Row="3" Width="110" Height="36" Margin="0,18,0,0" HorizontalAlignment="Right" IsDefault="True" Click="CloseButton_OnClick" Content="Close" />
+    </Grid>
+</Window>

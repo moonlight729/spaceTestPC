@@ -4,343 +4,272 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="{Binding WindowTitle, Mode=OneWay}"
-        Width="1280"
-        Height="820"
-        MinWidth="1100"
-        MinHeight="720"
-        Background="#F5F9FF"
+        Title="Box Test Station"
+        Width="1440"
+        Height="900"
+        MinWidth="1180"
+        MinHeight="760"
+        Background="#EEF2F6"
+        FontFamily="Microsoft YaHei UI"
         Loaded="Window_Loaded">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter" />
         <Style TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#1F2937" />
+            <Setter Property="Foreground" Value="#1D2939" />
         </Style>
         <Style TargetType="Button">
-            <Setter Property="Margin" Value="0,0,12,0" />
-            <Setter Property="Padding" Value="14,10" />
-            <Setter Property="Background" Value="#2563EB" />
+            <Setter Property="Height" Value="42" />
+            <Setter Property="Padding" Value="18,0" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Background" Value="#1463D7" />
             <Setter Property="Foreground" Value="White" />
+            <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
         </Style>
-        <Style x:Key="CardBorderStyle" TargetType="Border">
-            <Setter Property="CornerRadius" Value="18" />
-            <Setter Property="Padding" Value="20" />
+        <Style x:Key="Card" TargetType="Border">
             <Setter Property="Background" Value="White" />
-            <Setter Property="BorderBrush" Value="#D9E8F8" />
+            <Setter Property="BorderBrush" Value="#D8E0EA" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Margin" Value="0,0,0,16" />
+            <Setter Property="CornerRadius" Value="8" />
+        </Style>
+        <Style x:Key="SectionTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="#101828" />
         </Style>
     </Window.Resources>
-    <Grid Margin="24">
+
+    <Grid Margin="20">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="76" />
+            <RowDefinition Height="92" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="112" />
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" CornerRadius="20" Background="#E8F3FF" Padding="24" Margin="0,0,0,20">
+        <Border Grid.Row="0" Background="#0B1F3A" CornerRadius="8" Padding="22,0">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <StackPanel>
-                    <TextBlock FontSize="26"
-                               FontWeight="Bold"
-                               Text="自动检测工作台" />
-                    <TextBlock Margin="0,8,0,0" Foreground="#64748B" Text="扫描产品 SN 后，系统将自动完成全部顺序检测。" />
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock FontSize="22" FontWeight="SemiBold" Foreground="White" Text="Box Test Station" />
+                    <TextBlock Margin="0,4,0,0" Foreground="#B8C7D9" Text="Production test workstation" />
                 </StackPanel>
-                <StackPanel Grid.Column="1"
-                            HorizontalAlignment="Right">
-                    <TextBlock Text="当前 SN" Foreground="#64748B" />
-                    <TextBlock FontSize="18" FontWeight="SemiBold" Text="{Binding CurrentSn}" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Height="34" Margin="0,0,10,0" Padding="14,0" Background="#175CD3" Command="{Binding ShowTestPageCommand}" Content="TEST" />
+                    <Button Height="34" Margin="0,0,28,0" Padding="14,0" Background="#344054" Command="{Binding ShowQueryPageCommand}" Content="QUERY RECORDS" />
+                    <StackPanel Margin="0,0,28,0">
+                        <TextBlock Foreground="#B8C7D9" Text="BOARD" />
+                        <TextBlock FontSize="16" FontWeight="SemiBold" Foreground="White" Text="{Binding BoardId}" />
+                    </StackPanel>
+                    <StackPanel Margin="0,0,28,0">
+                        <TextBlock Foreground="#B8C7D9" Text="CONNECTION" />
+                        <TextBlock FontSize="16" FontWeight="SemiBold" Foreground="White" Text="{Binding BoardState}" />
+                    </StackPanel>
+                    <StackPanel>
+                        <TextBlock Foreground="#B8C7D9" Text="VERSION" />
+                        <TextBlock FontSize="16" FontWeight="SemiBold" Foreground="White" Text="{Binding AppVersion}" />
+                    </StackPanel>
                 </StackPanel>
             </Grid>
         </Border>
 
-        <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}" Padding="18" Margin="0,0,0,20">
-            <StackPanel>
-                <TextBlock FontSize="20" FontWeight="SemiBold" Text="检测项总览" />
-                <TextBlock Margin="0,8,0,10" Foreground="#64748B" Text="灰色为待测，绿色为通过，红色为失败。" />
-                <UniformGrid Margin="0,0,0,16" Columns="5" Rows="1">
-                    <TextBlock HorizontalAlignment="Center" Foreground="#2563EB" Text="01  扫描 SN" />
-                    <TextBlock HorizontalAlignment="Center" Foreground="#2563EB" Text="02  读取板状态" />
-                    <TextBlock HorizontalAlignment="Center" Foreground="#2563EB" Text="03  进入测试模式" />
-                    <TextBlock HorizontalAlignment="Center" Foreground="#2563EB" Text="04  通信检测" />
-                    <TextBlock HorizontalAlignment="Center" Foreground="#2563EB" Text="05  完成并保存" />
-                </UniformGrid>
-                <ItemsControl ItemsSource="{Binding TestItems}">
-                    <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <UniformGrid Columns="{Binding TestOverviewColumns}" Rows="1" />
-                        </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Canvas Width="100" Height="82" Margin="0,0,0,6">
-                                <Path Data="M 52,11 L 94,11"
-                                      Stroke="#F97316"
-                                      StrokeThickness="2.4"
-                                      StrokeStartLineCap="Round"
-                                      StrokeEndLineCap="Round"
-                                      Visibility="{Binding ShowsConnector, Converter={StaticResource BoolToVisibilityConverter}}" />
-                                <Path Data="M 88,6 L 94,11 L 88,16"
-                                      Stroke="#F97316"
-                                      StrokeThickness="2.4"
-                                      StrokeStartLineCap="Round"
-                                      StrokeEndLineCap="Round"
-                                      StrokeLineJoin="Round"
-                                      Visibility="{Binding ShowsConnector, Converter={StaticResource BoolToVisibilityConverter}}" />
-                                <Ellipse Canvas.Left="25"
-                                         Width="22"
-                                         Height="22"
-                                         Fill="{Binding StateBrush}"
-                                         Stroke="#C8D9EC"
-                                         StrokeThickness="1.2" />
-                                <TextBlock Canvas.Top="31"
-                                           Width="72"
-                                           TextAlignment="Center"
-                                           FontWeight="SemiBold"
-                                           Text="{Binding Name}" />
-                                <TextBlock Canvas.Top="53"
-                                           Width="72"
-                                           TextAlignment="Center"
-                                           Foreground="#64748B"
-                                           Text="{Binding StateLabel}" />
-                            </Canvas>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </StackPanel>
-        </Border>
-
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="1" Margin="0,14,0,14" Visibility="{Binding IsTestPage, Converter={StaticResource BoolToVisibilityConverter}}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="0" />
-                <ColumnDefinition Width="0" />
+                <ColumnDefinition Width="330" />
             </Grid.ColumnDefinitions>
-
-            <StackPanel Grid.Column="0">
-                <Border Style="{StaticResource CardBorderStyle}">
-                    <StackPanel>
-                        <TextBlock FontSize="24"
-                                   FontWeight="SemiBold"
-                                   Text="{Binding SelectedTestResult.DisplayName}" />
-                        <TextBlock Margin="0,0,0,12"
-                                   FontSize="16"
-                                   FontWeight="SemiBold"
-                                   Foreground="#2563EB"
-                                   TextWrapping="Wrap"
-                                   Text="{Binding OperatorInstruction}" />
-                        <Button Width="160"
-                                Margin="0,0,0,12"
-                                HorizontalAlignment="Left"
-                                Command="{Binding StartMockSessionCommand}"
-                                Content="开始 Mock 测试" />
-                        <CheckBox Visibility="Collapsed"
-                                  Margin="0,0,0,12"
-                                  Foreground="White"
-                                  IsChecked="{Binding IsAutoStartEnabled}"
-                                  Content="扫码后自动启动阶段 1" />
-                        <TextBox x:Name="ScannerInputTextBox"
-                                 Height="1"
-                                 Width="1"
-                                 Margin="0"
-                                 Padding="12,8"
-                                 Background="#F8FBFF"
-                                 Foreground="#1F2937"
-                                 BorderBrush="#B8D6F2"
-                                 Opacity="0.01"
-                                 KeyDown="ScannerInputTextBox_OnKeyDown"
-                                 Text="{Binding ScannerInput, UpdateSourceTrigger=PropertyChanged}" />
-                        <Button Visibility="Collapsed" Width="120" Command="{Binding ScanCommand}" Content="确认扫码" />
-                        <Border Margin="0,8,0,0"
-                                Padding="14"
-                                Background="#F8FBFF"
-                                BorderBrush="#D9E8F8"
-                                BorderThickness="1"
-                                CornerRadius="12">
-                            <StackPanel>
-                                <TextBlock FontSize="18"
-                                           FontWeight="SemiBold"
-                                           Foreground="{Binding SelectedTestResult.StateBrush}"
-                                           Text="{Binding SelectedTestResult.StateLabel}" />
-                                <TextBlock Margin="0,12,0,0"
-                                           FontSize="16"
-                                           TextWrapping="Wrap"
-                                           Text="{Binding SelectedTestResult.Message}" />
-                                <ItemsControl Margin="0,16,0,0"
-                                              ItemsSource="{Binding DirectionalKeys}"
-                                              Visibility="{Binding IsKeyTestDetailVisible, Converter={StaticResource BoolToVisibilityConverter}}">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate>
-                                            <UniformGrid Columns="4" />
-                                        </ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Border Margin="0,0,10,0"
-                                                    Padding="14,12"
-                                                    Background="{Binding Background}"
-                                                    CornerRadius="10">
-                                                <StackPanel>
-                                                    <TextBlock HorizontalAlignment="Center"
-                                                               FontSize="20"
-                                                               FontWeight="Bold"
-                                                               Foreground="White"
-                                                               Text="{Binding Label}" />
-                                                    <TextBlock Margin="0,5,0,0"
-                                                               HorizontalAlignment="Center"
-                                                               Foreground="White"
-                                                               Text="{Binding StatusText}" />
-                                                </StackPanel>
-                                            </Border>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                                <TextBlock Margin="0,12,0,0"
-                                           FontWeight="SemiBold"
-                                           Foreground="#EA580C"
-                                           TextWrapping="Wrap"
-                                           Visibility="{Binding IsManualDecisionVisible, Converter={StaticResource BoolToVisibilityConverter}}"
-                                           Text="{Binding ManualDecisionPrompt}" />
-                                <WrapPanel Margin="0,12,0,0"
-                                           Visibility="{Binding IsManualDecisionVisible, Converter={StaticResource BoolToVisibilityConverter}}">
-                                    <Button Width="120"
-                                            Command="{Binding ConfirmManualPassCommand}"
-                                            Content="{Binding ManualPassButtonText}" />
-                                    <Button Width="120"
-                                            Background="#DC2626"
-                                            Command="{Binding ConfirmManualFailCommand}"
-                                            Content="{Binding ManualFailButtonText}" />
-                                </WrapPanel>
-                                <TextBlock Foreground="#64748B"
-                                           Margin="0,12,0,0"
-                                           FontFamily="Consolas"
-                                           TextWrapping="Wrap"
-                                           Text="{Binding SelectedTestResult.DataText}" />
-                            </StackPanel>
-                        </Border>
+            <Border Style="{StaticResource Card}" Padding="18,12" Margin="0,0,14,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="360" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,18,0">
+                        <TextBlock Style="{StaticResource SectionTitle}" Text="SCAN SN" />
+                        <TextBlock Margin="0,4,0,0" Foreground="#667085" FontSize="12" Text="Scan to start a new test" />
                     </StackPanel>
-                </Border>
-
-                <Border Visibility="Collapsed" Style="{StaticResource CardBorderStyle}">
-                    <StackPanel>
-                        <TextBlock FontSize="20" FontWeight="SemiBold" Text="执行控制" />
-                        <TextBlock Margin="0,12,0,6" Foreground="#9CA3AF" Text="PCBA 通信模式" />
-                        <ComboBox Width="180"
-                                  Margin="0,0,0,12"
-                                  Background="#0F172A"
-                                  Foreground="White"
-                                  BorderBrush="#334155"
-                                  ItemsSource="{Binding AvailableConnectionModes}"
-                                  SelectedItem="{Binding SelectedConnectionMode}" />
-                        <TextBlock Margin="0,12,0,8" Text="{Binding SessionId, StringFormat=SessionId: {0}}" />
-                        <WrapPanel Margin="0,8,0,0">
-                            <Button Width="150" Command="{Binding ReadBoardStateCommand}" Content="读取板状态" />
-                            <Button Width="150" Command="{Binding StartPhaseOneCommand}" Content="开始阶段 1" />
-                        </WrapPanel>
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-
-            <StackPanel Grid.Column="1" Margin="20,0,0,0">
-                <Border Visibility="Collapsed" Style="{StaticResource CardBorderStyle}">
-                    <StackPanel>
-                        <TextBlock FontSize="20" FontWeight="SemiBold" Text="板状态" />
-                        <TextBlock Margin="0,12,0,6" Text="{Binding BoardId, StringFormat=BoardId: {0}}" />
-                        <TextBlock Margin="0,0,0,6" Text="{Binding BoardState, StringFormat=CurrentState: {0}}" />
-                        <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" Text="{Binding LastResult}" />
-                    </StackPanel>
-                </Border>
-
-                <Border Visibility="Collapsed" Style="{StaticResource CardBorderStyle}">
-                    <StackPanel>
-                        <TextBlock FontSize="20" FontWeight="SemiBold" Text="测试结果详情" />
-                        <TextBlock Margin="0,12,0,6" Text="{Binding SelectedTestResult.DisplayName, StringFormat=测试项: {0}}" />
-                        <TextBlock Margin="0,0,0,6" Text="{Binding SelectedTestResult.StateLabel, StringFormat=状态: {0}}" />
-                        <TextBlock Margin="0,0,0,6" Text="{Binding SelectedTestResult.ResultCode, StringFormat=结果码: {0}}" />
-                        <TextBlock Margin="0,0,0,6" Text="{Binding SelectedTestResult.Message, StringFormat=消息: {0}}" />
-                        <TextBlock Margin="0,0,0,6" Text="{Binding SelectedTestResult.Duration, StringFormat=耗时: {0}}" />
-                        <TextBlock Margin="0,8,0,4" FontWeight="SemiBold" Text="底层数据" />
-                        <TextBox Height="120"
-                                 Padding="10"
-                                 Background="#F8FBFF"
-                                 Foreground="#1F2937"
-                                 BorderBrush="#D9E8F8"
-                                 FontFamily="Consolas"
-                                 IsReadOnly="True"
-                                 Text="{Binding SelectedTestResult.DataText, Mode=OneWay}" />
-                    </StackPanel>
-                </Border>
-
-                <Border Visibility="Collapsed" Style="{StaticResource CardBorderStyle}">
-                    <StackPanel>
-                        <TextBlock FontSize="20" FontWeight="SemiBold" Text="调试输出" />
-                        <TextBox Margin="0,12,0,0"
-                                 Height="170"
-                                 Padding="12"
-                                 Background="#0F172A"
-                                 Foreground="#93C5FD"
-                                 BorderBrush="#334155"
-                                 FontFamily="Consolas"
-                                 IsReadOnly="True"
-                                 Text="{Binding DebugOutput, Mode=OneWay}" />
-                    </StackPanel>
-                </Border>
-
-                <Border Visibility="Collapsed" Style="{StaticResource CardBorderStyle}">
-                    <StackPanel>
-                        <TextBlock FontSize="20" FontWeight="SemiBold" Text="最近会话" />
-                        <ListBox Margin="0,12,0,0"
-                                 Height="120"
-                                 Background="#0F172A"
-                                 BorderThickness="0"
-                                 Foreground="White"
-                                 ItemsSource="{Binding RecentSessions}" />
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-
-            <Border Grid.Column="2" Visibility="Collapsed" Style="{StaticResource CardBorderStyle}" Margin="20,0,0,0">
-                <StackPanel>
-                    <TextBlock FontSize="20" FontWeight="SemiBold" Text="运行日志" />
-                    <TextBlock Margin="0,8,0,0" Foreground="#9CA3AF" Text="输出当前流程日志、状态变化和调试信息。" />
-                    <ListBox Margin="0,12,0,0"
-                             Background="#0F172A"
-                             BorderThickness="0"
-                             Foreground="White"
-                             ItemsSource="{Binding Logs}" />
+                    <TextBox x:Name="ScannerInputTextBox"
+                             Grid.Column="1"
+                             Height="42"
+                             Padding="12,0"
+                             VerticalContentAlignment="Center"
+                             Background="#F8FAFC"
+                             BorderBrush="#98A2B3"
+                             FontSize="16"
+                             KeyDown="ScannerInputTextBox_OnKeyDown"
+                             Text="{Binding ScannerInput, UpdateSourceTrigger=PropertyChanged}" />
+                    <Button Grid.Column="2" Margin="10,0,0,0" Command="{Binding ScanCommand}" Content="Scan / Query" />
+                    <TextBlock Grid.Column="3" Margin="18,0,0,0" VerticalAlignment="Center" Foreground="#475467" TextWrapping="Wrap" Text="{Binding OperatorInstruction}" />
+                </Grid>
+            </Border>
+            <Border Grid.Column="1" Style="{StaticResource Card}" Padding="18,12" Background="#102A50" BorderBrush="#102A50">
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Foreground="#B8C7D9" FontSize="12" Text="CURRENT RESULT" />
+                    <TextBlock Margin="0,3,0,0" FontSize="24" FontWeight="Bold" Foreground="White" Text="{Binding LastResult}" />
+                    <TextBlock Margin="0,3,0,0" Foreground="#D0DAE7" Text="{Binding CurrentSn, StringFormat=SN: {0}}" />
+                    <TextBlock Margin="0,3,0,0" Foreground="#D0DAE7" Text="{Binding HistorySummary}" Visibility="{Binding IsHistoryLoaded, Converter={StaticResource BoolToVisibilityConverter}}" />
+                    <Button Margin="0,8,0,0" Height="28" Padding="10,0" HorizontalAlignment="Left" Background="#175CD3" Command="{Binding StartPhaseOneCommand}" Content="Re-test" Visibility="{Binding IsHistoryLoaded, Converter={StaticResource BoolToVisibilityConverter}}" />
                 </StackPanel>
             </Border>
         </Grid>
-        <Border Grid.Row="3"
-                CornerRadius="12"
-                Padding="12,8"
-                Background="White"
-                BorderBrush="#D9E8F8"
-                BorderThickness="1">
+
+        <Grid Grid.Row="2" Visibility="{Binding IsTestPage, Converter={StaticResource BoolToVisibilityConverter}}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="390" />
+                <ColumnDefinition Width="14" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="64" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Grid Margin="18,0" VerticalAlignment="Center">
+                        <TextBlock Style="{StaticResource SectionTitle}" Text="TEST SEQUENCE" />
+                        <TextBlock HorizontalAlignment="Right" Foreground="#667085" Text="{Binding TestOverviewColumns, StringFormat={}{0} items}" />
+                    </Grid>
+                    <ListBox Grid.Row="1"
+                             x:Name="TestSequenceListBox"
+                             Margin="8,0,8,8"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             IsHitTestVisible="False"
+                             ScrollViewer.CanContentScroll="False"
+                             ItemsSource="{Binding TestItems}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="4"
+                                        Padding="14,11"
+                                        Background="#F8FAFC"
+                                        BorderBrush="#E4E7EC"
+                                        BorderThickness="1"
+                                        CornerRadius="6">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="28" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="82" />
+                                        </Grid.ColumnDefinitions>
+                                        <Ellipse Width="12" Height="12" VerticalAlignment="Center" Fill="{Binding StateBrush}" />
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
+                                            <TextBlock Margin="0,2,0,0" FontSize="11" Foreground="#667085" Text="{Binding StateLabel}" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center" FontWeight="Bold" Foreground="{Binding StateBrush}" Text="{Binding StateLabel}" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="2" Style="{StaticResource Card}" Padding="28">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid>
+                        <StackPanel>
+                            <TextBlock Foreground="#667085" FontSize="12" Text="CURRENT TEST" />
+                            <TextBlock Margin="0,5,0,0" FontSize="28" FontWeight="SemiBold" Text="{Binding SelectedTestResult.DisplayName}" />
+                        </StackPanel>
+                        <Border HorizontalAlignment="Right" VerticalAlignment="Center" Padding="14,7" Background="#F2F4F7" CornerRadius="16">
+                            <TextBlock FontWeight="Bold" Foreground="{Binding SelectedTestResult.StateBrush}" Text="{Binding SelectedTestResult.StateLabel}" />
+                        </Border>
+                    </Grid>
+                    <Border Grid.Row="1" Margin="0,24,0,0" Padding="18" Background="#F8FAFC" BorderBrush="#E4E7EC" BorderThickness="1" CornerRadius="6">
+                        <TextBlock FontSize="16" FontWeight="SemiBold" Foreground="#175CD3" TextWrapping="Wrap" Text="{Binding OperatorInstruction}" />
+                    </Border>
+                    <ScrollViewer Grid.Row="2" Margin="0,22,0,0" VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource SectionTitle}" Text="RESULT DETAIL" />
+                            <TextBlock Margin="0,12,0,0" FontSize="16" TextWrapping="Wrap" Text="{Binding SelectedTestResult.Message}" />
+                            <Grid Margin="0,22,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Foreground="#667085" Text="Result code" />
+                                <TextBlock Grid.Column="1" FontWeight="SemiBold" Text="{Binding SelectedTestResult.ResultCode}" />
+                                <TextBlock Grid.Row="1" Margin="0,12,0,0" Foreground="#667085" Text="Duration" />
+                                <TextBlock Grid.Row="1" Grid.Column="1" Margin="0,12,0,0" FontWeight="SemiBold" Text="{Binding SelectedTestResult.Duration}" />
+                            </Grid>
+                            <TextBlock Margin="0,28,0,8" Style="{StaticResource SectionTitle}" Text="MEASUREMENT / DEVICE DATA" />
+                            <TextBox MinHeight="150" Padding="14" Background="#101828" BorderThickness="0" Foreground="#D0D5DD" FontFamily="Consolas" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Text="{Binding SelectedTestResult.DataText, Mode=OneWay}" />
+                            <ItemsControl Margin="0,22,0,0" ItemsSource="{Binding DirectionalKeys}" Visibility="{Binding IsKeyTestDetailVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="4" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate><DataTemplate><Border Margin="0,0,10,0" Padding="12" Background="{Binding Background}" CornerRadius="6"><StackPanel><TextBlock HorizontalAlignment="Center" FontWeight="Bold" Foreground="White" Text="{Binding Label}" /><TextBlock HorizontalAlignment="Center" Margin="0,4,0,0" Foreground="White" Text="{Binding StatusText}" /></StackPanel></Border></DataTemplate></ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ScrollViewer>
+                    <Border Grid.Row="3" Margin="0,22,0,0" Padding="16" Background="#FFF7ED" BorderBrush="#FED7AA" BorderThickness="1" CornerRadius="6" Visibility="{Binding IsManualDecisionVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                        <Grid>
+                            <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Foreground="#9A3412" TextWrapping="Wrap" Text="{Binding ManualDecisionPrompt}" />
+                            <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+                                <Button Width="116" Margin="0,0,10,0" Command="{Binding ConfirmManualPassCommand}" Content="PASS" />
+                                <Button Width="116" Background="#B42318" Command="{Binding ConfirmManualFailCommand}" Content="FAIL" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="3" Margin="0,14,0,0" Style="{StaticResource Card}" Padding="16" Visibility="{Binding IsTestPage, Converter={StaticResource BoolToVisibilityConverter}}">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="130" />
                     <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <TextBlock VerticalAlignment="Top"
-                           Margin="0,4,18,0"
-                           FontWeight="SemiBold"
-                           Text="最近日志" />
-                <ItemsControl Grid.Column="1" ItemsSource="{Binding Logs}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <TextBlock Margin="0,2"
-                                       Foreground="#64748B"
-                                       Text="{Binding}" />
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
+                <StackPanel>
+                    <TextBlock Style="{StaticResource SectionTitle}" Text="RUN LOG" />
+                    <TextBlock Margin="0,4,0,0" Foreground="#667085" FontSize="12" Text="Latest events" />
+                </StackPanel>
+                <ListBox Grid.Column="1" Margin="10,0" Background="Transparent" BorderThickness="0" Foreground="#475467" ItemsSource="{Binding Logs}" />
+                <Button Grid.Column="2" VerticalAlignment="Center" Command="{Binding StartMockSessionCommand}" Content="Run Mock" />
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="1" Grid.RowSpan="3" Margin="0,14,0,0" Style="{StaticResource Card}" Padding="28" Visibility="{Binding IsQueryPage, Converter={StaticResource BoolToVisibilityConverter}}">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <StackPanel>
+                    <TextBlock FontSize="24" FontWeight="SemiBold" Text="TEST RECORD QUERY" />
+                    <TextBlock Margin="0,6,0,0" Foreground="#667085" Text="Recent tests are loaded automatically. Enter an SN or board ID only when you need to filter the list." />
+                </StackPanel>
+                <Grid Grid.Row="1" Margin="0,24,0,20">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="380" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <TextBox Height="42" Padding="12,0" VerticalContentAlignment="Center" Background="#F8FAFC" BorderBrush="#98A2B3" FontSize="16" Text="{Binding QueryText, UpdateSourceTrigger=PropertyChanged}" />
+                    <Button Grid.Column="1" Margin="10,0,0,0" Command="{Binding QueryRecordsCommand}" Content="Search" />
+                    <TextBlock Grid.Column="2" Margin="18,0,0,0" VerticalAlignment="Center" Foreground="#667085" Text="Showing up to 200 most recent sessions" />
+                </Grid>
+                <DataGrid Grid.Row="2" ItemsSource="{Binding QuerySessions}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" RowHeight="42" AlternatingRowBackground="#F8FAFC" BorderBrush="#D8E0EA">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="SN" Binding="{Binding Session.Sn}" Width="2*" />
+                        <DataGridTextColumn Header="RESULT" Binding="{Binding Session.FinalVerdict}" Width="*" />
+                        <DataGridTextColumn Header="BOARD ID" Binding="{Binding BoardState.BoardId}" Width="*" />
+                        <DataGridTextColumn Header="START TIME" Binding="{Binding Session.StartTime, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" Width="2*" />
+                        <DataGridTextColumn Header="END TIME" Binding="{Binding Session.EndTime, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" Width="2*" />
+                        <DataGridTextColumn Header="ITEMS" Binding="{Binding TestResults.Count}" Width="80" />
+                    </DataGrid.Columns>
+                </DataGrid>
             </Grid>
         </Border>
     </Grid>

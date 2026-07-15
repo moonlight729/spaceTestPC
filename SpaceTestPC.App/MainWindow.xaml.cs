@@ -1,6 +1,8 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using SpaceTestPC.App.Services;
 using SpaceTestPC.App.ViewModels;
 
@@ -9,6 +11,7 @@ namespace SpaceTestPC.App;
 public partial class MainWindow : Window
 {
     private readonly MainViewModel _viewModel;
+    private CancellationTokenSource? _sequenceScrollCancellation;
 
     public MainWindow()
     {
@@ -36,6 +39,8 @@ public partial class MainWindow : Window
             new BluetoothBroadcasterService(configuration.BluetoothBroadcaster));
 
         DataContext = _viewModel;
+        _viewModel.SequenceAdvanceRequested += SequenceAdvanceRequested;
+        _viewModel.HistoryRecordFound += HistoryRecordFound;
         Loaded += async (_, _) => await _viewModel.InitializeAsync();
     }
 
@@ -57,5 +62,55 @@ public partial class MainWindow : Window
             _viewModel.ScanCommand.Execute(null);
             e.Handled = true;
         }
+    }
+
+    private async void SequenceAdvanceRequested(object? sender, TestItemViewModel testItem)
+    {
+        _sequenceScrollCancellation?.Cancel();
+        var cancellation = _sequenceScrollCancellation = new CancellationTokenSource();
+        await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Loaded);
+        if (cancellation.IsCancellationRequested) return;
+
+        if (TestSequenceListBox.ItemContainerGenerator.ContainerFromItem(testItem) is not FrameworkElement item ||
+            FindVisualChild<ScrollViewer>(TestSequenceListBox) is not ScrollViewer viewer)
+        {
+            return;
+        }
+
+        var position = item.TransformToAncestor(viewer).Transform(new Point(0, 0)).Y;
+        var lowerEdge = position + item.ActualHeight;
+        var safeTop = viewer.ViewportHeight * 0.18;
+        var safeBottom = viewer.ViewportHeight * 0.82;
+        if (position >= safeTop && lowerEdge <= safeBottom)
+        {
+            return;
+        }
+
+        var target = Math.Clamp(viewer.VerticalOffset + position - viewer.ViewportHeight * 0.42, 0, viewer.ScrollableHeight);
+        var start = viewer.VerticalOffset;
+        for (var frame = 1; frame <= 18 && !cancellation.IsCancellationRequested; frame++)
+        {
+            var progress = frame / 18d;
+            var eased = 1 - Math.Pow(1 - progress, 3);
+            viewer.ScrollToVerticalOffset(start + (target - start) * eased);
+            await Task.Delay(18, cancellation.Token).ContinueWith(_ => { });
+        }
+    }
+
+    private void HistoryRecordFound(object? sender, Models.TestSessionRecord record)
+    {
+        var dialog = new TestRecordDialog(record) { Owner = this };
+        dialog.ShowDialog();
+    }
+
+    private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, index);
+            if (child is T result) return result;
+            if (FindVisualChild<T>(child) is { } descendant) return descendant;
+        }
+        return null;
     }
 }

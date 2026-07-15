@@ -64,16 +64,77 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
             await using var command = connection.CreateCommand();
             command.CommandText = "SELECT session_id, sn, start_time, end_time, final_verdict, board_id FROM test_sessions ORDER BY start_time DESC LIMIT $count";
             command.Parameters.AddWithValue("$count", count);
-            var records = new List<TestSessionRecord>();
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
+            var rows = new List<SessionRow>();
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
             {
-                records.Add(new TestSessionRecord { Session = new TestSession { SessionId = reader.GetString(0), Sn = reader.GetString(1), StartTime = DateTimeOffset.Parse(reader.GetString(2)), EndTime = string.IsNullOrEmpty(reader.GetString(3)) ? null : DateTimeOffset.Parse(reader.GetString(3)), FinalVerdict = reader.GetString(4) }, BoardState = new BoardState { BoardId = reader.GetString(5) } });
+                while (await reader.ReadAsync(cancellationToken)) rows.Add(ReadSessionRow(reader));
             }
+            var records = new List<TestSessionRecord>();
+            foreach (var row in rows) records.Add(await CreateRecordAsync(connection, row, cancellationToken));
             return records;
         }
         finally { _gate.Release(); }
     }
+
+    public async Task<TestSessionRecord?> GetLatestSessionBySnAsync(string sn, CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            await using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+            await EnsureSchemaAsync(connection, cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT session_id, sn, start_time, end_time, final_verdict, board_id FROM test_sessions WHERE sn = $sn ORDER BY start_time DESC LIMIT 1";
+            command.Parameters.AddWithValue("$sn", sn);
+            SessionRow? row = null;
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            {
+                if (await reader.ReadAsync(cancellationToken)) row = ReadSessionRow(reader);
+            }
+            return row is null ? null : await CreateRecordAsync(connection, row, cancellationToken);
+        }
+        finally { _gate.Release(); }
+    }
+
+    private static SessionRow ReadSessionRow(SqliteDataReader reader) => new(
+        reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetString(5));
+
+    private static async Task<TestSessionRecord> CreateRecordAsync(SqliteConnection connection, SessionRow row, CancellationToken cancellationToken)
+    {
+        var results = new List<TestResultRecord>();
+        await using var resultCommand = connection.CreateCommand();
+        resultCommand.CommandText = "SELECT test_id, status, result_code, message, data_json FROM test_results WHERE session_id = $sessionId ORDER BY id";
+        resultCommand.Parameters.AddWithValue("$sessionId", row.SessionId);
+        await using var resultReader = await resultCommand.ExecuteReaderAsync(cancellationToken);
+        while (await resultReader.ReadAsync(cancellationToken))
+        {
+            results.Add(new TestResultRecord
+            {
+                TestId = resultReader.GetString(0),
+                Status = resultReader.GetString(1),
+                ResultCode = resultReader.GetInt32(2),
+                Message = resultReader.IsDBNull(3) ? string.Empty : resultReader.GetString(3),
+                Data = JsonSerializer.Deserialize<Dictionary<string, object?>>(resultReader.GetString(4)) ?? new Dictionary<string, object?>()
+            });
+        }
+
+        return new TestSessionRecord
+        {
+            Session = new TestSession
+            {
+                SessionId = row.SessionId,
+                Sn = row.Sn,
+                StartTime = DateTimeOffset.Parse(row.StartTime),
+                EndTime = string.IsNullOrEmpty(row.EndTime) ? null : DateTimeOffset.Parse(row.EndTime),
+                FinalVerdict = row.FinalVerdict
+            },
+            BoardState = new BoardState { BoardId = row.BoardId },
+            TestResults = results
+        };
+    }
+
+    private sealed record SessionRow(string SessionId, string Sn, string StartTime, string EndTime, string FinalVerdict, string BoardId);
 
     private static async Task EnsureSchemaAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {
