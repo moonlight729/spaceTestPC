@@ -70,7 +70,7 @@ spaceTest3576/
 
 - `keys/`：五键 evdev 输入。
 - `wifi/`：基于 `nmcli` 的 Wi-Fi 状态和 ping 检测。
-- `bluetooth/`：基于 `bluetoothctl` 的扫描检测。
+- `bluetooth/`：基于 `bluetoothctl` 的扫描检测；目标名由上位机 `bluetoothBroadcaster.broadcastName` 下发，当前默认 `yctc_bt_test_01`。
 - `fingerprint/`：指纹模组临时 PASS 框架。
 - `fast_charge/`：板快充输入电压/电流读取框架。
 - `tf_card/`：TF 卡 ext4、自动挂载、容量和读写校验。

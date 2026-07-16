@@ -42,9 +42,11 @@ public sealed class MainViewModel : ObservableObject
     private readonly HashSet<string> _voltageControlCommands = new(StringComparer.OrdinalIgnoreCase);
     private readonly IReadOnlyList<TestPlanItem> _testPlan;
     private readonly IReadOnlyDictionary<string, int> _testItemIndexes;
+    private readonly bool _allowSnMismatchForDebug;
+    private readonly int _keyTestTimeoutMs;
     private readonly BluetoothScanRequest _bluetoothRequest = new()
     {
-        TargetName = "NODE_A_01",
+        TargetName = "yctc_bt_test_01",
         TimeoutMs = 5000,
         MinRssi = -80
     };
@@ -110,6 +112,8 @@ public sealed class MainViewModel : ObservableObject
         _jxTvmService = jxTvmService;
         _bluetoothBroadcasterService = bluetoothBroadcasterService;
         var appConfiguration = configuration ?? new AppConfiguration();
+        _allowSnMismatchForDebug = appConfiguration.TestPlan.AllowSnMismatchForDebug;
+        _keyTestTimeoutMs = GetConfiguredKeyTimeoutMs(appConfiguration);
         _testPlan = BuildActiveTestPlan(appConfiguration);
         _testItemIndexes = _testPlan
             .Select((item, index) => new { item.Id, index })
@@ -222,6 +226,8 @@ public sealed class MainViewModel : ObservableObject
         get => _debugOutput;
         private set => SetProperty(ref _debugOutput, value);
     }
+
+    public string LogsText => string.Join(Environment.NewLine, Logs.Reverse());
 
     public string AppVersion { get; } = GetAppVersion();
     public string WindowTitle => $"妫€娴嬪伐浣滃彴 {AppVersion}";
@@ -635,6 +641,13 @@ public sealed class MainViewModel : ObservableObject
 
         if (!string.IsNullOrWhiteSpace(state.BoardSn))
         {
+            if (_allowSnMismatchForDebug)
+            {
+                AppendLog($"DEBUG SN mismatch allowed: boardSn={state.BoardSn}, scannedSn={CurrentSn}. Board SN will not be overwritten.");
+                OperatorInstruction = $"调试模式：板端 SN({state.BoardSn}) 与扫码 SN({CurrentSn}) 不一致，已允许继续测试。";
+                return state;
+            }
+
             throw new InvalidOperationException($"Board already has a different SN ({state.BoardSn}); scanned SN is {CurrentSn}.");
         }
 
@@ -667,6 +680,10 @@ public sealed class MainViewModel : ObservableObject
 
         if (testEvent.TestId == "keys" && testEvent.Status == "running")
         {
+            if (IsInitialKeyTestReport(testEvent.Data))
+            {
+                ResetDirectionalKeys();
+            }
             ApplyDetectedKeys(testEvent.Data);
         }
 
@@ -746,9 +763,14 @@ public sealed class MainViewModel : ObservableObject
     private static string FormatTestEventLog(TestSessionEvent testEvent)
     {
         var data = FormatEventData(testEvent.Data);
+        var hint = FormatFailureHint(testEvent);
         return data.Length == 0
-            ? $"[{testEvent.TestId}] {testEvent.Status}, code={testEvent.ResultCode}, msg={testEvent.Message}"
-            : $"[{testEvent.TestId}] {testEvent.Status}, code={testEvent.ResultCode}, msg={testEvent.Message}, data={data}";
+            ? string.IsNullOrWhiteSpace(hint)
+                ? $"[{testEvent.TestId}] {testEvent.Status}, code={testEvent.ResultCode}, msg={testEvent.Message}"
+                : $"[{testEvent.TestId}] {testEvent.Status}, code={testEvent.ResultCode}, msg={testEvent.Message}, {hint}"
+            : string.IsNullOrWhiteSpace(hint)
+                ? $"[{testEvent.TestId}] {testEvent.Status}, code={testEvent.ResultCode}, msg={testEvent.Message}, data={data}"
+                : $"[{testEvent.TestId}] {testEvent.Status}, code={testEvent.ResultCode}, msg={testEvent.Message}, {hint}, data={data}";
     }
 
     private static string FormatEventData(IReadOnlyDictionary<string, object?> data)
@@ -757,6 +779,17 @@ public sealed class MainViewModel : ObservableObject
         var json = JsonSerializer.Serialize(data);
         return json.Length <= 220 ? json : json[..220] + "...";
     }
+
+    private static string FormatFailureHint(TestSessionEvent testEvent) =>
+        testEvent.TestId == "keys" && testEvent.Status == "failed"
+            ? testEvent.ResultCode switch
+            {
+                4000 => "hint=3576 无法打开按键输入设备",
+                4001 => "hint=按键测试超时",
+                4002 => "hint=3576 读取按键事件失败",
+                _ => string.Empty
+            }
+            : string.Empty;
 
     private string BuildKeyTestInstruction(TestSessionEvent testEvent)
     {
@@ -767,14 +800,20 @@ public sealed class MainViewModel : ObservableObject
 
         if (testEvent.Status == "failed")
         {
-            return "按键测试失败：30 秒内未完成上、下、左、右、确认五个按键输入。";
+            return testEvent.ResultCode switch
+            {
+                4000 => "按键测试失败：3576 无法打开按键输入设备，请检查 gpio-keys 与 pwrkey 节点。",
+                4001 => $"按键测试失败：{FormatKeyTimeoutSeconds()} 秒内未完成上、下、左、右、确认五个按键输入。",
+                4002 => "按键测试失败：3576 读取按键输入事件异常，请检查 evdev 驱动和输入节点。",
+                _ => $"按键测试失败：resultCode={testEvent.ResultCode}，message={testEvent.Message}"
+            };
         }
 
         var detected = DirectionalKeys.Where(key => key.IsDetected).Select(key => key.Label).ToArray();
         var missing = DirectionalKeys.Where(key => !key.IsDetected).Select(key => key.Label).ToArray();
         var detectedText = detected.Length == 0 ? "无" : string.Join("、", detected);
         var missingText = missing.Length == 0 ? "无" : string.Join("、", missing);
-        return $"按键测试：请在 30 秒内依次按上、下、左、右、确认键。已识别：{detectedText}；剩余：{missingText}。";
+        return $"按键测试：请在 {FormatKeyTimeoutSeconds()} 秒内依次按上、下、左、右、确认键。已识别：{detectedText}；剩余：{missingText}。";
     }
 
     private static string GetTestDisplayName(string testId) => testId switch
@@ -822,6 +861,24 @@ public sealed class MainViewModel : ObservableObject
         RaisePropertyChanged(nameof(ManualDecisionPrompt));
     }
 
+    private void ResetDirectionalKeys()
+    {
+        foreach (var key in DirectionalKeys)
+        {
+            key.IsDetected = false;
+        }
+    }
+
+    private static bool IsInitialKeyTestReport(IReadOnlyDictionary<string, object?> data)
+    {
+        var detectedKeys = GetStringValues(data, "detectedKeys").ToArray();
+        var currentKey = GetDataString(data, "key", string.Empty);
+        var detectedMask = GetDataInt(data, "detectedMask");
+        return detectedKeys.Length == 0 &&
+               string.IsNullOrWhiteSpace(currentKey) &&
+               detectedMask == 0;
+    }
+
     private void SetDirectionalKeyDetected(string keyId)
     {
         if (string.Equals(keyId, "ok", StringComparison.OrdinalIgnoreCase)) keyId = "confirm";
@@ -833,6 +890,42 @@ public sealed class MainViewModel : ObservableObject
     }
 
     private bool AreAllDirectionalKeysDetected() => DirectionalKeys.All(key => key.IsDetected);
+
+    private static int GetConfiguredKeyTimeoutMs(AppConfiguration configuration)
+    {
+        if (configuration.TestPlan.TestParameters.TryGetValue("keys", out var parameters) &&
+            parameters.TryGetValue("timeoutMs", out var value) &&
+            TryGetInt(value, out var timeoutMs) &&
+            timeoutMs > 0)
+        {
+            return timeoutMs;
+        }
+
+        return 45000;
+    }
+
+    private string FormatKeyTimeoutSeconds() => Math.Max(1, _keyTestTimeoutMs / 1000).ToString();
+
+    private static bool TryGetInt(object? value, out int result)
+    {
+        switch (value)
+        {
+            case null:
+                result = 0;
+                return false;
+            case int intValue:
+                result = intValue;
+                return true;
+            case long longValue when longValue is >= int.MinValue and <= int.MaxValue:
+                result = (int)longValue;
+                return true;
+            case JsonElement { ValueKind: JsonValueKind.Number } element when element.TryGetInt32(out var jsonValue):
+                result = jsonValue;
+                return true;
+            default:
+                return int.TryParse(value.ToString(), out result);
+        }
+    }
 
     private static IEnumerable<string> GetStringValues(IReadOnlyDictionary<string, object?> data, string key)
     {
@@ -1009,10 +1102,11 @@ public sealed class MainViewModel : ObservableObject
     {
         _logService.Info(message);
         Logs.Clear();
-        foreach (var entry in _logService.Snapshot().Take(12))
+        foreach (var entry in _logService.Snapshot().Take(40))
         {
             Logs.Add(entry);
         }
+        RaisePropertyChanged(nameof(LogsText));
     }
 
     private IReadOnlyList<TestResultRecord> BuildTestResultRecords() => TestResults
@@ -1067,6 +1161,9 @@ public sealed class MainViewModel : ObservableObject
         var result = parameters.ToDictionary(pair => pair.Key, pair => (object?)pair.Value, StringComparer.OrdinalIgnoreCase);
         if (testId == "bluetooth" && !string.IsNullOrWhiteSpace(configuration.BluetoothBroadcaster.BroadcastName))
         {
+            // The upper PC configures the BLE broadcaster name and the 3576
+            // scans for that exact name.  Override bluetooth.targetName here so
+            // production only changes bluetoothBroadcaster.broadcastName.
             result["targetName"] = configuration.BluetoothBroadcaster.BroadcastName;
         }
         return result;

@@ -439,6 +439,11 @@ static int run_bluetooth(int fd, const struct app_config *config, const char *te
     struct bluetooth_result result;
     char data[512];
 
+    /*
+     * The upper PC configures its BLE broadcaster name and sends that exact
+     * name as bluetooth.parameters.targetName.  Keep this fallback only for
+     * local smoke tests; production should not hard-code a target here.
+     */
     snprintf(target_name, sizeof(target_name), "%s", config->bluetooth_target_name);
     param_string(test_start, test_end, "targetName", target_name, sizeof(target_name));
     request.min_rssi = param_int(test_start, test_end, "minRssi", request.min_rssi);

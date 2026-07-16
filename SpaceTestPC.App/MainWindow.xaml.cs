@@ -31,7 +31,7 @@ public partial class MainWindow : Window
             new StatusMonitorService("Voltage"),
             new StatusMonitorService("Battery"),
             repository,
-            new LogService(),
+            new LogService(configuration.Logging),
             configuration,
             manualTestInteractionService,
             new Jk5506Service(configuration.Jk5506),

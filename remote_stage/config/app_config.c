@@ -13,7 +13,7 @@ void app_config_load_defaults(struct app_config *config)
     config->tf_device_path = "/dev/mmcblk1p1";
     config->tf_mount_point = "/mnt/spacetest_tf";
     config->tf_allow_format_ext4 = 1;
-    config->bluetooth_target_name = "Mate40";
+    config->bluetooth_target_name = "yctc_bt_test_01";
     config->bluetooth_min_rssi = -80;
     config->fast_charge_voltage_min_mv = 7500;
     config->fast_charge_voltage_max_mv = 12000;

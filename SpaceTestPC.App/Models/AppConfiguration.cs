@@ -8,6 +8,13 @@ public sealed class AppConfiguration
     public Jk5506Configuration Jk5506 { get; set; } = new();
     public JxTvmConfiguration JxTvm { get; set; } = new();
     public BluetoothBroadcasterConfiguration BluetoothBroadcaster { get; set; } = new();
+    public LoggingConfiguration Logging { get; set; } = new();
+}
+
+public sealed class LoggingConfiguration
+{
+    public bool FileEnabled { get; set; } = true;
+    public string FilePath { get; set; } = "logs/space-test-pc.log";
 }
 
 public sealed class BluetoothBroadcasterConfiguration
@@ -34,6 +41,7 @@ public sealed class Jk5506Configuration
 
 public sealed class TestPlanConfiguration
 {
+    public bool AllowSnMismatchForDebug { get; set; }
     public string[] EnabledTests { get; set; } = [];
     public string[] DisabledTests { get; set; } = [];
     public Dictionary<string, string> SkippedTests { get; set; } = new(StringComparer.OrdinalIgnoreCase);

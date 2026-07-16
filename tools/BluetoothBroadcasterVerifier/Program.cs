@@ -5,11 +5,11 @@ var service = new BluetoothBroadcasterService(new BluetoothBroadcasterConfigurat
 {
     Enabled = true,
     PortName = "COM6",
-    BroadcastName = "NODE_A_01"
+    BroadcastName = "yctc_bt_test_01"
 });
 
 await service.ConfigureAsync();
-Console.WriteLine("Bluetooth broadcaster configured successfully on COM6: NODE_A_01");
+Console.WriteLine("Bluetooth broadcaster configured successfully on COM6: yctc_bt_test_01");
 var status = await service.ReadStatusAsync();
 foreach (var item in status)
 {

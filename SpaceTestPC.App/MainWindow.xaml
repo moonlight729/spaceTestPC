@@ -239,7 +239,20 @@
                     <TextBlock Style="{StaticResource SectionTitle}" Text="RUN LOG" />
                     <TextBlock Margin="0,4,0,0" Foreground="#667085" FontSize="12" Text="Latest events" />
                 </StackPanel>
-                <ListBox Grid.Column="1" Margin="10,0" Background="#F8FAFC" BorderBrush="#E4E7EC" FontFamily="Consolas" FontSize="12" Foreground="#475467" ItemsSource="{Binding Logs}" />
+                <TextBox Grid.Column="1"
+                         Margin="10,0"
+                         Padding="10"
+                         Background="#F8FAFC"
+                         BorderBrush="#E4E7EC"
+                         FontFamily="Consolas"
+                         FontSize="12"
+                         Foreground="#475467"
+                         IsReadOnly="True"
+                         TextWrapping="Wrap"
+                         AcceptsReturn="True"
+                         VerticalScrollBarVisibility="Auto"
+                         HorizontalScrollBarVisibility="Auto"
+                         Text="{Binding LogsText, Mode=OneWay}" />
                 <Button Grid.Column="2" VerticalAlignment="Center" Command="{Binding StartMockSessionCommand}" Content="Run Mock" />
             </Grid>
         </Border>

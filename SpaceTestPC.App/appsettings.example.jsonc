@@ -1,13 +1,27 @@
 {
+  "bluetoothBroadcaster": {
+    // Upper-PC BLE broadcaster. 3576 scans for this same name.
+    "enabled": true,
+    "portName": "COM6",
+    "broadcastName": "yctc_bt_test_01"
+  },
+  "logging": {
+    // Relative paths are resolved under the application output directory.
+    "fileEnabled": true,
+    "filePath": "logs/space-test-pc.log"
+  },
   "testPlan": {
-    // enabledTests 非空时，只运行这里列出的测试项；执行顺序仍按程序内固定顺序。
-    // 示例: "enabledTests": ["board_state", "wifi"]
+    // Debug only. true allows testing to continue when board SN differs from scanned SN.
+    // Production must keep this false to prevent testing the wrong board.
+    "allowSnMismatchForDebug": false,
+
+    // If enabledTests is not empty, only these tests run. Execution still follows the built-in order.
     "enabledTests": [],
 
-    // enabledTests 为空时，运行完整测试计划，再排除这里列出的测试项。
+    // If enabledTests is empty, the full test plan runs except items listed here.
     "disabledTests": [],
 
-    // skippedTests 表示本轮不测试，不计入最终 PASS/FAIL。
+    // skippedTests means "not tested in this run"; it is recorded but not counted as final failure.
     "skippedTests": {
       "indicator_led": "当前指示灯测试环境暂未接入",
       "fan": "当前风扇测试环境暂未接入",
@@ -16,7 +30,6 @@
       "pcba_test_points": "PCBA测试点 32通道电压采集接口暂未正式启用"
     },
 
-    // 每个测试项下发给 3576 的参数。
     "testParameters": {
       "wifi": {
         "ssid": "test_router_001",
@@ -35,12 +48,13 @@
       },
       "bluetooth": {
         "mode": "observer",
-        "targetName": "NODE_A_01",
+        // This value is overridden by bluetoothBroadcaster.broadcastName in the real test plan.
+        "targetName": "yctc_bt_test_01",
         "minRssi": -80,
         "scanWindowMs": 10000
       },
       "keys": {
-        "timeoutMs": 30000
+        "timeoutMs": 45000
       },
       "fingerprint": {
         "bus": "spi",
@@ -55,9 +69,7 @@
         "chargeCurrentMaxMa": 3000,
         "stableSampleCount": 3,
         "sampleIntervalMs": 500,
-        "timeoutMs": 20000,
-        "pmicBus": "i2c",
-        "pmicCommand": "read_charge_status"
+        "timeoutMs": 20000
       },
       "typec_camera": {
         "streamProfile": "1080p30",
@@ -65,9 +77,11 @@
         "timeoutMs": 10000
       },
       "tf": {
-        "command": "read_card_info",
-        "mountTimeoutMs": 5000,
-        "requireMounted": true
+        "devicePath": "/dev/mmcblk1p1",
+        "mountPoint": "/mnt/spacetest_tf",
+        "allowFormatExt4": true,
+        "minCapacityMb": 1,
+        "mountTimeoutMs": 5000
       },
       "usb2_3": {
         "recordFile": "/tmp/spacetest_usb_ports.json",
@@ -86,7 +100,6 @@
     },
 
     "mock": {
-      // 指定某一项 Mock 失败；null 表示不注入失败。
       "failingTestId": null,
       "runningDelayMs": 2000,
       "resultHoldMs": 1000,

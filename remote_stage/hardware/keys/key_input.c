@@ -2,18 +2,56 @@
 #include "key_input.h"
 
 #include <errno.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <linux/input.h>
 #include <poll.h>
+#include <stdio.h>
 #include <stddef.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
 
-static const char *const key_devices[KEY_INPUT_DEVICE_COUNT] = {
-    "/dev/input/by-path/platform-gpio-keys-event",
-    "/dev/input/by-path/platform-2ac40000.i2c-platform-rk805-pwrkey.1.auto-event",
-};
+#define GPIO_KEYS_DEVICE_PATH "/dev/input/by-path/platform-gpio-keys-event"
+#define INPUT_BY_PATH_DIR "/dev/input/by-path"
+#define PWRKEY_DEVICE_PREFIX "platform-2ac40000.i2c-platform-rk805-pwrkey"
+
+static int resolve_pwrkey_device_path(char *path, size_t path_size)
+{
+    DIR *dir;
+    struct dirent *entry;
+    size_t prefix_length;
+
+    if (path == NULL || path_size == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    dir = opendir(INPUT_BY_PATH_DIR);
+    if (dir == NULL) {
+        return -1;
+    }
+
+    prefix_length = strlen(PWRKEY_DEVICE_PREFIX);
+    while ((entry = readdir(dir)) != NULL) {
+        if (strncmp(entry->d_name, PWRKEY_DEVICE_PREFIX, prefix_length) != 0) {
+            continue;
+        }
+
+        if (snprintf(path, path_size, "%s/%s", INPUT_BY_PATH_DIR, entry->d_name) >= (int)path_size) {
+            closedir(dir);
+            errno = ENAMETOOLONG;
+            return -1;
+        }
+
+        closedir(dir);
+        return 0;
+    }
+
+    closedir(dir);
+    errno = ENOENT;
+    return -1;
+}
 
 static enum key_input_id map_key(unsigned short code)
 {
@@ -36,6 +74,8 @@ const char *key_input_name(enum key_input_id key)
 int key_input_open(struct key_input *input)
 {
     int i;
+    char pwrkey_path[256];
+
     if (input == NULL) {
         errno = EINVAL;
         return -1;
@@ -43,12 +83,22 @@ int key_input_open(struct key_input *input)
     for (i = 0; i < KEY_INPUT_DEVICE_COUNT; ++i) {
         input->fds[i] = -1;
     }
-    for (i = 0; i < KEY_INPUT_DEVICE_COUNT; ++i) {
-        input->fds[i] = open(key_devices[i], O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-        if (input->fds[i] < 0) {
-            key_input_close(input);
-            return -1;
-        }
+
+    input->fds[0] = open(GPIO_KEYS_DEVICE_PATH, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (input->fds[0] < 0) {
+        key_input_close(input);
+        return -1;
+    }
+
+    if (resolve_pwrkey_device_path(pwrkey_path, sizeof(pwrkey_path)) != 0) {
+        key_input_close(input);
+        return -1;
+    }
+
+    input->fds[1] = open(pwrkey_path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (input->fds[1] < 0) {
+        key_input_close(input);
+        return -1;
     }
     return 0;
 }
