@@ -164,7 +164,7 @@ static int send_report(int fd, const char *test_id, const char *status,
 static int run_board_state(int fd)
 {
     struct board_state state;
-    char data[512];
+    char data[1024];
     send_report(fd, "board_state", "running", 0, "Reading board state", "{}");
     board_state_load_defaults(&state);
     board_state_to_json(&state, data, sizeof(data));
@@ -437,7 +437,7 @@ static int run_bluetooth(int fd, const struct app_config *config, const char *te
         .min_rssi = config->bluetooth_min_rssi,
     };
     struct bluetooth_result result;
-    char data[512];
+    char data[1024];
 
     /*
      * The upper PC configures its BLE broadcaster name and sends that exact
@@ -450,10 +450,21 @@ static int run_bluetooth(int fd, const struct app_config *config, const char *te
     request.timeout_ms = param_int(test_start, test_end, "scanWindowMs", request.timeout_ms);
     request.timeout_ms = param_int(test_start, test_end, "timeoutMs", request.timeout_ms);
     memset(&result, 0, sizeof(result));
-    send_report(fd, "bluetooth", "running", 0, "Running Bluetooth scan", "{}");
+    snprintf(data, sizeof(data),
+             "{\"targetName\":\"%s\",\"minRssi\":%d,\"scanWindowMs\":%d}",
+             target_name, request.min_rssi, request.timeout_ms);
+    send_report(fd, "bluetooth", "running", 0, "Running Bluetooth scan", data);
     if (bluetoothctl_scan_target(&request, &result) != 0) {
-        snprintf(data, sizeof(data), "{\"targetName\":\"%s\",\"minRssi\":%d}",
-                 target_name, request.min_rssi);
+        snprintf(data, sizeof(data),
+                 "{\"targetName\":\"%s\",\"minRssi\":%d,\"scanWindowMs\":%d,\"found\":%s,"
+                 "\"matchedName\":\"%s\",\"matchedMac\":\"%s\",\"matchedRssi\":%d,"
+                 "\"bestSeenName\":\"%s\",\"bestSeenMac\":\"%s\",\"bestSeenRssi\":%d,"
+                 "\"failureReason\":\"%s\"}",
+                 target_name, request.min_rssi, request.timeout_ms,
+                 result.found ? "true" : "false",
+                 result.name, result.mac, result.matched_rssi,
+                 result.best_seen_name, result.best_seen_mac, result.best_seen_rssi,
+                 result.failure_reason);
         send_report(fd, "bluetooth", "failed",
                     result.error_code == 0 ? 4200 : result.error_code,
                     result.error_message[0] == '\0' ? "Bluetooth test failed" : result.error_message,
@@ -461,8 +472,10 @@ static int run_bluetooth(int fd, const struct app_config *config, const char *te
         return -1;
     }
     snprintf(data, sizeof(data),
-             "{\"targetName\":\"%s\",\"name\":\"%s\",\"mac\":\"%s\",\"rssi\":%d,\"minRssi\":%d}",
-             target_name, result.name, result.mac, result.rssi, request.min_rssi);
+             "{\"targetName\":\"%s\",\"name\":\"%s\",\"mac\":\"%s\",\"rssi\":%d,\"minRssi\":%d,"
+             "\"scanWindowMs\":%d,\"bestSeenName\":\"%s\",\"bestSeenMac\":\"%s\",\"bestSeenRssi\":%d}",
+             target_name, result.name, result.mac, result.rssi, request.min_rssi,
+             request.timeout_ms, result.best_seen_name, result.best_seen_mac, result.best_seen_rssi);
     return send_report(fd, "bluetooth", "passed", 0, "Bluetooth target found", data);
 }
 

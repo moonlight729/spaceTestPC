@@ -3,7 +3,7 @@
     // Upper-PC BLE broadcaster. 3576 scans for this same name.
     "enabled": true,
     "portName": "COM6",
-    "broadcastName": "yctc_bt_test_01"
+    "broadcastName": "yctc_bt_01"
   },
   "logging": {
     // Relative paths are resolved under the application output directory.
@@ -49,7 +49,7 @@
       "bluetooth": {
         "mode": "observer",
         // This value is overridden by bluetoothBroadcaster.broadcastName in the real test plan.
-        "targetName": "yctc_bt_test_01",
+        "targetName": "yctc_bt_01",
         "minRssi": -80,
         "scanWindowMs": 10000
       },

@@ -8,7 +8,7 @@
 |---|---|---|---|
 | 五键 `keys` | 已接入 runner | timeout smoke 已验证 `failed/4001` 与 `session.completed/failed` | 人工依次按 `up/down/left/right/confirm`，验证逐键 running 和最终 passed |
 | Wi-Fi `wifi` | 已完成并接入 runner | 参数 smoke PASS，已读取 `ssid/routerIp/pingCount/timeoutMs` | 后续用正式 JSON parser 替代轻量字符串解析 |
-| 蓝牙 `bluetooth` | 已接入 runner | 已读取 `targetName/minRssi/scanWindowMs`；默认目标名跟随上位机广播名 `yctc_bt_test_01` | 生产环境只修改上位机 `bluetoothBroadcaster.broadcastName` |
+| 蓝牙 `bluetooth` | 已接入 runner | 已读取 `targetName/minRssi/scanWindowMs`；默认目标名跟随上位机广播名 `yctc_bt_01`；失败时补充 `failureReason/matchedRssi/bestSeenRssi` | 生产环境只修改上位机 `bluetoothBroadcaster.broadcastName` |
 | 指纹 `fingerprint` | 临时 PASS | C 编译和 runner smoke 通过 | 有真实 SPI 指纹模组后替换实现，保持 API 不变 |
 | 板快充 `typec_fast_charge` | 已接入 runner | session smoke PASS，约 8332mV、0mA；已读取阈值和采样参数 | 改为最终板端文件接口 |
 | 相机 `typec_camera` | 已完成并接入 runner | `/dev/video0` 拉流 PASS；已读取 devicePath/timeout/中断阈值 | 接入曝光中断计数文件，拉流后要求曝光计数增量 >= 30 |

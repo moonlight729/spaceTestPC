@@ -673,7 +673,7 @@ public sealed class MainViewModel : ObservableObject
     {
         var result = TestResults.FirstOrDefault(item => item.TestId == testEvent.TestId);
         result?.Apply(testEvent);
-        if (testEvent.Status == "running" && result is not null)
+        if (result is not null && ShouldSelectTestResult(testEvent, result))
         {
             SelectedTestResult = result;
         }
@@ -742,6 +742,13 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
+        if (testEvent.TestId == "bluetooth")
+        {
+            OperatorInstruction = BuildBluetoothInstruction(testEvent);
+            AppendLog(FormatTestEventLog(testEvent));
+            return;
+        }
+
         OperatorInstruction = testEvent.TestId == "usb2_3" && testEvent.Status == "running"
             ? "请确保测试前已经使用 2.0 U盘和 3.0 U盘插入过需要测试的 USB 口，并已经生成 USB 汇总文件。"
             : testEvent.TestId == "pcba_test_points" && testEvent.Status == "running"
@@ -758,6 +765,21 @@ public sealed class MainViewModel : ObservableObject
             ? $"正在检测：{GetTestDisplayName(testEvent.TestId)}。"
             : $"{GetTestDisplayName(testEvent.TestId)}：{testEvent.Status}。";
         AppendLog(FormatTestEventLog(testEvent));
+    }
+
+    private bool ShouldSelectTestResult(TestSessionEvent testEvent, TestResultViewModel result)
+    {
+        if (testEvent.Status == "failed")
+        {
+            return true;
+        }
+
+        if (testEvent.Status != "running")
+        {
+            return false;
+        }
+
+        return SelectedTestResult?.State != TestItemState.Failed || SelectedTestResult.TestId == result.TestId;
     }
 
     private static string FormatTestEventLog(TestSessionEvent testEvent)
@@ -781,15 +803,31 @@ public sealed class MainViewModel : ObservableObject
     }
 
     private static string FormatFailureHint(TestSessionEvent testEvent) =>
-        testEvent.TestId == "keys" && testEvent.Status == "failed"
-            ? testEvent.ResultCode switch
+        testEvent.Status == "failed"
+            ? testEvent.TestId switch
             {
-                4000 => "hint=3576 无法打开按键输入设备",
-                4001 => "hint=按键测试超时",
-                4002 => "hint=3576 读取按键事件失败",
+                "keys" => testEvent.ResultCode switch
+                {
+                    4000 => "hint=3576 无法打开按键输入设备",
+                    4001 => "hint=按键测试超时",
+                    4002 => "hint=3576 读取按键事件失败",
+                    _ => string.Empty
+                },
+                "bluetooth" => BuildBluetoothFailureHint(testEvent.Data),
                 _ => string.Empty
             }
             : string.Empty;
+
+    private static string BuildBluetoothFailureHint(IReadOnlyDictionary<string, object?> data)
+    {
+        var reason = GetDataString(data, "failureReason", string.Empty);
+        var found = GetDataBoolean(data, "found");
+        var matchedRssi = GetDataInt(data, "matchedRssi");
+        var minRssi = GetDataInt(data, "minRssi");
+        var bestSeenName = GetDataString(data, "bestSeenName", string.Empty);
+        var bestSeenRssi = GetDataInt(data, "bestSeenRssi");
+        return $"hint=reason:{reason}, found:{found}, matchedRssi:{matchedRssi}, minRssi:{minRssi}, bestSeen:{bestSeenName}/{bestSeenRssi}";
+    }
 
     private string BuildKeyTestInstruction(TestSessionEvent testEvent)
     {
@@ -814,6 +852,27 @@ public sealed class MainViewModel : ObservableObject
         var detectedText = detected.Length == 0 ? "无" : string.Join("、", detected);
         var missingText = missing.Length == 0 ? "无" : string.Join("、", missing);
         return $"按键测试：请在 {FormatKeyTimeoutSeconds()} 秒内依次按上、下、左、右、确认键。已识别：{detectedText}；剩余：{missingText}。";
+    }
+
+    private static string BuildBluetoothInstruction(TestSessionEvent testEvent)
+    {
+        if (testEvent.Status == "running")
+        {
+            return $"正在检测：蓝牙。目标名 {GetDataString(testEvent.Data, "targetName", "-")}，最小 RSSI {GetDataInt(testEvent.Data, "minRssi")}。";
+        }
+
+        if (testEvent.Status == "passed")
+        {
+            return $"蓝牙测试通过：名称 {GetDataString(testEvent.Data, "name", "-")}，RSSI {GetDataInt(testEvent.Data, "rssi")}。";
+        }
+
+        var reason = GetDataString(testEvent.Data, "failureReason", string.Empty);
+        var matchedName = GetDataString(testEvent.Data, "matchedName", string.Empty);
+        var matchedRssi = GetDataInt(testEvent.Data, "matchedRssi");
+        var minRssi = GetDataInt(testEvent.Data, "minRssi");
+        var bestSeenName = GetDataString(testEvent.Data, "bestSeenName", string.Empty);
+        var bestSeenRssi = GetDataInt(testEvent.Data, "bestSeenRssi");
+        return $"蓝牙测试失败：reason={reason}，matched={matchedName}/{matchedRssi}，bestSeen={bestSeenName}/{bestSeenRssi}，minRssi={minRssi}。";
     }
 
     private static string GetTestDisplayName(string testId) => testId switch
