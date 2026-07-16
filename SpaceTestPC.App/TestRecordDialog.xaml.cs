@@ -29,13 +29,13 @@ public partial class TestRecordDialog : Window
         "wifi" => "Wi-Fi",
         "bluetooth" => "蓝牙",
         "fingerprint" => "指纹模块",
-        "typec_fast_charge" => "Type-C 快充",
+        "typec_fast_charge" => "板快充",
         "typec_camera" => "Type-C 摄像头",
         "tf" => "TF 卡",
         "indicator_led" => "指示灯",
         "fan" => "风扇",
         "otg" => "USB OTG",
-        "battery_management" => "电池管理",
+        "battery_management" => "板放电",
         _ => testId
     };
 

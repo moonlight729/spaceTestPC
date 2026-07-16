@@ -46,6 +46,7 @@ public sealed class TestResultViewModel : ObservableObject
         TestItemState.Running => "TESTING",
         TestItemState.Passed => "PASS",
         TestItemState.Failed => "FAIL",
+        TestItemState.Skipped => "SKIPPED",
         _ => "PENDING"
     };
 
@@ -54,6 +55,7 @@ public sealed class TestResultViewModel : ObservableObject
         TestItemState.Running => "#2563EB",
         TestItemState.Passed => "#16A34A",
         TestItemState.Failed => "#DC2626",
+        TestItemState.Skipped => "#64748B",
         _ => "#94A3B8"
     };
 
@@ -68,6 +70,7 @@ public sealed class TestResultViewModel : ObservableObject
         {
             "running" => TestItemState.Running,
             "passed" => TestItemState.Passed,
+            "skipped" => TestItemState.Skipped,
             _ => TestItemState.Failed
         };
         ResultCode = testEvent.ResultCode;
@@ -76,7 +79,7 @@ public sealed class TestResultViewModel : ObservableObject
         DataText = testEvent.Data.Count == 0
             ? "No result data"
             : string.Join(Environment.NewLine, testEvent.Data.Select(pair => $"{pair.Key}: {FormatValue(pair.Value)}"));
-        if (StartedAt is { } startedAt && State is TestItemState.Passed or TestItemState.Failed)
+        if (StartedAt is { } startedAt && State is TestItemState.Passed or TestItemState.Failed or TestItemState.Skipped)
         {
             Duration = testEvent.Timestamp - startedAt;
         }

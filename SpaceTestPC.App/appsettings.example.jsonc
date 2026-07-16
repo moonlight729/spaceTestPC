@@ -1,14 +1,22 @@
 {
   "testPlan": {
-    // enabledTests 非空时，只运行这里列出的测试项。
-    // 顺序仍按程序内固定顺序执行，不按这里的书写顺序执行。
-    // 常用开发示例:
-    // "enabledTests": ["board_state", "wifi"],
+    // enabledTests 非空时，只运行这里列出的测试项；执行顺序仍按程序内固定顺序。
+    // 示例: "enabledTests": ["board_state", "wifi"]
     "enabledTests": [],
 
     // enabledTests 为空时，运行完整测试计划，再排除这里列出的测试项。
     "disabledTests": [],
-    // 每个测试项下发给设备的参数。示例：WiFi 测试连接目标路由器后再 Ping 网关。
+
+    // skippedTests 表示本轮不测试，不计入最终 PASS/FAIL。
+    "skippedTests": {
+      "indicator_led": "当前指示灯测试环境暂未接入",
+      "fan": "当前风扇测试环境暂未接入",
+      "fingerprint": "当前未接指纹模组",
+      "usb2_3": "USB2.0&3.0 汇总文件接口暂未正式启用",
+      "pcba_test_points": "PCBA测试点 32通道电压采集接口暂未正式启用"
+    },
+
+    // 每个测试项下发给 3576 的参数。
     "testParameters": {
       "wifi": {
         "ssid": "test_router_001",
@@ -17,11 +25,22 @@
         "pingCount": 4,
         "timeoutMs": 15000
       },
+      "ethernet": {
+        "interfaceName": "end0",
+        "routerIp": "192.168.110.1",
+        "pingCount": 4,
+        "timeoutMs": 15000,
+        "waitCableUnplug": true,
+        "unplugTimeoutMs": 10000
+      },
       "bluetooth": {
         "mode": "observer",
         "targetName": "NODE_A_01",
         "minRssi": -80,
         "scanWindowMs": 10000
+      },
+      "keys": {
+        "timeoutMs": 30000
       },
       "fingerprint": {
         "bus": "spi",
@@ -49,24 +68,29 @@
         "command": "read_card_info",
         "mountTimeoutMs": 5000,
         "requireMounted": true
+      },
+      "usb2_3": {
+        "recordFile": "/tmp/spacetest_usb_ports.json",
+        "expectedUsb2Count": 2,
+        "expectedUsb3Count": 2,
+        "timeoutMs": 3000
+      },
+      "pcba_test_points": {
+        "channelCount": 32,
+        "recordFile": "/tmp/spacetest_pcba_points.json",
+        "defaultMinMv": 0,
+        "defaultMaxMv": 5000,
+        "timeoutMs": 5000,
+        "channels": []
       }
     },
 
     "mock": {
       // 指定某一项 Mock 失败；null 表示不注入失败。
-      // 示例: "wifi"
       "failingTestId": null,
-
-      // 普通测试项 running 阶段停留时间，单位毫秒。
       "runningDelayMs": 2000,
-
-      // 普通测试项 passed/failed 结果停留时间，单位毫秒。
       "resultHoldMs": 1000,
-
-      // 板状态 running 阶段停留时间，单位毫秒。
       "boardStateRunningDelayMs": 3000,
-
-      // 板状态结果停留时间，单位毫秒。
       "boardStateResultHoldMs": 5000
     }
   }

@@ -36,6 +36,7 @@ public sealed class TestItemViewModel : ObservableObject
         TestItemState.Running => "TESTING",
         TestItemState.Passed => "PASS",
         TestItemState.Failed => "FAIL",
+        TestItemState.Skipped => "SKIPPED",
         _ => "PENDING"
     };
 
@@ -44,6 +45,7 @@ public sealed class TestItemViewModel : ObservableObject
         TestItemState.Running => "#3B82F6",
         TestItemState.Passed => "#22C55E",
         TestItemState.Failed => "#EF4444",
+        TestItemState.Skipped => "#64748B",
         _ => "#6B7280"
     };
 
@@ -52,6 +54,7 @@ public sealed class TestItemViewModel : ObservableObject
         TestItemState.Running => "#60A5FA",
         TestItemState.Passed => "#22C55E",
         TestItemState.Failed => "#EF4444",
+        TestItemState.Skipped => "#94A3B8",
         _ => "#334155"
     };
 }

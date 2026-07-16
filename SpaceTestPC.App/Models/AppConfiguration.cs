@@ -36,6 +36,7 @@ public sealed class TestPlanConfiguration
 {
     public string[] EnabledTests { get; set; } = [];
     public string[] DisabledTests { get; set; } = [];
+    public Dictionary<string, string> SkippedTests { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, Dictionary<string, JsonElement>> TestParameters { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public MockConfiguration Mock { get; set; } = new();
 }

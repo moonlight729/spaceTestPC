@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Reflection;
 using System.Text.Json;
 using SpaceTestPC.App.Models;
@@ -14,19 +14,19 @@ public sealed class MainViewModel : ObservableObject
     private static readonly IReadOnlyList<TestPlanItem> AllTestPlan =
     [
         new() { Id = "board_state" }, new() { Id = "hdmi" }, new() { Id = "keys" }, new() { Id = "lcd" },
-        new() { Id = "wifi" }, new() { Id = "bluetooth" }, new() { Id = "fingerprint" },
-        new() { Id = "typec_fast_charge" }, new() { Id = "typec_camera" }, new() { Id = "tf" },
-        new() { Id = "indicator_led" }, new() { Id = "fan" }, new() { Id = "otg" },
+        new() { Id = "ethernet" }, new() { Id = "wifi" }, new() { Id = "bluetooth" }, new() { Id = "fingerprint" },
+        new() { Id = "typec_fast_charge" }, new() { Id = "typec_camera" }, new() { Id = "tf" }, new() { Id = "usb2_3" },
+        new() { Id = "pcba_test_points" }, new() { Id = "indicator_led" }, new() { Id = "fan" }, new() { Id = "otg" },
         new() { Id = "battery_management" }
     ];
 
     // Change this value during deployment; operators do not choose the transport mode.
-    private const PcbaConnectionMode ConnectionMode = PcbaConnectionMode.Mock;
+    private const PcbaConnectionMode ConnectionMode = PcbaConnectionMode.AdbForward;
     private const string BoardStateItemName = "板状态";
     private const string BluetoothItemName = "蓝牙";
     private const string WifiItemName = "WiFi";
     private const string EthernetItemName = "网线";
-    private const string BatteryItemName = "电池";
+    private const string BatteryItemName = "鐢垫睜";
 
     private readonly IScannerService _scannerService;
     private readonly IPcbaCommandClientFactory _pcbaCommandClientFactory;
@@ -224,7 +224,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public string AppVersion { get; } = GetAppVersion();
-    public string WindowTitle => $"检测工作台 {AppVersion}";
+    public string WindowTitle => $"妫€娴嬪伐浣滃彴 {AppVersion}";
     public int TestOverviewColumns { get; }
 
     public ObservableCollection<string> Logs { get; }
@@ -298,7 +298,7 @@ public sealed class MainViewModel : ObservableObject
     {
         "hdmi" => "请观察 HDMI 输出是否正常，然后手动选择通过或失败。",
         "keys" => "请依次按下 PCBA 的上、下、左、右方向键和确认键；五键均识别后将自动通过。",
-        "lcd" => "请观察 SPI LCD：背光正常、RGB 测试图案完整且稳定，无花屏、缺线、闪烁或明显亮暗异常后再判定。",
+        "lcd" => "请观察 LCD：背光正常、RGB 测试图案完整且稳定，无花屏、缺线、闪烁或明显亮暗异常后再判定。",
         _ => string.Empty
     };
     public string ManualPassButtonText => _manualDecisionTestId switch
@@ -350,20 +350,24 @@ public sealed class MainViewModel : ObservableObject
         UpdateDebugOutput();
 
         var history = await _databaseRepository.GetLatestSessionBySnAsync(CurrentSn);
-        if (history is not null)
+        if (history is not null && ConnectionMode == PcbaConnectionMode.Mock)
         {
             HistoryRecordFound?.Invoke(this, history);
             return;
         }
+        if (history is not null)
+        {
+            AppendLog("History exists. ADB mode will start a new test session.");
+        }
 
-        AppendLog("No history found. Auto-starting Stage 1.");
+        AppendLog(history is null ? "No history found. Auto-starting Stage 1." : "Auto-starting Stage 1.");
         StartPhaseOneCommand.Execute(null);
     }
 
     private void LoadHistoryRecord(TestSessionRecord record)
     {
         IsHistoryLoaded = true;
-        HistorySummary = $"Latest record: {record.Session.FinalVerdict} · {record.Session.EndTime?.LocalDateTime:yyyy-MM-dd HH:mm:ss}";
+        HistorySummary = $"Latest record: {record.Session.FinalVerdict} 路 {record.Session.EndTime?.LocalDateTime:yyyy-MM-dd HH:mm:ss}";
         LastResult = $"History: {record.Session.FinalVerdict}";
         OperatorInstruction = "Historical test result loaded. Review the details or select Re-test to start a new session.";
         if (record.BoardState is not null) ApplyBoardState(record.BoardState);
@@ -371,11 +375,16 @@ public sealed class MainViewModel : ObservableObject
         ResetTestItems();
         foreach (var result in record.TestResults)
         {
+            var status = string.Equals(result.Status, "PASS", StringComparison.OrdinalIgnoreCase)
+                ? "passed"
+                : string.Equals(result.Status, "SKIPPED", StringComparison.OrdinalIgnoreCase)
+                    ? "skipped"
+                    : "failed";
             ApplyTestReport(new TestSessionEvent
             {
                 Event = "test.report",
                 TestId = result.TestId,
-                Status = string.Equals(result.Status, "PASS", StringComparison.OrdinalIgnoreCase) ? "passed" : "failed",
+                Status = status,
                 ResultCode = result.ResultCode,
                 Message = result.Message,
                 Data = result.Data,
@@ -488,12 +497,12 @@ public sealed class MainViewModel : ObservableObject
             finalVerdict = stagePassed ? "Pass" : "Fail";
             OperatorInstruction = stagePassed
                 ? "检测完成，请取下产品并扫描下一台。"
-                : "检测失败，请处理异常后重新扫描产品。";
+                : "检测失败，请查看失败项目并处理异常后重新扫描。";
         }
         catch (Exception ex)
         {
             LastResult = "Stage 1 failed";
-            OperatorInstruction = "检测异常，请检查连接后重新扫描产品。";
+            OperatorInstruction = "通信异常，请检查连接后重新扫描。";
             AppendLog($"Stage 1 execution failed: {ex.Message}");
         }
         finally
@@ -533,7 +542,7 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task RunUnifiedSessionAsync()
     {
-        AppendLog("Test session started.");
+        AppendLog($"Session start requested: mode={ConnectionMode}, session={SessionId}, sn={CurrentSn}, tests={string.Join(",", _testPlan.Select(item => item.Id))}");
         LastResult = "Stage 1 running";
         OperatorInstruction = "正在接收底层测试结果，请勿断开产品连接。";
 
@@ -545,11 +554,14 @@ public sealed class MainViewModel : ObservableObject
         try
         {
             SetTestItemState(BoardStateItemName, TestItemState.Running);
+            AppendLog("ADB/sys.get_board_state request sent.");
             state = await client.GetBoardStateAsync(SessionId, CurrentSn);
+            AppendLog($"ADB/sys.get_board_state response: boardId={state.BoardId}, boardSn={state.BoardSn}, mode={state.TestMode}, state={state.CurrentState}");
             ApplyBoardState(state);
             state = await EnsureBoardSnAsync(client, state);
             SetTestItemState(BoardStateItemName, TestItemState.Passed);
 
+            AppendLog("ADB/session.start request sent.");
             await foreach (var testEvent in client.RunSessionAsync(SessionId, CurrentSn, _testPlan))
             {
                 if (testEvent.Event == "test.report")
@@ -573,8 +585,8 @@ public sealed class MainViewModel : ObservableObject
                     LastResult = finalVerdict == "Pass" ? "Stage 1 passed" : "Stage 1 failed";
                     OperatorInstruction = finalVerdict == "Pass"
                         ? "检测完成，请取下产品并扫描下一台。"
-                        : "检测失败，底层已终止后续项目。请处理异常后重新扫描。";
-                    AppendLog($"Session completed: {testEvent.Status} ({testEvent.Message})");
+                        : "检测完成，存在失败项目。请查看失败项目并处理异常后重新扫描。";
+                    AppendLog($"Session completed: status={testEvent.Status}, code={testEvent.ResultCode}, message={testEvent.Message}");
                 }
             }
         }
@@ -582,7 +594,7 @@ public sealed class MainViewModel : ObservableObject
         {
             LastResult = "Stage 1 failed";
             OperatorInstruction = "通信异常，检测已停止。请检查连接后重新扫描。";
-            AppendLog($"Session failed: {ex.Message}");
+            AppendLog($"Session exception: {ex.GetType().Name}: {ex.Message}");
         }
         finally
         {
@@ -691,6 +703,7 @@ public sealed class MainViewModel : ObservableObject
             {
                 "running" => TestItemState.Running,
                 "passed" => TestItemState.Passed,
+                "skipped" => TestItemState.Skipped,
                 _ => TestItemState.Failed
             };
             if (testEvent.Status == "running" && !ReferenceEquals(CurrentTestItem, TestItems[index]))
@@ -705,12 +718,63 @@ public sealed class MainViewModel : ObservableObject
             BatteryStatus = testEvent.Status;
         }
 
-        OperatorInstruction = testEvent.TestId == "typec_fast_charge" && testEvent.Status == "running"
+        if (testEvent.TestId == "keys")
+        {
+            OperatorInstruction = BuildKeyTestInstruction(testEvent);
+            AppendLog(FormatTestEventLog(testEvent));
+            return;
+        }
+
+        OperatorInstruction = testEvent.TestId == "usb2_3" && testEvent.Status == "running"
+            ? "请确保测试前已经使用 2.0 U盘和 3.0 U盘插入过需要测试的 USB 口，并已经生成 USB 汇总文件。"
+            : testEvent.TestId == "pcba_test_points" && testEvent.Status == "running"
+            ? "正在读取 PCBA 32 通道测试点电压，系统将自动判断是否在阈值范围内。"
+            : testEvent.TestId == "ethernet" && testEvent.Status == "running" && testEvent.Message.Contains("Remove", StringComparison.OrdinalIgnoreCase)
+            ? "网口测试完成，请拔掉网线，准备进行 Wi-Fi 测试。"
+            : testEvent.TestId == "ethernet" && testEvent.Status == "running"
+            ? "请插入网线，系统将关闭 Wi-Fi 并检测有线网络。"
+            : testEvent.TestId == "typec_fast_charge" && testEvent.Status == "running"
             ? "请插入 TYPE-C 充电器，系统将自动检测充电电压和电流。"
+            : testEvent.Status == "skipped"
+            ? $"{GetTestDisplayName(testEvent.TestId)}：本轮不测试。"
             : testEvent.Status == "running"
-            ? $"正在检测：{testEvent.TestId}。"
-            : $"{testEvent.TestId}：{testEvent.Status}。";
-        AppendLog($"{testEvent.TestId}: {testEvent.Status} ({testEvent.Message})");
+            ? $"正在检测：{GetTestDisplayName(testEvent.TestId)}。"
+            : $"{GetTestDisplayName(testEvent.TestId)}：{testEvent.Status}。";
+        AppendLog(FormatTestEventLog(testEvent));
+    }
+
+    private static string FormatTestEventLog(TestSessionEvent testEvent)
+    {
+        var data = FormatEventData(testEvent.Data);
+        return data.Length == 0
+            ? $"[{testEvent.TestId}] {testEvent.Status}, code={testEvent.ResultCode}, msg={testEvent.Message}"
+            : $"[{testEvent.TestId}] {testEvent.Status}, code={testEvent.ResultCode}, msg={testEvent.Message}, data={data}";
+    }
+
+    private static string FormatEventData(IReadOnlyDictionary<string, object?> data)
+    {
+        if (data.Count == 0) return string.Empty;
+        var json = JsonSerializer.Serialize(data);
+        return json.Length <= 220 ? json : json[..220] + "...";
+    }
+
+    private string BuildKeyTestInstruction(TestSessionEvent testEvent)
+    {
+        if (testEvent.Status == "passed")
+        {
+            return "按键测试通过，五个按键均已识别。";
+        }
+
+        if (testEvent.Status == "failed")
+        {
+            return "按键测试失败：30 秒内未完成上、下、左、右、确认五个按键输入。";
+        }
+
+        var detected = DirectionalKeys.Where(key => key.IsDetected).Select(key => key.Label).ToArray();
+        var missing = DirectionalKeys.Where(key => !key.IsDetected).Select(key => key.Label).ToArray();
+        var detectedText = detected.Length == 0 ? "无" : string.Join("、", detected);
+        var missingText = missing.Length == 0 ? "无" : string.Join("、", missing);
+        return $"按键测试：请在 30 秒内依次按上、下、左、右、确认键。已识别：{detectedText}；剩余：{missingText}。";
     }
 
     private static string GetTestDisplayName(string testId) => testId switch
@@ -718,17 +782,20 @@ public sealed class MainViewModel : ObservableObject
         "board_state" => "板状态",
         "hdmi" => "HDMI",
         "keys" => "按键",
-        "lcd" => "SPI LCD屏",
+        "lcd" => "LCD",
+        "ethernet" => "网口",
         "wifi" => "WiFi",
         "bluetooth" => "蓝牙",
-        "fingerprint" => "SPI 指纹模组",
-        "typec_fast_charge" => "TYPE-C 快充",
+        "fingerprint" => "指纹模组",
+        "typec_fast_charge" => "板快充",
         "typec_camera" => "TYPE-C 相机",
         "tf" => "TF 卡",
+        "usb2_3" => "USB2.0&3.0",
+        "pcba_test_points" => "PCBA测试点",
         "indicator_led" => "指示灯板",
         "fan" => "风扇",
         "otg" => "USB OTG口",
-        "battery_management" => "放电测试",
+        "battery_management" => "板放电",
         _ => testId
     };
 
@@ -934,8 +1001,6 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task SetMockQueryDefaultAsync()
     {
-        if (!_isMockSession) return;
-
         QueryText = CurrentSn;
         if (IsQueryPage) await RefreshQueryRecordsAsync();
     }
@@ -944,7 +1009,7 @@ public sealed class MainViewModel : ObservableObject
     {
         _logService.Info(message);
         Logs.Clear();
-        foreach (var entry in _logService.Snapshot().TakeLast(3))
+        foreach (var entry in _logService.Snapshot().Take(12))
         {
             Logs.Add(entry);
         }
@@ -985,6 +1050,8 @@ public sealed class MainViewModel : ObservableObject
             .Select(item => new TestPlanItem
             {
                 Id = item.Id,
+                Skip = configuration.TestPlan.SkippedTests.ContainsKey(item.Id),
+                SkipReason = configuration.TestPlan.SkippedTests.TryGetValue(item.Id, out var reason) ? reason : null,
                 Parameters = GetTestParameters(configuration, item.Id)
             })
             .ToArray();
@@ -1053,7 +1120,7 @@ public sealed class MainViewModel : ObservableObject
         var testId = _manualDecisionTestId!;
         _manualDecisionTestId = null;
         var displayName = GetTestDisplayName(testId);
-        OperatorInstruction = passed ? $"{displayName} 已确认通过，继续后续测试。" : $"{displayName} 已确认失败，测试将停止。";
+        OperatorInstruction = passed ? $"{displayName} 已确认通过，继续后续测试。" : $"{displayName} 已确认失败，记录失败并继续后续测试。";
         AppendLog($"{testId} manual decision: {(passed ? "PASS" : "FAIL")}");
         RaisePropertyChanged(nameof(IsManualDecisionVisible));
         RaisePropertyChanged(nameof(ManualDecisionPrompt));
@@ -1188,3 +1255,4 @@ public sealed class MainViewModel : ObservableObject
             $"LastResult: {LastResult}";
     }
 }
+

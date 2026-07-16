@@ -45,7 +45,7 @@
             <RowDefinition Height="76" />
             <RowDefinition Height="92" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="112" />
+            <RowDefinition Height="190" />
         </Grid.RowDefinitions>
 
         <Border Grid.Row="0" Background="#0B1F3A" CornerRadius="8" Padding="22,0">
@@ -239,7 +239,7 @@
                     <TextBlock Style="{StaticResource SectionTitle}" Text="RUN LOG" />
                     <TextBlock Margin="0,4,0,0" Foreground="#667085" FontSize="12" Text="Latest events" />
                 </StackPanel>
-                <ListBox Grid.Column="1" Margin="10,0" Background="Transparent" BorderThickness="0" Foreground="#475467" ItemsSource="{Binding Logs}" />
+                <ListBox Grid.Column="1" Margin="10,0" Background="#F8FAFC" BorderBrush="#E4E7EC" FontFamily="Consolas" FontSize="12" Foreground="#475467" ItemsSource="{Binding Logs}" />
                 <Button Grid.Column="2" VerticalAlignment="Center" Command="{Binding StartMockSessionCommand}" Content="Run Mock" />
             </Grid>
         </Border>

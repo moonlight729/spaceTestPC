@@ -25,9 +25,30 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
         IReadOnlyList<TestPlanItem> testPlan,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        var failedCount = 0;
+        var firstFailedCode = 0;
+        var firstFailedTestId = string.Empty;
         foreach (var test in testPlan)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (test.Skip)
+            {
+                yield return new TestSessionEvent
+                {
+                    Event = "test.report",
+                    TestId = test.Id,
+                    Status = "skipped",
+                    ResultCode = 2900,
+                    Message = string.IsNullOrWhiteSpace(test.SkipReason) ? "Skipped by host policy" : test.SkipReason,
+                    Data = new Dictionary<string, object?>
+                    {
+                        ["skipReason"] = test.SkipReason ?? "Skipped by host policy",
+                        ["countInFinalVerdict"] = false
+                    }
+                };
+                continue;
+            }
+
             yield return new TestSessionEvent
             {
                 Event = "test.report",
@@ -116,6 +137,26 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                     };
                 }
             }
+            else if (test.Id == "fingerprint")
+            {
+                await Task.Delay(GetMockRunningDelay(test.Id), cancellationToken);
+                failedCount++;
+                if (firstFailedCode == 0)
+                {
+                    firstFailedCode = 4101;
+                    firstFailedTestId = test.Id;
+                }
+                yield return new TestSessionEvent
+                {
+                    Event = "test.report",
+                    TestId = test.Id,
+                    Status = "failed",
+                    ResultCode = 4101,
+                    Message = "Fingerprint module is not implemented yet",
+                    Data = new Dictionary<string, object?> { ["implemented"] = false }
+                };
+                continue;
+            }
             else if (test.Id == "typec_fast_charge")
             {
                 var passed = await WaitForManualDecisionAsync(test.Id, cancellationToken);
@@ -176,6 +217,20 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                     }
                 };
             }
+            else if (test.Id == "ethernet")
+            {
+                await Task.Delay(GetMockRunningDelay(test.Id), cancellationToken);
+                yield return new TestSessionEvent
+                {
+                    Event = "test.report", TestId = test.Id, Status = "running", Message = "Remove Ethernet cable",
+                    Data = new Dictionary<string, object?>
+                    {
+                        ["interfaceName"] = GetParameterString(test.Parameters, "interfaceName", "end0"),
+                        ["routerIp"] = GetParameterString(test.Parameters, "routerIp", "192.168.110.1"),
+                        ["pingOk"] = true
+                    }
+                };
+            }
             else if (test.Id == "bluetooth")
             {
                 await Task.Delay(GetMockRunningDelay(test.Id), cancellationToken);
@@ -233,9 +288,9 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
         yield return new TestSessionEvent
         {
             Event = "session.completed",
-            Status = "passed",
-            ResultCode = 0,
-            Message = "Mock session passed"
+            Status = failedCount == 0 ? "passed" : "failed",
+            ResultCode = firstFailedCode,
+            Message = failedCount == 0 ? "Mock session passed" : $"Mock session completed with {failedCount} failed test(s), first failed: {firstFailedTestId}"
         };
     }
 
@@ -415,6 +470,16 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 data["pingOk"] = true;
                 data["avgDelayMs"] = 12;
                 break;
+            case "ethernet":
+                data["interfaceName"] = GetParameterString(test.Parameters, "interfaceName", "end0");
+                data["routerIp"] = GetParameterString(test.Parameters, "routerIp", "192.168.110.1");
+                data["pingCount"] = GetParameterInt(test.Parameters, "pingCount", 4);
+                data["wifiDisabled"] = true;
+                data["ip"] = "192.168.110.220";
+                data["pingOk"] = true;
+                data["cableUnplugged"] = true;
+                data["avgDelayMs"] = 3;
+                break;
             case "bluetooth":
                 data["mode"] = GetParameterString(test.Parameters, "mode", "observer");
                 data["targetName"] = GetParameterString(test.Parameters, "targetName", "NODE_A_01");
@@ -427,8 +492,7 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 data["bus"] = GetParameterString(test.Parameters, "bus", "spi");
                 data["command"] = GetParameterString(test.Parameters, "command", "get_status");
                 data["timeoutMs"] = GetParameterInt(test.Parameters, "timeoutMs", 3000);
-                data["communicationOk"] = true;
-                data["sensorDetected"] = true;
+                data["implemented"] = false;
                 break;
             case "typec_fast_charge":
                 data["batterySimulationVoltageMv"] = GetParameterInt(test.Parameters, "batterySimulationVoltageMv", 7400);
@@ -456,6 +520,33 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 data["capacityMb"] = 32768;
                 data["fileSystem"] = "exfat";
                 data["cardInfoRead"] = true;
+                break;
+            case "usb2_3":
+                data["recordFile"] = GetParameterString(test.Parameters, "recordFile", "/tmp/spacetest_usb_ports.json");
+                data["usb2Count"] = GetParameterInt(test.Parameters, "expectedUsb2Count", 2);
+                data["usb3Count"] = GetParameterInt(test.Parameters, "expectedUsb3Count", 2);
+                data["expectedUsb2Count"] = GetParameterInt(test.Parameters, "expectedUsb2Count", 2);
+                data["expectedUsb3Count"] = GetParameterInt(test.Parameters, "expectedUsb3Count", 2);
+                break;
+            case "pcba_test_points":
+                var channelCount = GetParameterInt(test.Parameters, "channelCount", 32);
+                data["recordFile"] = GetParameterString(test.Parameters, "recordFile", "/tmp/spacetest_pcba_points.json");
+                data["channelCount"] = channelCount;
+                data["passedCount"] = channelCount;
+                data["failedPoints"] = Array.Empty<int>();
+                data["defaultMinMv"] = GetParameterInt(test.Parameters, "defaultMinMv", 0);
+                data["defaultMaxMv"] = GetParameterInt(test.Parameters, "defaultMaxMv", 5000);
+                data["points"] = Enumerable.Range(1, channelCount)
+                    .Select(index => new Dictionary<string, object?>
+                    {
+                        ["index"] = index,
+                        ["name"] = $"TP{index:D2}",
+                        ["voltageMv"] = 3300,
+                        ["minMv"] = GetParameterInt(test.Parameters, "defaultMinMv", 0),
+                        ["maxMv"] = GetParameterInt(test.Parameters, "defaultMaxMv", 5000),
+                        ["passed"] = true
+                    })
+                    .ToArray();
                 break;
             case "indicator_led":
                 data["voltageMeter"] = true;
@@ -625,12 +716,15 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
         "hdmi" => "HDMI signal passed",
         "keys" => "Input subsystem key test passed",
         "lcd" => "SPI LCD test passed",
+        "ethernet" => "Ethernet cable test passed",
         "wifi" => "WiFi router ping passed",
         "bluetooth" => "Target Bluetooth name scanned",
-        "fingerprint" => "SPI fingerprint module passed",
+        "fingerprint" => "Fingerprint module is not implemented yet",
         "typec_fast_charge" => "TYPE-C fast charge current passed",
         "typec_camera" => "TYPE-C camera stream interrupt test passed",
         "tf" => "TF card info read passed",
+        "usb2_3" => "USB2.0&3.0 record loaded",
+        "pcba_test_points" => "PCBA test point voltages are in range",
         "indicator_led" => "Indicator LED board voltage passed",
         "fan" => "Fan speed passed",
         "otg" => "USB OTG disk read/write passed",
