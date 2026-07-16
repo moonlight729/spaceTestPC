@@ -153,6 +153,24 @@ static int param_bool(const char *start, const char *end, const char *key, int f
     return fallback;
 }
 
+static int net_carrier_is_up(const char *interface_name)
+{
+    char path[160];
+    FILE *file;
+    int value = 0;
+
+    if (interface_name == NULL || interface_name[0] == '\0') return 0;
+    snprintf(path, sizeof(path), "/sys/class/net/%s/carrier", interface_name);
+    file = fopen(path, "r");
+    if (file == NULL) return 0;
+    if (fscanf(file, "%d", &value) != 1) {
+        fclose(file);
+        return 0;
+    }
+    fclose(file);
+    return value == 1;
+}
+
 static int send_report(int fd, const char *test_id, const char *status,
                        int code, const char *message, const char *data_json)
 {
@@ -191,32 +209,66 @@ static int run_wifi(int fd, const struct app_config *config, const char *test_st
         .router_ip = router_ip,
         .ping_count = 4,
         .timeout_ms = 5000,
-        .reuse_current_connection = true,
+        .reuse_current_connection = false,
+        .ethernet_interface_name = "end0",
+        .wait_ethernet_unplug = true,
+        .unplug_timeout_ms = 10000,
     };
     struct wifi_result result;
-    char data[512];
+    char data[1024];
 
     snprintf(ssid, sizeof(ssid), "%s", config->wifi_ssid);
     snprintf(router_ip, sizeof(router_ip), "%s", config->wifi_router_ip);
     param_string(test_start, test_end, "ssid", ssid, sizeof(ssid));
+    param_string(test_start, test_end, "password", request.password_buffer, sizeof(request.password_buffer));
+    if (request.password_buffer[0] != '\0') request.password = request.password_buffer;
     param_string(test_start, test_end, "routerIp", router_ip, sizeof(router_ip));
     request.ping_count = param_int(test_start, test_end, "pingCount", request.ping_count);
     request.timeout_ms = param_int(test_start, test_end, "timeoutMs", request.timeout_ms);
+    param_string(test_start, test_end, "ethernetInterfaceName", request.ethernet_interface_name_buffer, sizeof(request.ethernet_interface_name_buffer));
+    if (request.ethernet_interface_name_buffer[0] != '\0') request.ethernet_interface_name = request.ethernet_interface_name_buffer;
+    request.wait_ethernet_unplug = param_bool(test_start, test_end, "waitEthernetUnplug", request.wait_ethernet_unplug);
+    request.unplug_timeout_ms = param_int(test_start, test_end, "unplugTimeoutMs", request.unplug_timeout_ms);
     memset(&result, 0, sizeof(result));
-    send_report(fd, "wifi", "running", 0, "Running Wi-Fi test", "{}");
+    snprintf(data, sizeof(data),
+             "{\"ssid\":\"%s\",\"routerIp\":\"%s\",\"interfaceName\":\"%s\",\"waitEthernetUnplug\":%s,\"unplugTimeoutMs\":%d}",
+             ssid, router_ip, request.ethernet_interface_name,
+             request.wait_ethernet_unplug ? "true" : "false",
+             request.unplug_timeout_ms);
+    send_report(fd, "wifi", "running", 0, "Running Wi-Fi test", data);
+    if (request.wait_ethernet_unplug && net_carrier_is_up(request.ethernet_interface_name)) {
+        snprintf(data, sizeof(data),
+                 "{\"ssid\":\"%s\",\"routerIp\":\"%s\",\"interfaceName\":\"%s\",\"waitEthernetUnplug\":true,"
+                 "\"unplugTimeoutMs\":%d,\"ethernetLinkUp\":true,\"requiresCableUnplug\":true}",
+                 ssid, router_ip, request.ethernet_interface_name, request.unplug_timeout_ms);
+        send_report(fd, "wifi", "running", 0, "Please unplug Ethernet cable before Wi-Fi test", data);
+    }
     if (wifi_nmcli_open(&device, NULL) != 0 ||
         wifi_nmcli_run_test(&device, &request, &result) != 0) {
         wifi_nmcli_close(&device);
+        snprintf(data, sizeof(data),
+                 "{\"ssid\":\"%s\",\"routerIp\":\"%s\",\"interfaceName\":\"%s\",\"wifiEnabled\":%s,\"connected\":%s,"
+                 "\"ipAcquired\":%s,\"pingOk\":%s,\"ip\":\"%s\",\"activeSsid\":\"%s\",\"ethernetLinkUp\":%s,"
+                 "\"requiresCableUnplug\":%s,\"failureReason\":\"%s\"}",
+                 ssid, router_ip, device.interface_name,
+                 result.wifi_enabled ? "true" : "false",
+                 result.connected ? "true" : "false",
+                 result.ip_acquired ? "true" : "false",
+                 result.ping_ok ? "true" : "false",
+                 result.ip, result.active_ssid,
+                 result.ethernet_link_up ? "true" : "false",
+                 result.requires_cable_unplug ? "true" : "false",
+                 result.failure_reason);
         send_report(fd, "wifi", "failed",
                     result.error_code == 0 ? 4100 : result.error_code,
-                    "Wi-Fi test failed", "{}");
+                    result.error_message[0] == '\0' ? "Wi-Fi test failed" : result.error_message, data);
         return -1;
     }
     wifi_nmcli_close(&device);
     snprintf(data, sizeof(data),
-             "{\"ssid\":\"%s\",\"ip\":\"%s\",\"routerIp\":\"%s\",\"pingCount\":%d,\"avgDelayMs\":%d}",
+             "{\"ssid\":\"%s\",\"ip\":\"%s\",\"routerIp\":\"%s\",\"pingCount\":%d,\"avgDelayMs\":%d,\"interfaceName\":\"%s\"}",
              ssid, result.ip, router_ip,
-             result.completed_ping_count, result.avg_delay_ms);
+             result.completed_ping_count, result.avg_delay_ms, device.interface_name);
     return send_report(fd, "wifi", "passed", 0, "Wi-Fi test passed", data);
 }
 

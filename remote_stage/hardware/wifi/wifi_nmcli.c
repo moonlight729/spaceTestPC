@@ -39,13 +39,79 @@ static int run_command(char *const argv[], char *output, size_t output_size)
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
-static void set_error(struct wifi_result *result, int code, const char *message)
+static void set_error(struct wifi_result *result, int code, const char *message, const char *reason)
 {
     size_t length;
+    size_t reason_length;
     result->error_code = code;
     length = strnlen(message, sizeof(result->error_message) - 1);
     memcpy(result->error_message, message, length);
     result->error_message[length] = '\0';
+    reason_length = strnlen(reason, sizeof(result->failure_reason) - 1);
+    memcpy(result->failure_reason, reason, reason_length);
+    result->failure_reason[reason_length] = '\0';
+}
+
+static int read_carrier(const char *interface_name)
+{
+    char path[160];
+    FILE *file;
+    int value = 0;
+
+    if (interface_name == NULL || interface_name[0] == '\0') return -1;
+    snprintf(path, sizeof(path), "/sys/class/net/%s/carrier", interface_name);
+    file = fopen(path, "r");
+    if (file == NULL) return -1;
+    if (fscanf(file, "%d", &value) != 1) {
+        fclose(file);
+        return -1;
+    }
+    fclose(file);
+    return value;
+}
+
+static int wait_carrier(const char *interface_name, int expected, int timeout_ms)
+{
+    int elapsed = 0;
+    while (elapsed <= timeout_ms) {
+        int carrier = read_carrier(interface_name);
+        if (carrier == expected) return 0;
+        usleep(200000);
+        elapsed += 200;
+    }
+    return -1;
+}
+
+static int wifi_nmcli_rescan(const struct wifi_device *device, char *output, size_t output_size)
+{
+    char *argv[] = { "nmcli", "device", "wifi", "rescan", "ifname", (char *)device->interface_name, NULL };
+    if (device == NULL || device->interface_name[0] == '\0') { errno = EINVAL; return -1; }
+    return run_command(argv, output, output_size);
+}
+
+static int wifi_nmcli_find_ssid(const struct wifi_device *device, const char *ssid, char *output, size_t output_size)
+{
+    char list_output[WIFI_CMD_OUTPUT];
+    char *argv[] = { "nmcli", "-t", "-f", "SSID", "device", "wifi", "list",
+                     "ifname", (char *)device->interface_name, NULL };
+    char *line, *save;
+
+    if (device == NULL || ssid == NULL) { errno = EINVAL; return -1; }
+    if (run_command(argv, list_output, sizeof(list_output)) != 0) {
+        if (output != NULL && output_size > 0) snprintf(output, output_size, "%s", list_output);
+        return -1;
+    }
+
+    for (line = strtok_r(list_output, "\n", &save); line != NULL; line = strtok_r(NULL, "\n", &save)) {
+        line[strcspn(line, "\r\n")] = '\0';
+        if (strcmp(line, ssid) == 0) {
+            if (output != NULL && output_size > 0) snprintf(output, output_size, "%s", ssid);
+            return 0;
+        }
+    }
+
+    if (output != NULL && output_size > 0) snprintf(output, output_size, "SSID '%s' not found in scan list", ssid);
+    return -1;
 }
 
 int wifi_nmcli_open(struct wifi_device *device, const char *interface_name)
@@ -85,27 +151,45 @@ int wifi_nmcli_connect(struct wifi_device *device, const struct wifi_request *re
                      (char *)request->ssid, "password", (char *)request->password,
                      "ifname", device->interface_name, NULL };
     int rc;
+
     if (device == NULL || request == NULL || result == NULL || request->ssid == NULL ||
         device->interface_name[0] == '\0') { errno = EINVAL; return -1; }
     if (run_command(radio_argv, output, sizeof(output)) != 0) {
-        set_error(result, 4104, output[0] ? output : "failed to enable Wi-Fi radio");
+        set_error(result, 4104, output[0] ? output : "failed to enable Wi-Fi radio", "wifi_radio_off");
         return -1;
     }
+    result->wifi_enabled = true;
     if (request->reuse_current_connection) {
         char active_ssid[256];
         if (wifi_nmcli_get_active_ssid(device, active_ssid, sizeof(active_ssid)) != 0 ||
             strcmp(active_ssid, request->ssid) != 0) {
-            set_error(result, 4100, "requested SSID is not the active connection");
+            set_error(result, 4100, "requested SSID is not the active connection", "ssid_not_found");
             return -1;
         }
         result->connected = true;
+        strncpy(result->active_ssid, active_ssid, sizeof(result->active_ssid) - 1);
+        result->active_ssid[sizeof(result->active_ssid) - 1] = '\0';
         return 0;
     }
     if (request->password == NULL) { errno = EINVAL; return -1; }
+    run_command((char *const[]){ "nmcli", "connection", "delete", (char *)request->ssid, NULL }, output, sizeof(output));
+    if (wifi_nmcli_rescan(device, output, sizeof(output)) != 0) {
+        set_error(result, 4100, output[0] ? output : "failed to rescan Wi-Fi networks", "ssid_not_found");
+        return -1;
+    }
+    usleep(500000);
+    if (wifi_nmcli_find_ssid(device, request->ssid, output, sizeof(output)) != 0) {
+        set_error(result, 4100, output[0] ? output : "target SSID not found", "ssid_not_found");
+        return -1;
+    }
     snprintf(wait_seconds, sizeof(wait_seconds), "%d", (request->timeout_ms + 999) / 1000);
     rc = run_command(argv, output, sizeof(output));
-    if (rc != 0) { set_error(result, 4101, output[0] ? output : "nmcli connection failed"); return -1; }
+    if (rc != 0) {
+        set_error(result, 4101, output[0] ? output : "nmcli connection failed", "association_failed");
+        return -1;
+    }
     result->connected = true;
+    wifi_nmcli_get_active_ssid(device, result->active_ssid, sizeof(result->active_ssid));
     return 0;
 }
 
@@ -133,7 +217,8 @@ int wifi_nmcli_get_ipv4(const struct wifi_device *device, char *ip, size_t ip_si
     if (device == NULL || ip == NULL || ip_size == 0) { errno = EINVAL; return -1; }
     if (run_command(argv, output, sizeof(output)) != 0 || output[0] == '\0') return -1;
     output[strcspn(output, "\r\n")] = '\0';
-    slash = strchr(output, '/'); if (slash != NULL) *slash = '\0';
+    slash = strchr(output, '/');
+    if (slash != NULL) *slash = '\0';
     if (output[0] == '\0') return -1;
     snprintf(ip, ip_size, "%s", output);
     return 0;
@@ -151,7 +236,10 @@ int wifi_nmcli_ping_gateway(const struct wifi_device *device, const struct wifi_
     snprintf(timeout, sizeof(timeout), "%d", (request->timeout_ms + 999) / 1000);
     rc = run_command(argv, output, sizeof(output));
     result->completed_ping_count = rc == 0 ? request->ping_count : 0;
-    if (rc != 0) { set_error(result, 4103, output[0] ? output : "gateway ping failed"); return -1; }
+    if (rc != 0) {
+        set_error(result, 4103, output[0] ? output : "gateway ping failed", "ping_failed");
+        return -1;
+    }
     avg = strstr(output, " = ");
     if (avg != NULL) {
         double minimum, average;
@@ -166,10 +254,25 @@ int wifi_nmcli_run_test(struct wifi_device *device, const struct wifi_request *r
 {
     if (device == NULL || request == NULL || result == NULL) { errno = EINVAL; return -1; }
     memset(result, 0, sizeof(*result));
+    if (request->wait_ethernet_unplug &&
+        request->ethernet_interface_name != NULL &&
+        request->ethernet_interface_name[0] != '\0') {
+        result->ethernet_link_up = read_carrier(request->ethernet_interface_name) == 1;
+        if (result->ethernet_link_up) {
+            result->requires_cable_unplug = true;
+            set_error(result, 4105, "Please unplug Ethernet cable before Wi-Fi test", "ethernet_still_connected");
+            if (wait_carrier(request->ethernet_interface_name, 0, request->unplug_timeout_ms) != 0) {
+                return -1;
+            }
+            result->ethernet_link_up = false;
+            result->requires_cable_unplug = false;
+        }
+    }
     if (wifi_nmcli_connect(device, request, result) != 0) return -1;
     if (wifi_nmcli_get_ipv4(device, result->ip, sizeof(result->ip)) != 0) {
-        set_error(result, 4102, "DHCP did not provide an IPv4 address");
+        set_error(result, 4102, "DHCP did not provide an IPv4 address", "ip_not_acquired");
         return -1;
     }
+    result->ip_acquired = true;
     return wifi_nmcli_ping_gateway(device, request, result);
 }

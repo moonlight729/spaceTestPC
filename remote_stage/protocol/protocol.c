@@ -7,6 +7,45 @@
 #include <time.h>
 #include <unistd.h>
 
+static void json_escape_string(const char *src, char *dst, size_t dst_size)
+{
+    size_t used = 0;
+
+    if (dst == NULL || dst_size == 0) return;
+    if (src == NULL) src = "";
+
+    while (*src != '\0' && used + 1 < dst_size) {
+        unsigned char ch = (unsigned char)*src++;
+        const char *escape = NULL;
+
+        switch (ch) {
+        case '\\': escape = "\\\\"; break;
+        case '"':  escape = "\\\""; break;
+        case '\n': escape = "\\n"; break;
+        case '\r': escape = "\\r"; break;
+        case '\t': escape = "\\t"; break;
+        default:
+            break;
+        }
+
+        if (escape != NULL) {
+            size_t length = strlen(escape);
+            if (used + length >= dst_size) break;
+            memcpy(dst + used, escape, length);
+            used += length;
+            continue;
+        }
+
+        if (ch < 0x20) {
+            continue;
+        }
+
+        dst[used++] = (char)ch;
+    }
+
+    dst[used] = '\0';
+}
+
 static void copy_json_value(const char *json, const char *key, char *dst, size_t dst_size)
 {
     char pattern[64];
@@ -90,9 +129,11 @@ int protocol_build_test_report(char *buffer, size_t buffer_size,
                                int result_code, const char *message,
                                const char *data_json)
 {
+    char escaped_message[512];
+    json_escape_string(message, escaped_message, sizeof(escaped_message));
     return snprintf(buffer, buffer_size,
                     "{\"event\":\"test.report\",\"testId\":\"%s\",\"status\":\"%s\",\"resultCode\":%d,\"message\":\"%s\",\"data\":%s}",
-                    test_id, status, result_code, message, data_json == NULL ? "{}" : data_json);
+                    test_id, status, result_code, escaped_message, data_json == NULL ? "{}" : data_json);
 }
 
 int protocol_build_session_completed(char *buffer, size_t buffer_size,
@@ -101,9 +142,11 @@ int protocol_build_session_completed(char *buffer, size_t buffer_size,
                                      int result_code,
                                      const char *message)
 {
+    char escaped_message[512];
+    json_escape_string(message, escaped_message, sizeof(escaped_message));
     return snprintf(buffer, buffer_size,
                     "{\"event\":\"session.completed\",\"sessionId\":\"%s\",\"status\":\"%s\",\"resultCode\":%d,\"message\":\"%s\"}",
-                    session_id, status, result_code, message);
+                    session_id, status, result_code, escaped_message);
 }
 
 int protocol_build_response_envelope(char *buffer, size_t buffer_size,
@@ -113,15 +156,17 @@ int protocol_build_response_envelope(char *buffer, size_t buffer_size,
                                      const char *data_json)
 {
     char timestamp[40];
+    char escaped_message[512];
     time_t now = time(NULL);
     struct tm tm_value;
     localtime_r(&now, &tm_value);
     strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S%z", &tm_value);
+    json_escape_string(message, escaped_message, sizeof(escaped_message));
     return snprintf(buffer, buffer_size,
                     "{\"protocolVersion\":\"1.0\",\"requestId\":\"\",\"sessionId\":\"%s\",\"resultCode\":%d,\"message\":\"%s\",\"timestamp\":\"%s\",\"data\":%s}",
                     session_id == NULL ? "" : session_id,
                     result_code,
-                    message == NULL ? "" : message,
+                    escaped_message,
                     timestamp,
                     data_json == NULL ? "{}" : data_json);
 }

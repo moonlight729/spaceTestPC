@@ -749,6 +749,13 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
+        if (testEvent.TestId == "wifi")
+        {
+            OperatorInstruction = BuildWifiInstruction(testEvent);
+            AppendLog(FormatTestEventLog(testEvent));
+            return;
+        }
+
         OperatorInstruction = testEvent.TestId == "usb2_3" && testEvent.Status == "running"
             ? "请确保测试前已经使用 2.0 U盘和 3.0 U盘插入过需要测试的 USB 口，并已经生成 USB 汇总文件。"
             : testEvent.TestId == "pcba_test_points" && testEvent.Status == "running"
@@ -814,6 +821,7 @@ public sealed class MainViewModel : ObservableObject
                     _ => string.Empty
                 },
                 "bluetooth" => BuildBluetoothFailureHint(testEvent.Data),
+                "wifi" => BuildWifiFailureHint(testEvent.Data),
                 _ => string.Empty
             }
             : string.Empty;
@@ -827,6 +835,17 @@ public sealed class MainViewModel : ObservableObject
         var bestSeenName = GetDataString(data, "bestSeenName", string.Empty);
         var bestSeenRssi = GetDataInt(data, "bestSeenRssi");
         return $"hint=reason:{reason}, found:{found}, matchedRssi:{matchedRssi}, minRssi:{minRssi}, bestSeen:{bestSeenName}/{bestSeenRssi}";
+    }
+
+    private static string BuildWifiFailureHint(IReadOnlyDictionary<string, object?> data)
+    {
+        var reason = GetDataString(data, "failureReason", string.Empty);
+        var iface = GetDataString(data, "interfaceName", string.Empty);
+        var ip = GetDataString(data, "ip", string.Empty);
+        var connected = GetDataBoolean(data, "connected");
+        var pingOk = GetDataBoolean(data, "pingOk");
+        var ethernetLinkUp = GetDataBoolean(data, "ethernetLinkUp");
+        return $"hint=reason:{reason}, iface:{iface}, ip:{ip}, connected:{connected}, pingOk:{pingOk}, ethernetLinkUp:{ethernetLinkUp}";
     }
 
     private string BuildKeyTestInstruction(TestSessionEvent testEvent)
@@ -873,6 +892,26 @@ public sealed class MainViewModel : ObservableObject
         var bestSeenName = GetDataString(testEvent.Data, "bestSeenName", string.Empty);
         var bestSeenRssi = GetDataInt(testEvent.Data, "bestSeenRssi");
         return $"蓝牙测试失败：reason={reason}，matched={matchedName}/{matchedRssi}，bestSeen={bestSeenName}/{bestSeenRssi}，minRssi={minRssi}。";
+    }
+
+    private static string BuildWifiInstruction(TestSessionEvent testEvent)
+    {
+        if (testEvent.Status == "running" && GetDataBoolean(testEvent.Data, "requiresCableUnplug"))
+        {
+            return "请先拔掉网线，系统将在检测到网线断开后自动继续 Wi‑Fi 测试。";
+        }
+
+        if (testEvent.Status == "running")
+        {
+            return $"正在检测：Wi‑Fi。SSID {GetDataString(testEvent.Data, "ssid", "-")}，目标网关 {GetDataString(testEvent.Data, "routerIp", "-")}。";
+        }
+
+        if (testEvent.Status == "passed")
+        {
+            return $"Wi‑Fi 测试通过：IP {GetDataString(testEvent.Data, "ip", "-")}，平均延时 {GetDataInt(testEvent.Data, "avgDelayMs")} ms。";
+        }
+
+        return $"Wi‑Fi 测试失败：reason={GetDataString(testEvent.Data, "failureReason", string.Empty)}，ip={GetDataString(testEvent.Data, "ip", string.Empty)}，iface={GetDataString(testEvent.Data, "interfaceName", string.Empty)}，pingOk={GetDataBoolean(testEvent.Data, "pingOk")}。";
     }
 
     private static string GetTestDisplayName(string testId) => testId switch
