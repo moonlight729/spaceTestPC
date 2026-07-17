@@ -47,6 +47,7 @@ public sealed class TestPlanConfiguration
     public Dictionary<string, string> SkippedTests { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, Dictionary<string, JsonElement>> TestParameters { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public MockConfiguration Mock { get; set; } = new();
+    public ContinuousTestConfiguration Continuous { get; set; } = new();
 }
 
 public sealed class MockConfiguration
@@ -56,4 +57,9 @@ public sealed class MockConfiguration
     public int ResultHoldMs { get; set; } = 1000;
     public int BoardStateRunningDelayMs { get; set; } = 3000;
     public int BoardStateResultHoldMs { get; set; } = 5000;
+}
+
+public sealed class ContinuousTestConfiguration
+{
+    public bool EnabledByDefault { get; set; }
 }

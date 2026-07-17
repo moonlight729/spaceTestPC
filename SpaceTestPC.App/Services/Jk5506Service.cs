@@ -6,6 +6,8 @@ namespace SpaceTestPC.App.Services;
 
 public sealed class Jk5506Service
 {
+    private const ushort OutputVoltageRmsRegister = 0x1000;
+    private const ushort OutputCurrentRmsRegister = 0x1001;
     private readonly Jk5506Configuration _configuration;
 
     public Jk5506Service(Jk5506Configuration configuration) => _configuration = configuration;
@@ -20,6 +22,18 @@ public sealed class Jk5506Service
 
     public Task StopOutputAsync(CancellationToken cancellationToken = default) =>
         !_configuration.Enabled ? Task.CompletedTask : ExecuteAsync(0x3000, 0, cancellationToken);
+
+    public async Task<int> ReadOutputVoltageMvAsync(CancellationToken cancellationToken = default)
+    {
+        if (!_configuration.Enabled) return 0;
+        return await ReadSingleRegisterAsync(OutputVoltageRmsRegister, cancellationToken);
+    }
+
+    public async Task<int> ReadOutputCurrentMaAsync(CancellationToken cancellationToken = default)
+    {
+        if (!_configuration.Enabled) return 0;
+        return await ReadSingleRegisterAsync(OutputCurrentRmsRegister, cancellationToken);
+    }
 
     private async Task ExecuteAsync(ushort register, ushort value, CancellationToken cancellationToken)
     {
@@ -43,9 +57,55 @@ public sealed class Jk5506Service
         if (!response.SequenceEqual(frame)) throw new InvalidOperationException("JK5506 write response did not match the Modbus RTU request.");
     }
 
+    private async Task<int> ReadSingleRegisterAsync(ushort register, CancellationToken cancellationToken)
+    {
+        using var port = new SerialPort(_configuration.PortName, _configuration.BaudRate, Parity.None, 8, StopBits.One)
+        {
+            ReadTimeout = _configuration.TimeoutMs,
+            WriteTimeout = _configuration.TimeoutMs
+        };
+
+        port.Open();
+        var request = BuildReadFrame(_configuration.SlaveAddress, register, 1);
+        await port.BaseStream.WriteAsync(request, cancellationToken);
+        await port.BaseStream.FlushAsync(cancellationToken);
+
+        var response = new byte[7];
+        var total = 0;
+        while (total < response.Length)
+        {
+            var read = await port.BaseStream.ReadAsync(response.AsMemory(total), cancellationToken);
+            if (read == 0) throw new IOException("JK5506 closed the RS485 response stream.");
+            total += read;
+        }
+
+        if (response[0] != _configuration.SlaveAddress || response[1] != 0x03 || response[2] != 0x02)
+        {
+            throw new InvalidOperationException("JK5506 read response format is invalid.");
+        }
+
+        var expectedCrc = CalculateCrc(response.AsSpan(0, 5));
+        var actualCrc = (ushort)(response[5] | (response[6] << 8));
+        if (expectedCrc != actualCrc)
+        {
+            throw new InvalidOperationException("JK5506 read response CRC check failed.");
+        }
+
+        return (response[3] << 8) | response[4];
+    }
+
     private static byte[] BuildWriteFrame(byte slaveAddress, ushort register, ushort value)
     {
         var frame = new byte[] { slaveAddress, 0x06, (byte)(register >> 8), (byte)register, (byte)(value >> 8), (byte)value, 0, 0 };
+        var crc = CalculateCrc(frame.AsSpan(0, 6));
+        frame[6] = (byte)crc;
+        frame[7] = (byte)(crc >> 8);
+        return frame;
+    }
+
+    private static byte[] BuildReadFrame(byte slaveAddress, ushort register, ushort count)
+    {
+        var frame = new byte[] { slaveAddress, 0x03, (byte)(register >> 8), (byte)register, (byte)(count >> 8), (byte)count, 0, 0 };
         var crc = CalculateCrc(frame.AsSpan(0, 6));
         frame[6] = (byte)crc;
         frame[7] = (byte)(crc >> 8);

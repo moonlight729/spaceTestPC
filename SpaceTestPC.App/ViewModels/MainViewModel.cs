@@ -15,9 +15,8 @@ public sealed class MainViewModel : ObservableObject
     [
         new() { Id = "board_state" }, new() { Id = "hdmi" }, new() { Id = "keys" }, new() { Id = "lcd" },
         new() { Id = "ethernet" }, new() { Id = "wifi" }, new() { Id = "bluetooth" }, new() { Id = "fingerprint" },
-        new() { Id = "typec_fast_charge" }, new() { Id = "typec_camera" }, new() { Id = "tf" }, new() { Id = "usb2_3" },
-        new() { Id = "pcba_test_points" }, new() { Id = "indicator_led" }, new() { Id = "fan" }, new() { Id = "otg" },
-        new() { Id = "battery_management" }
+        new() { Id = "battery_management" }, new() { Id = "typec_fast_charge" }, new() { Id = "typec_camera" }, new() { Id = "tf" }, new() { Id = "usb2_3" },
+        new() { Id = "pcba_test_points" }, new() { Id = "indicator_led" }, new() { Id = "fan" }, new() { Id = "otg" }
     ];
 
     // Change this value during deployment; operators do not choose the transport mode.
@@ -39,6 +38,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly JxTvmService? _jxTvmService;
     private readonly BluetoothBroadcasterService? _bluetoothBroadcasterService;
     private readonly Dictionary<string, bool> _voltagePhaseResults = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, IReadOnlyDictionary<string, object?>> _hostDecisionData = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _voltageControlCommands = new(StringComparer.OrdinalIgnoreCase);
     private readonly IReadOnlyList<TestPlanItem> _testPlan;
     private readonly IReadOnlyDictionary<string, int> _testItemIndexes;
@@ -87,6 +87,8 @@ public sealed class MainViewModel : ObservableObject
     private string? _manualDecisionTestId;
     private IPcbaCommandClient? _activeSessionClient;
     private readonly HashSet<string> _automaticDecisionTests = new(StringComparer.OrdinalIgnoreCase);
+    private bool _isContinuousTestEnabled;
+    private bool _isSessionRunning;
 
     public MainViewModel(
         IScannerService scannerService,
@@ -114,6 +116,7 @@ public sealed class MainViewModel : ObservableObject
         var appConfiguration = configuration ?? new AppConfiguration();
         _allowSnMismatchForDebug = appConfiguration.TestPlan.AllowSnMismatchForDebug;
         _keyTestTimeoutMs = GetConfiguredKeyTimeoutMs(appConfiguration);
+        _isContinuousTestEnabled = appConfiguration.TestPlan.Continuous.EnabledByDefault;
         _testPlan = BuildActiveTestPlan(appConfiguration);
         _testItemIndexes = _testPlan
             .Select((item, index) => new { item.Id, index })
@@ -121,6 +124,7 @@ public sealed class MainViewModel : ObservableObject
 
         ScanCommand = new AsyncRelayCommand(() => HandleScanAsync(isMockSession: false), () => !string.IsNullOrWhiteSpace(ScannerInput));
         StartMockSessionCommand = new RelayCommand(StartMockSession);
+        ToggleContinuousTestCommand = new RelayCommand(ToggleContinuousTest);
         ConfirmManualPassCommand = new RelayCommand(() => SubmitManualDecision(true), () => IsManualDecisionVisible);
         ConfirmManualFailCommand = new RelayCommand(() => SubmitManualDecision(false), () => IsManualDecisionVisible);
         ReadBoardStateCommand = new AsyncRelayCommand(ReadBoardStateAsync, () => !string.IsNullOrWhiteSpace(CurrentSn));
@@ -212,7 +216,14 @@ public sealed class MainViewModel : ObservableObject
     public string LastResult
     {
         get => _lastResult;
-        private set => SetProperty(ref _lastResult, value);
+        private set
+        {
+            if (SetProperty(ref _lastResult, value))
+            {
+                RaisePropertyChanged(nameof(FinalVerdictDisplay));
+                RaisePropertyChanged(nameof(FinalVerdictForeground));
+            }
+        }
     }
 
     public string OperatorInstruction
@@ -232,6 +243,24 @@ public sealed class MainViewModel : ObservableObject
     public string AppVersion { get; } = GetAppVersion();
     public string WindowTitle => $"妫€娴嬪伐浣滃彴 {AppVersion}";
     public int TestOverviewColumns { get; }
+    public string SnPolicyModeName => _allowSnMismatchForDebug ? "开发模式" : "生产模式";
+    public string SnPolicyModeDescription => _allowSnMismatchForDebug
+        ? "允许板端 SN 与扫码 SN 不一致时继续测试，但不会覆盖已写入的板端 SN。"
+        : "要求板端 SN 与扫码 SN 一致；不一致时禁止继续测试。";
+    public string SnPolicyModeForeground => _allowSnMismatchForDebug ? "#F97316" : "#16A34A";
+    public string SnPolicyModeBackground => _allowSnMismatchForDebug ? "#FFF7ED" : "#ECFDF3";
+    public string FinalVerdictDisplay => LastResult switch
+    {
+        "Stage 1 passed" => "PASS",
+        "Stage 1 failed" => "FAIL",
+        _ => "WAIT"
+    };
+    public string FinalVerdictForeground => FinalVerdictDisplay switch
+    {
+        "PASS" => "#15803D",
+        "FAIL" => "#B42318",
+        _ => "#344054"
+    };
 
     public ObservableCollection<string> Logs { get; }
     public ObservableCollection<string> RecentSessions { get; }
@@ -266,6 +295,7 @@ public sealed class MainViewModel : ObservableObject
     }
     public AsyncRelayCommand ScanCommand { get; }
     public RelayCommand StartMockSessionCommand { get; }
+    public RelayCommand ToggleContinuousTestCommand { get; }
     public RelayCommand ConfirmManualPassCommand { get; }
     public RelayCommand ConfirmManualFailCommand { get; }
     public AsyncRelayCommand ReadBoardStateCommand { get; }
@@ -282,6 +312,22 @@ public sealed class MainViewModel : ObservableObject
         }
     }
     public bool IsTestPage => !IsQueryPage;
+    public bool IsContinuousTestEnabled
+    {
+        get => _isContinuousTestEnabled;
+        private set
+        {
+            if (SetProperty(ref _isContinuousTestEnabled, value))
+            {
+                RaisePropertyChanged(nameof(ContinuousTestButtonText));
+                RaisePropertyChanged(nameof(ContinuousTestStatusText));
+            }
+        }
+    }
+    public string ContinuousTestButtonText => IsContinuousTestEnabled ? "关闭连续过板" : "开启连续过板";
+    public string ContinuousTestStatusText => IsContinuousTestEnabled
+        ? (_isSessionRunning ? "连续过板已开启，当前板测试中" : "连续过板已开启，等待下一块扫码")
+        : (_isSessionRunning ? "单板模式，当前板测试中" : "单板模式");
     public string QueryText
     {
         get => _queryText;
@@ -334,6 +380,17 @@ public sealed class MainViewModel : ObservableObject
         _ = HandleScanAsync(isMockSession: true);
     }
 
+    private void ToggleContinuousTest()
+    {
+        IsContinuousTestEnabled = !IsContinuousTestEnabled;
+        AppendLog(IsContinuousTestEnabled ? "Continuous line mode enabled." : "Continuous line mode disabled.");
+        OperatorInstruction = IsContinuousTestEnabled
+            ? "连续过板模式已开启。当前板结束后将保留记录，并等待下一块扫码。"
+            : "连续过板模式已关闭。";
+        RaisePropertyChanged(nameof(ContinuousTestStatusText));
+        UpdateDebugOutput();
+    }
+
     private async Task HandleScanAsync(bool isMockSession)
     {
         var sn = _scannerService.Normalize(ScannerInput);
@@ -351,6 +408,8 @@ public sealed class MainViewModel : ObservableObject
         ResetTestItems();
         IsHistoryLoaded = false;
         HistorySummary = string.Empty;
+        _isSessionRunning = true;
+        RaisePropertyChanged(nameof(ContinuousTestStatusText));
         AppendLog($"Scan received: {CurrentSn}");
         AppendLog($"Session created: {SessionId}");
         UpdateDebugOutput();
@@ -449,7 +508,23 @@ public sealed class MainViewModel : ObservableObject
         if (UseUnifiedSessionProtocol)
         {
             await RunUnifiedSessionAsync();
-            return;
+        }
+        else
+        {
+            await RunLegacyPhaseOneAsync();
+        }
+
+        _isSessionRunning = false;
+        PrepareForNextBoard();
+        RaisePropertyChanged(nameof(ContinuousTestStatusText));
+        UpdateDebugOutput();
+    }
+
+    private async Task RunLegacyPhaseOneAsync()
+    {
+        if (string.IsNullOrWhiteSpace(SessionId))
+        {
+            SessionId = Guid.NewGuid().ToString("N");
         }
 
         AppendLog("Stage 1 started.");
@@ -503,12 +578,12 @@ public sealed class MainViewModel : ObservableObject
             finalVerdict = stagePassed ? "Pass" : "Fail";
             OperatorInstruction = stagePassed
                 ? "检测完成，请取下产品并扫描下一台。"
-                : "检测失败，请查看失败项目并处理异常后重新扫描。";
+                : "检测失败，请处理异常后扫描下一台或重新扫描当前 SN。";
         }
         catch (Exception ex)
         {
             LastResult = "Stage 1 failed";
-            OperatorInstruction = "通信异常，请检查连接后重新扫描。";
+            OperatorInstruction = "通信异常，当前记录将保存。请重新连接 OTG/ADB 后继续扫描下一块。";
             AppendLog($"Stage 1 execution failed: {ex.Message}");
         }
         finally
@@ -540,6 +615,18 @@ public sealed class MainViewModel : ObservableObject
         };
 
         await _databaseRepository.SaveSessionAsync(record);
+        if (state is not null)
+        {
+            try
+            {
+                await client.SyncSessionSummaryAsync(SessionId, CurrentSn, state.BoardId, finalVerdict, record.TestResults);
+                AppendLog("Board summary synced.");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"Board summary sync failed: {ex.Message}");
+            }
+        }
         await LoadRecentSessionsAsync();
         await SetMockQueryDefaultAsync();
         AppendLog("Session persisted.");
@@ -591,7 +678,7 @@ public sealed class MainViewModel : ObservableObject
                     LastResult = finalVerdict == "Pass" ? "Stage 1 passed" : "Stage 1 failed";
                     OperatorInstruction = finalVerdict == "Pass"
                         ? "检测完成，请取下产品并扫描下一台。"
-                        : "检测完成，存在失败项目。请查看失败项目并处理异常后重新扫描。";
+                        : "检测完成，存在失败项目。请处理异常后扫描下一台或重新扫描当前 SN。";
                     AppendLog($"Session completed: status={testEvent.Status}, code={testEvent.ResultCode}, message={testEvent.Message}");
                 }
             }
@@ -599,7 +686,7 @@ public sealed class MainViewModel : ObservableObject
         catch (Exception ex)
         {
             LastResult = "Stage 1 failed";
-            OperatorInstruction = "通信异常，检测已停止。请检查连接后重新扫描。";
+            OperatorInstruction = "通信异常，当前记录将保存。请重新连接 OTG/ADB 后继续扫描下一块。";
             AppendLog($"Session exception: {ex.GetType().Name}: {ex.Message}");
         }
         finally
@@ -629,6 +716,27 @@ public sealed class MainViewModel : ObservableObject
         await SetMockQueryDefaultAsync();
         AppendLog("Session persisted.");
         UpdateDebugOutput();
+    }
+
+    private void PrepareForNextBoard()
+    {
+        if (string.IsNullOrWhiteSpace(CurrentSn))
+        {
+            return;
+        }
+
+        if (IsContinuousTestEnabled)
+        {
+            CurrentSn = string.Empty;
+            SessionId = string.Empty;
+            BoardId = "-";
+            BoardState = "Waiting";
+            TestMode = "Ready";
+            ScannerInput = string.Empty;
+            OperatorInstruction = "上一块记录已保存。请插入下一块并扫描 SN。";
+            AppendLog("Ready for next board scan.");
+            UpdateDebugOutput();
+        }
     }
 
     private async Task<BoardState> EnsureBoardSnAsync(IPcbaCommandClient client, BoardState state)
@@ -671,6 +779,28 @@ public sealed class MainViewModel : ObservableObject
 
     private void ApplyTestReport(TestSessionEvent testEvent)
     {
+        if (testEvent.TestId == "battery_management" &&
+            testEvent.Status is "passed" or "failed" &&
+            _hostDecisionData.TryGetValue(testEvent.TestId, out var hostData))
+        {
+            var merged = hostData.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in testEvent.Data)
+            {
+                merged[pair.Key] = pair.Value;
+            }
+
+            testEvent = new TestSessionEvent
+            {
+                Event = testEvent.Event,
+                TestId = testEvent.TestId,
+                Status = testEvent.Status,
+                ResultCode = testEvent.ResultCode,
+                Message = testEvent.Message,
+                Timestamp = testEvent.Timestamp,
+                Data = merged
+            };
+        }
+
         var result = TestResults.FirstOrDefault(item => item.TestId == testEvent.TestId);
         result?.Apply(testEvent);
         if (result is not null && ShouldSelectTestResult(testEvent, result))
@@ -764,8 +894,10 @@ public sealed class MainViewModel : ObservableObject
             ? "网口测试完成，请拔掉网线，准备进行 Wi-Fi 测试。"
             : testEvent.TestId == "ethernet" && testEvent.Status == "running"
             ? "请插入网线，系统将关闭 Wi-Fi 并检测有线网络。"
+            : testEvent.TestId == "typec_fast_charge" && testEvent.Status == "running" && !GetDataBoolean(testEvent.Data, "readyForHostDecision")
+            ? "请先拔掉充电器。系统将自动允许充电，再读取充电电压和电流。"
             : testEvent.TestId == "typec_fast_charge" && testEvent.Status == "running"
-            ? "请插入 TYPE-C 充电器，系统将自动检测充电电压和电流。"
+            ? "请插入 TYPE-C 充电器，系统将按 7.4V 电池模拟条件采样充电电流，并等待上位机判定。"
             : testEvent.Status == "skipped"
             ? $"{GetTestDisplayName(testEvent.TestId)}：本轮不测试。"
             : testEvent.Status == "running"
@@ -932,7 +1064,7 @@ public sealed class MainViewModel : ObservableObject
         "indicator_led" => "指示灯板",
         "fan" => "风扇",
         "otg" => "USB OTG口",
-        "battery_management" => "板放电",
+        "battery_management" => "板放电测试",
         _ => testId
     };
 
@@ -1068,14 +1200,21 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
         var voltage = GetDataInt(testEvent.Data, "chargeVoltageMv");
-        var current = GetDataInt(testEvent.Data, "chargeCurrentMa");
+        var current = GetDataInt(testEvent.Data, "averageChargeCurrentMa");
         var passed = GetDataBoolean(testEvent.Data, "pmicCommunicationOk") &&
             GetDataBoolean(testEvent.Data, "chargerConnected") &&
+            GetDataBoolean(testEvent.Data, "stable") &&
             voltage >= GetParameterInt(parameters, "chargeVoltageMinMv", 7400) &&
             voltage <= GetParameterInt(parameters, "chargeVoltageMaxMv", 8400) &&
             current >= GetParameterInt(parameters, "chargeCurrentMinMa", 500) &&
             current <= GetParameterInt(parameters, "chargeCurrentMaxMa", 3000);
-        var reason = passed ? "charge_values_in_range" : "charge_values_out_of_range";
+        var reason = passed ? "charge_values_in_range"
+            : !GetDataBoolean(testEvent.Data, "chargerConnected") ? "charger_not_connected"
+            : !GetDataBoolean(testEvent.Data, "stable") ? "charge_current_unstable"
+            : voltage < GetParameterInt(parameters, "chargeVoltageMinMv", 7400) ? "charge_voltage_too_low"
+            : voltage > GetParameterInt(parameters, "chargeVoltageMaxMv", 8400) ? "charge_voltage_too_high"
+            : current < GetParameterInt(parameters, "chargeCurrentMinMa", 500) ? "charge_current_too_low"
+            : "charge_current_too_high";
         await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, passed, reason);
         AppendLog($"TYPE-C charging automatic decision: {(passed ? "PASS" : "FAIL")} ({reason})");
     }
@@ -1126,14 +1265,136 @@ public sealed class MainViewModel : ObservableObject
     {
         if (_activeSessionClient is null || !_automaticDecisionTests.Add(testEvent.TestId) || !GetDataBoolean(testEvent.Data, "readyForHostDecision")) return;
         var parameters = _testPlan.First(item => item.Id == testEvent.TestId).Parameters;
-        var voltage = GetDataInt(testEvent.Data, "dischargeVoltageMv");
-        var current = GetDataInt(testEvent.Data, "dischargeCurrentMa");
-        var passed = voltage >= GetParameterInt(parameters, "dischargeVoltageMinMv", 7000) &&
-            voltage <= GetParameterInt(parameters, "dischargeVoltageMaxMv", 7600) &&
-            current >= GetParameterInt(parameters, "dischargeCurrentMinMa", 100) &&
-            current <= GetParameterInt(parameters, "dischargeCurrentMaxMa", 1500);
-        await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, passed, passed ? "discharge_values_in_range" : "discharge_values_out_of_range");
-        AppendLog($"Battery discharge automatic decision: {(passed ? "PASS" : "FAIL")}");
+        var sampleIntervalMs = Math.Max(100, GetParameterInt(parameters, "sampleIntervalMs", 500));
+        var samplingDurationMs = Math.Max(sampleIntervalMs, GetParameterInt(parameters, "samplingDurationMs", 10000));
+        var stabilityToleranceMa = Math.Max(0, GetParameterInt(parameters, "stabilityToleranceMa", 80));
+        var voltageMinMv = GetParameterInt(parameters, "dischargeVoltageMinMv", 0);
+        var voltageMaxMv = GetParameterInt(parameters, "dischargeVoltageMaxMv", int.MaxValue);
+        var currentMinMv = GetParameterInt(parameters, "dischargeCurrentMinMa", 0);
+        var currentMaxMv = GetParameterInt(parameters, "dischargeCurrentMaxMa", int.MaxValue);
+
+        if (_jk5506Service is null || !GetDataBoolean(testEvent.Data, "chargeControlOk"))
+        {
+            var reason = _jk5506Service is null ? "battery_simulator_not_configured" : "charge_disable_failed";
+            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, false, reason);
+            AppendLog($"Battery discharge automatic decision: FAIL ({reason})");
+            return;
+        }
+
+        AppendLog("Battery discharge ready. JK5506 will sample voltage/current for 10 seconds and then return host decision.");
+
+        var deadline = DateTimeOffset.Now.AddMilliseconds(samplingDurationMs);
+        var samples = new List<(int VoltageMv, int CurrentMa)>();
+
+        try
+        {
+            while (DateTimeOffset.Now < deadline)
+            {
+                var voltageMv = await _jk5506Service.ReadOutputVoltageMvAsync();
+                var currentMa = await _jk5506Service.ReadOutputCurrentMaAsync();
+                samples.Add((voltageMv, currentMa));
+
+                var elapsedMs = Math.Min(samplingDurationMs, (int)(DateTimeOffset.Now - testEvent.Timestamp).TotalMilliseconds);
+                ApplyTestReport(new TestSessionEvent
+                {
+                    Event = "test.report",
+                    TestId = testEvent.TestId,
+                    Status = "running",
+                    ResultCode = 0,
+                    Message = $"板放电测试进行中，已采样 {samples.Count} 次",
+                    Timestamp = testEvent.Timestamp,
+                    Data = new Dictionary<string, object?>
+                    {
+                        ["chargeControlCommand"] = GetDataString(testEvent.Data, "chargeControlCommand", "disable_charge"),
+                        ["chargeControlOk"] = GetDataBoolean(testEvent.Data, "chargeControlOk"),
+                        ["pmicCommunicationOk"] = GetDataBoolean(testEvent.Data, "pmicCommunicationOk"),
+                        ["samplingDurationMs"] = samplingDurationMs,
+                        ["elapsedMs"] = elapsedMs,
+                        ["sampleCount"] = samples.Count,
+                        ["dischargeVoltageMv"] = voltageMv,
+                        ["dischargeCurrentMa"] = currentMa,
+                        ["dischargeVoltageMinMv"] = voltageMinMv,
+                        ["dischargeVoltageMaxMv"] = voltageMaxMv,
+                        ["dischargeCurrentMinMa"] = currentMinMv,
+                        ["dischargeCurrentMaxMa"] = currentMaxMv,
+                        ["stabilityToleranceMa"] = stabilityToleranceMa
+                    }
+                });
+
+                await Task.Delay(sampleIntervalMs);
+            }
+
+            var avgVoltageMv = (int)Math.Round(samples.Average(item => item.VoltageMv));
+            var rawCurrents = samples.Select(item => item.CurrentMa).OrderBy(value => value).ToArray();
+            var medianCurrentMa = rawCurrents[rawCurrents.Length / 2];
+            var filteredCurrents = rawCurrents
+                .Where(value => Math.Abs(value - medianCurrentMa) <= Math.Max(stabilityToleranceMa * 2, 200))
+                .ToArray();
+            if (filteredCurrents.Length == 0)
+            {
+                filteredCurrents = rawCurrents;
+            }
+
+            var avgCurrentMa = (int)Math.Round(filteredCurrents.Average());
+            var measuredCurrentMin = filteredCurrents.Min();
+            var measuredCurrentMax = filteredCurrents.Max();
+            var rippleMa = measuredCurrentMax - measuredCurrentMin;
+            var outlierCount = rawCurrents.Length - filteredCurrents.Length;
+
+            var passed = avgVoltageMv >= voltageMinMv &&
+                avgVoltageMv <= voltageMaxMv &&
+                avgCurrentMa >= currentMinMv &&
+                avgCurrentMa <= currentMaxMv &&
+                rippleMa <= stabilityToleranceMa;
+
+            var failureReason = passed
+                ? "discharge_current_in_range"
+                : avgVoltageMv < voltageMinMv ? "discharge_voltage_too_low"
+                : avgVoltageMv > voltageMaxMv ? "discharge_voltage_too_high"
+                : avgCurrentMa < currentMinMv ? "discharge_current_too_low"
+                : avgCurrentMa > currentMaxMv ? "discharge_current_too_high"
+                : "discharge_current_unstable";
+
+            _hostDecisionData[testEvent.TestId] = new Dictionary<string, object?>
+            {
+                ["chargeControlCommand"] = GetDataString(testEvent.Data, "chargeControlCommand", "disable_charge"),
+                ["chargeControlOk"] = GetDataBoolean(testEvent.Data, "chargeControlOk"),
+                ["pmicCommunicationOk"] = GetDataBoolean(testEvent.Data, "pmicCommunicationOk"),
+                ["samplingDurationMs"] = samplingDurationMs,
+                ["elapsedMs"] = samplingDurationMs,
+                ["sampleCount"] = samples.Count,
+                ["validSampleCount"] = filteredCurrents.Length,
+                ["outlierSampleCount"] = outlierCount,
+                ["dischargeVoltageMv"] = avgVoltageMv,
+                ["dischargeCurrentMa"] = avgCurrentMa,
+                ["measuredCurrentMinMa"] = measuredCurrentMin,
+                ["measuredCurrentMaxMa"] = measuredCurrentMax,
+                ["currentRippleMa"] = rippleMa,
+                ["rawCurrentMedianMa"] = medianCurrentMa,
+                ["dischargeVoltageMinMv"] = voltageMinMv,
+                ["dischargeVoltageMaxMv"] = voltageMaxMv,
+                ["dischargeCurrentMinMa"] = currentMinMv,
+                ["dischargeCurrentMaxMa"] = currentMaxMv,
+                ["stabilityToleranceMa"] = stabilityToleranceMa,
+                ["failureReason"] = failureReason
+            };
+
+            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, passed, failureReason);
+            AppendLog($"Battery discharge automatic decision: {(passed ? "PASS" : "FAIL")} ({failureReason}), voltage={avgVoltageMv}mV, current={avgCurrentMa}mA, ripple={rippleMa}mA, outliers={outlierCount}");
+        }
+        catch (Exception ex)
+        {
+            _hostDecisionData[testEvent.TestId] = new Dictionary<string, object?>
+            {
+                ["chargeControlCommand"] = GetDataString(testEvent.Data, "chargeControlCommand", "disable_charge"),
+                ["chargeControlOk"] = GetDataBoolean(testEvent.Data, "chargeControlOk"),
+                ["pmicCommunicationOk"] = GetDataBoolean(testEvent.Data, "pmicCommunicationOk"),
+                ["samplingDurationMs"] = samplingDurationMs,
+                ["failureReason"] = "jk5506_read_error"
+            };
+            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, false, "jk5506_read_error");
+            AppendLog($"Battery discharge measurement failed: {ex.Message}");
+        }
     }
 
     private static int GetDataInt(IReadOnlyDictionary<string, object?> data, string key)
@@ -1278,6 +1539,7 @@ public sealed class MainViewModel : ObservableObject
     {
         _manualDecisionTestId = null;
         _automaticDecisionTests.Clear();
+        _hostDecisionData.Clear();
         _voltagePhaseResults.Clear();
         _voltageControlCommands.Clear();
         foreach (var key in DirectionalKeys)
@@ -1445,6 +1707,8 @@ public sealed class MainViewModel : ObservableObject
             $"BoardId: {BoardId}\n" +
             $"BoardState: {BoardState}\n" +
             $"TestMode: {TestMode}\n" +
+            $"ContinuousTest: {IsContinuousTestEnabled}\n" +
+            $"SessionRunning: {_isSessionRunning}\n" +
             $"VoltageStatus: {VoltageStatus}\n" +
             $"BatteryStatus: {BatteryStatus}\n" +
             $"LastResult: {LastResult}";

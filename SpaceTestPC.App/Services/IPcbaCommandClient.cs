@@ -24,6 +24,13 @@ public interface IPcbaCommandClient
         CancellationToken cancellationToken = default);
 
     Task SubmitTestControlAsync(string sessionId, string testId, string level, CancellationToken cancellationToken = default);
+    Task<CommandResponse> SyncSessionSummaryAsync(
+        string sessionId,
+        string sn,
+        string boardId,
+        string finalVerdict,
+        IReadOnlyList<TestResultRecord> testResults,
+        CancellationToken cancellationToken = default);
 
     Task<BoardState> GetBoardStateAsync(string sessionId, string sn, CancellationToken cancellationToken = default);
     Task<CommandResponse> WriteSnAsync(string sessionId, string sn, string boardId, CancellationToken cancellationToken = default);

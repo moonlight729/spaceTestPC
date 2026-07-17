@@ -1,0 +1,21 @@
+[Unit]
+Description=SpaceTest RK3576 PCBA service
+After=network.target adb.service
+Wants=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/originflow/work/spaceTest3576
+Environment=HOME=/home/originflow
+ExecStart=/home/originflow/work/spaceTest3576/spacetest3576
+Restart=always
+RestartSec=2
+StandardOutput=append:/tmp/spacetest3576.log
+StandardError=append:/tmp/spacetest3576.log
+
+# Hardening that does not break the current design.
+NoNewPrivileges=true
+PrivateTmp=false
+
+[Install]
+WantedBy=multi-user.target

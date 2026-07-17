@@ -197,10 +197,25 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
             }
             else if (test.Id == "battery_management")
             {
+                await Task.Delay(GetMockRunningDelay(test.Id), cancellationToken);
+                yield return new TestSessionEvent
+                {
+                    Event = "test.report",
+                    TestId = test.Id,
+                    Status = "running",
+                    Message = "Battery discharge mode enabled, waiting for host decision",
+                    Data = new Dictionary<string, object?>
+                    {
+                        ["chargeControlCommand"] = "disable_charge",
+                        ["chargeControlOk"] = true,
+                        ["pmicCommunicationOk"] = true,
+                        ["readyForHostDecision"] = true
+                    }
+                };
                 if (!await WaitForManualDecisionAsync(test.Id, cancellationToken))
                 {
-                    yield return new TestSessionEvent { Event = "test.report", TestId = test.Id, Status = "failed", ResultCode = 4601, Message = "Battery discharge values are outside the configured range" };
-                    yield return new TestSessionEvent { Event = "session.completed", TestId = test.Id, Status = "failed", ResultCode = 4601, Message = "Mock session stopped after battery discharge failure" };
+                    yield return new TestSessionEvent { Event = "test.report", TestId = test.Id, Status = "failed", ResultCode = 4702, Message = "Host confirmed discharge fail" };
+                    yield return new TestSessionEvent { Event = "session.completed", TestId = test.Id, Status = "failed", ResultCode = 4702, Message = "Mock session stopped after battery discharge failure" };
                     yield break;
                 }
             }
@@ -311,6 +326,23 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
     }
 
     public Task SubmitTestControlAsync(string sessionId, string testId, string level, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<CommandResponse> SyncSessionSummaryAsync(
+        string sessionId,
+        string sn,
+        string boardId,
+        string finalVerdict,
+        IReadOnlyList<TestResultRecord> testResults,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(new CommandResponse
+        {
+            SessionId = sessionId,
+            Sn = sn,
+            BoardId = boardId,
+            ResultCode = 0,
+            Message = "Mock board summary synced",
+            Timestamp = DateTimeOffset.Now.ToString("O")
+        });
 
     public Task<BoardState> GetBoardStateAsync(string sessionId, string sn, CancellationToken cancellationToken = default)
     {
@@ -499,9 +531,12 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 data["pmicBus"] = GetParameterString(test.Parameters, "pmicBus", "i2c");
                 data["pmicCommunicationOk"] = true;
                 data["chargerConnected"] = true;
+                data["charging"] = true;
+                data["chargeStage"] = "cc";
                 data["chargeVoltageMv"] = 8200;
                 data["chargeCurrentMa"] = 1850;
                 data["stable"] = true;
+                data["stableSamples"] = GetParameterInt(test.Parameters, "stableSampleCount", 3);
                 break;
             case "typec_camera":
                 data["streamProfile"] = GetParameterString(test.Parameters, "streamProfile", "1080p30");
@@ -642,8 +677,12 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 ["batterySimulationVoltageMv"] = GetParameterInt(test.Parameters, "batterySimulationVoltageMv", 7400),
                 ["pmicCommunicationOk"] = true,
                 ["chargerConnected"] = true,
+                ["charging"] = true,
+                ["chargeStage"] = "cc",
                 ["chargeVoltageMv"] = 8200,
                 ["chargeCurrentMa"] = 1850,
+                ["stable"] = true,
+                ["stableSamples"] = GetParameterInt(test.Parameters, "stableSampleCount", 3),
                 ["sampleIndex"] = GetParameterInt(test.Parameters, "stableSampleCount", 3),
                 ["readyForHostDecision"] = true
             };

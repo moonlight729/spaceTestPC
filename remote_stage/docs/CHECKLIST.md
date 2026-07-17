@@ -10,7 +10,7 @@
 | Wi-Fi `wifi` | 已完成并接入 runner | 参数 smoke PASS，已读取 `ssid/routerIp/pingCount/timeoutMs` | 后续用正式 JSON parser 替代轻量字符串解析 |
 | 蓝牙 `bluetooth` | 已接入 runner | 已读取 `targetName/minRssi/scanWindowMs`；默认目标名跟随上位机广播名 `yctc_bt_01`；失败时补充 `failureReason/matchedRssi/bestSeenRssi` | 生产环境只修改上位机 `bluetoothBroadcaster.broadcastName` |
 | 指纹 `fingerprint` | 临时 PASS | C 编译和 runner smoke 通过 | 有真实 SPI 指纹模组后替换实现，保持 API 不变 |
-| 板快充 `typec_fast_charge` | 已接入 runner | session smoke PASS，约 8332mV、0mA；已读取阈值和采样参数 | 改为最终板端文件接口 |
+| 板快充 `typec_fast_charge` | 已接入 runner | 已支持充电前使能 PMIC、上报电压/电流/阶段并等待上位机 `test.decision` | 补齐真实 `fast_charge` 底层采集实现并完成真机联调 |
 | 相机 `typec_camera` | 已完成并接入 runner | `/dev/video0` 拉流 PASS；已读取 devicePath/timeout/中断阈值 | 接入曝光中断计数文件，拉流后要求曝光计数增量 >= 30 |
 | TF 卡 `tf` | 已完成并接入 runner | sudo session smoke PASS；已支持 devicePath/mountPoint/allowFormatExt4/minCapacityMb | 确认正式服务以 root 运行，或确保挂载点对服务账户可写 |
 | 指示灯板 `indicator_led` | 框架完成，未接入 runner | brightness 节点 C 编译通过 | 接入 runner；通过 `test.control` 控制输出，等待上位机电压检测仪 `test.decision` |
@@ -18,7 +18,7 @@
 | USB2.0/USB3.0 插拔 | 框架完成，未接入上位机计划 | C 编译通过，未配置文件接口返回 `4500` | 等板端提供 USB2.0/USB3.0 四次插拔记录文件；确认是否加入上位机测试计划 |
 | HDMI `hdmi` | 未实现，当前按 unsupported 失败 | runner 按 `failed/3900` 上报并继续后续项 | 实现人工判定等待 `operator.decision` |
 | LCD `lcd` | 未实现，当前按 unsupported 失败 | runner 按 `failed/3900` 上报并继续后续项 | 实现人工判定等待 `operator.decision` |
-| 板放电 `battery_management` | 未实现，当前按 unsupported 失败 | runner 可返回 `failed/3900` 并继续 | 实现电压/电流读取或上位机自动判定闭环 |
+| 板放电 `battery_management` | 已接入 runner | 已支持放电前关闭充电、上报电压/电流并等待上位机 `test.decision` | 补齐真实 `fast_charge` 底层采集实现并完成真机联调 |
 | OTG `otg` | 未实现，当前不在上位机计划 | 未验证 | 确认是否保留测试项；若保留则定义设备端判定方式 |
 
 ## 2. 协议与会话
@@ -37,7 +37,7 @@
 - [ ] 处理连接断开、读取超时、重复请求和服务重启后的状态恢复。
 - [ ] 实现 `operator.decision`，用于 HDMI/LCD 人工判定。
 - [ ] 实现 `test.control`，用于 indicator_led/fan 输出控制。
-- [ ] 实现 `test.decision`，用于上位机仪器自动判定回传。
+- [x] 实现 `test.decision`，用于上位机仪器自动判定回传。
 
 ## 3. 上位机参数对接
 
@@ -50,7 +50,8 @@
 - [x] 相机使用上位机下发的拉流超时、帧数/中断计数阈值。
 - [x] TF 使用上位机下发的设备路径、挂载点、是否允许格式化和最小容量。
 - [ ] indicator_led/fan 使用上位机下发的通道、目标电压和容差。
-- [ ] battery_management 使用上位机下发的放电电压/电流阈值。
+- [x] battery_management 使用上位机下发的放电电压/电流阈值。
+- [x] 会话结束后由上位机回写板端最简摘要：总测试次数、每项最近结果、每项累计次数。
 
 ## 4. 板状态与本地摘要
 
@@ -113,3 +114,21 @@
 - [ ] PCBA test points real acquisition backend: replace summary-file reader with ADC / fixture interface.
 - [ ] USB2.0&3.0 real summary producer: board side generates USB2.0/USB3.0 plug history file.
 - [ ] Ethernet real production validation: run through UI/ADB with wired network connected; avoid running over SSH Wi-Fi path.
+
+## 2026-07-17 Battery Discharge Update
+
+- `battery_management` is now a host-judged discharge item.
+- 3576 only sends `i2ctransfer -f -y 7 w2@0x6b 0x12 0x80` to disable charging, then reports `readyForHostDecision=true`.
+- 3576 no longer reads discharge current or discharge voltage for this item.
+- Upper PC / external instrument reads the actual discharge current and applies the configurable thresholds.
+- Final discharge result is returned through `test.decision`, then 3576 reports `passed/failed` and stores only the minimal summary.
+
+## 2026-07-17 Resident Service Update
+
+- `nohup` is not treated as the final deployment method on RK3576.
+- Final resident deployment must use `systemd`.
+- Service template: `deploy/spacetest3576.service`
+- Install helper: `deploy/install_systemd_service.sh`
+- Expected steady state:
+  `systemctl status spacetest3576`
+  shows `active (running)`, and `netstat -lnt` shows `127.0.0.1:19001` in `LISTEN`.

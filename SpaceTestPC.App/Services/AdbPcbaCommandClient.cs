@@ -174,7 +174,48 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
             PassCount = response.Data.PassCount,
             FailCount = response.Data.FailCount,
             TotalCount = response.Data.TotalCount,
-            Version = response.Data.Version
+            Version = response.Data.Version,
+            TestItems = response.Data.TestItems
+        };
+    }
+
+    public async Task<CommandResponse> SyncSessionSummaryAsync(
+        string sessionId,
+        string sn,
+        string boardId,
+        string finalVerdict,
+        IReadOnlyList<TestResultRecord> testResults,
+        CancellationToken cancellationToken = default)
+    {
+        var command = new HostCommand
+        {
+            SessionId = sessionId,
+            Sn = sn,
+            BoardId = boardId,
+            CommandGroup = "sys",
+            Command = "sync_session_summary",
+            Parameters = new Dictionary<string, object?>
+            {
+                ["finalVerdict"] = finalVerdict,
+                ["testResults"] = testResults.Select(item => new Dictionary<string, object?>
+                {
+                    ["testId"] = item.TestId,
+                    ["status"] = item.Status
+                }).ToArray()
+            }
+        };
+
+        var payload = await SendCommandAsync(command, cancellationToken);
+        var response = DeserializeEnvelope<Dictionary<string, object?>>(payload);
+        return new CommandResponse
+        {
+            RequestId = response.RequestId,
+            SessionId = response.SessionId,
+            Sn = sn,
+            BoardId = boardId,
+            ResultCode = response.ResultCode,
+            Message = response.Message,
+            Timestamp = response.Timestamp
         };
     }
 
@@ -398,5 +439,6 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         public int FailCount { get; init; }
         public int TotalCount { get; init; }
         public int Version { get; init; } = 1;
+        public IReadOnlyList<BoardTestItemSummary> TestItems { get; init; } = Array.Empty<BoardTestItemSummary>();
     }
 }

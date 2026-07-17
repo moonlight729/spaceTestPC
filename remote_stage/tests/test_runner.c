@@ -15,10 +15,16 @@
 #include "../storage/board_state.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
 #include <time.h>
 #include <unistd.h>
+
+#define CHARGE_CONTROL_ENABLE_COMMAND "i2ctransfer -f -y 7 w2@0x6b 0x12 0x00"
+#define CHARGE_CONTROL_DISABLE_COMMAND "i2ctransfer -f -y 7 w2@0x6b 0x12 0x80"
+
+static int wait_test_decision(int fd, const char *test_id, int timeout_ms, int *passed);
 
 static const char *find_object_end(const char *start)
 {
@@ -177,6 +183,11 @@ static int send_report(int fd, const char *test_id, const char *status,
     char line[16384];
     protocol_build_test_report(line, sizeof(line), test_id, status, code, message, data_json);
     return protocol_write_line(fd, line);
+}
+
+static int set_charge_enabled(int enabled)
+{
+    return system(enabled ? CHARGE_CONTROL_ENABLE_COMMAND : CHARGE_CONTROL_DISABLE_COMMAND);
 }
 
 static int run_board_state(int fd)
@@ -545,6 +556,7 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
     };
     struct fast_charge_result result;
     char data[512];
+    int passed = 0;
 
     request.voltage_min_mv = param_int(test_start, test_end, "chargeVoltageMinMv", request.voltage_min_mv);
     request.voltage_max_mv = param_int(test_start, test_end, "chargeVoltageMaxMv", request.voltage_max_mv);
@@ -554,13 +566,30 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
     request.sample_interval_ms = param_int(test_start, test_end, "sampleIntervalMs", request.sample_interval_ms);
     request.timeout_ms = param_int(test_start, test_end, "timeoutMs", request.timeout_ms);
     memset(&result, 0, sizeof(result));
-    send_report(fd, "typec_fast_charge", "running", 0, "Reading fast charge values", "{}");
+    if (set_charge_enabled(1) != 0) {
+        snprintf(data, sizeof(data),
+                 "{\"chargeControlCommand\":\"enable_charge\",\"chargeControlOk\":false,"
+                 "\"pmicCommunicationOk\":false,\"chargerConnected\":false,\"charging\":false,"
+                 "\"chargeStage\":\"unknown\",\"chargeVoltageMv\":0,\"chargeCurrentMa\":0,\"stable\":false,"
+                 "\"stableSamples\":0,\"averageChargeCurrentMa\":0,\"voltageMinMv\":%d,\"voltageMaxMv\":%d,\"currentMinMa\":%d,\"currentMaxMa\":%d}",
+                 request.voltage_min_mv, request.voltage_max_mv,
+                 request.current_min_ma, request.current_max_ma);
+        return send_report(fd, "typec_fast_charge", "failed", 4401,
+                           "Unable to enable charge before fast charge test", data);
+    }
+    send_report(fd, "typec_fast_charge", "running", 0, "Please unplug charger, charge path will be enabled and measured automatically", "{}");
     if (fast_charge_open(&device) != 0 ||
         fast_charge_run_test(&device, &request, &result) != 0) {
         fast_charge_close(&device);
         snprintf(data, sizeof(data),
-                 "{\"online\":%s,\"voltageMv\":%d,\"currentMa\":%d,\"voltageMinMv\":%d,\"voltageMaxMv\":%d,\"currentMinMa\":%d,\"currentMaxMa\":%d}",
-                 result.charger_online ? "true" : "false", result.voltage_mv, result.current_ma,
+                 "{\"chargeControlCommand\":\"enable_charge\",\"chargeControlOk\":true,"
+                 "\"pmicCommunicationOk\":false,\"chargerConnected\":%s,\"charging\":%s,\"chargeStage\":\"%s\","
+                 "\"chargeVoltageMv\":%d,\"chargeCurrentMa\":%d,\"stable\":false,\"stableSamples\":0,"
+                 "\"averageChargeCurrentMa\":%d,\"voltageMinMv\":%d,\"voltageMaxMv\":%d,\"currentMinMa\":%d,\"currentMaxMa\":%d}",
+                 result.charger_online ? "true" : "false",
+                 result.charger_online ? "true" : "false",
+                 result.charger_online ? "unknown" : "not_charging",
+                 result.voltage_mv, result.current_ma, result.current_ma,
                  request.voltage_min_mv, request.voltage_max_mv,
                  request.current_min_ma, request.current_max_ma);
         send_report(fd, "typec_fast_charge", "failed",
@@ -571,17 +600,79 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
     }
     fast_charge_close(&device);
     snprintf(data, sizeof(data),
-             "{\"online\":%s,\"voltageMv\":%d,\"currentMa\":%d,\"stableSamples\":%d,\"voltageMinMv\":%d,\"voltageMaxMv\":%d,\"currentMinMa\":%d,\"currentMaxMa\":%d}",
-             result.charger_online ? "true" : "false", result.voltage_mv, result.current_ma,
-             result.stable_samples, request.voltage_min_mv, request.voltage_max_mv,
+             "{\"chargeControlCommand\":\"enable_charge\",\"chargeControlOk\":true,"
+             "\"pmicCommunicationOk\":true,\"chargerConnected\":%s,\"charging\":%s,\"chargeStage\":\"%s\","
+             "\"chargeVoltageMv\":%d,\"chargeCurrentMa\":%d,\"stable\":%s,\"stableSamples\":%d,"
+             "\"averageChargeCurrentMa\":%d,\"voltageMinMv\":%d,\"voltageMaxMv\":%d,\"currentMinMa\":%d,\"currentMaxMa\":%d,"
+             "\"readyForHostDecision\":true}",
+             result.charger_online ? "true" : "false",
+             result.charger_online ? "true" : "false",
+             result.current_ma >= request.current_min_ma ? "cc" : "attached",
+             result.voltage_mv, result.current_ma,
+             result.stable_samples >= request.stable_sample_count ? "true" : "false",
+             result.stable_samples, result.current_ma, request.voltage_min_mv, request.voltage_max_mv,
              request.current_min_ma, request.current_max_ma);
-    return send_report(fd, "typec_fast_charge", "passed", 0, result.message, data);
+    send_report(fd, "typec_fast_charge", "running", 0, "Waiting for host decision", data);
+    switch (wait_test_decision(fd, "typec_fast_charge", request.timeout_ms, &passed)) {
+    case 1:
+        return send_report(fd, "typec_fast_charge", passed ? "passed" : "failed",
+                           passed ? 0 : 4402,
+                           passed ? "Host confirmed fast charge pass" : "Host confirmed fast charge fail",
+                           data);
+    case 0:
+        return send_report(fd, "typec_fast_charge", "failed", 4403, "Host decision timed out", data);
+    default:
+        return send_report(fd, "typec_fast_charge", "failed", 4404, "Unable to read host decision", data);
+    }
+}
+
+static int run_battery_management(int fd, const char *test_start, const char *test_end)
+{
+    char data[512];
+    int timeout_ms = 15000;
+    int passed = 0;
+
+    timeout_ms = param_int(test_start, test_end, "timeoutMs", timeout_ms);
+
+    if (set_charge_enabled(0) != 0) {
+        snprintf(data, sizeof(data),
+                 "{\"chargeControlCommand\":\"disable_charge\",\"chargeControlOk\":false,"
+                 "\"pmicCommunicationOk\":false,\"readyForHostDecision\":false}");
+        return send_report(fd, "battery_management", "failed", 4701,
+                           "Unable to disable charge before battery discharge test", data);
+    }
+
+    snprintf(data, sizeof(data),
+             "{\"chargeControlCommand\":\"disable_charge\",\"chargeControlOk\":true,"
+             "\"pmicCommunicationOk\":true,\"readyForHostDecision\":true}");
+    send_report(fd, "battery_management", "running", 0, "Battery discharge mode enabled, waiting for host decision", data);
+    switch (wait_test_decision(fd, "battery_management", timeout_ms, &passed)) {
+    case 1:
+        return send_report(fd, "battery_management", passed ? "passed" : "failed",
+                           passed ? 0 : 4702,
+                           passed ? "Host confirmed discharge pass" : "Host confirmed discharge fail",
+                           data);
+    case 0:
+        return send_report(fd, "battery_management", "failed", 4703, "Host decision timed out", data);
+    default:
+        return send_report(fd, "battery_management", "failed", 4704, "Unable to read host decision", data);
+    }
 }
 
 static int elapsed_ms(const struct timespec *start, const struct timespec *now)
 {
     return (int)((now->tv_sec - start->tv_sec) * 1000 +
                  (now->tv_nsec - start->tv_nsec) / 1000000);
+}
+
+static void format_timestamp_now(char *buffer, size_t buffer_size)
+{
+    time_t now;
+    struct tm tm_value;
+    if (buffer == NULL || buffer_size == 0) return;
+    now = time(NULL);
+    localtime_r(&now, &tm_value);
+    strftime(buffer, buffer_size, "%Y-%m-%dT%H:%M:%S%z", &tm_value);
 }
 
 static int wait_operator_decision(int fd, const char *test_id, int timeout_ms, int *passed)
@@ -611,6 +702,39 @@ static int wait_operator_decision(int fd, const char *test_id, int timeout_ms, i
         if (ready == 0) return 0;
         if (protocol_read_line(fd, line, sizeof(line)) <= 0) return -1;
         if (strstr(line, "\"event\":\"operator.decision\"") == NULL) continue;
+        if (strstr(line, test_id) == NULL) continue;
+        *passed = strstr(line, "\"passed\":true") != NULL;
+        return 1;
+    }
+}
+
+static int wait_test_decision(int fd, const char *test_id, int timeout_ms, int *passed)
+{
+    struct timespec start, now;
+    char line[PROTOCOL_MAX_LINE];
+
+    if (passed == NULL) return -1;
+    *passed = 0;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for (;;) {
+        int remaining;
+        fd_set read_fds;
+        struct timeval tv;
+        int ready;
+
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        remaining = timeout_ms - elapsed_ms(&start, &now);
+        if (remaining <= 0) return 0;
+
+        FD_ZERO(&read_fds);
+        FD_SET(fd, &read_fds);
+        tv.tv_sec = remaining / 1000;
+        tv.tv_usec = (remaining % 1000) * 1000;
+        ready = select(fd + 1, &read_fds, NULL, NULL, &tv);
+        if (ready < 0) return -1;
+        if (ready == 0) return 0;
+        if (protocol_read_line(fd, line, sizeof(line)) <= 0) return -1;
+        if (strstr(line, "\"event\":\"test.decision\"") == NULL) continue;
         if (strstr(line, test_id) == NULL) continue;
         *passed = strstr(line, "\"passed\":true") != NULL;
         return 1;
@@ -817,6 +941,7 @@ static int run_one_test(int fd, const char *test_id, const struct app_config *co
     if (strcmp(test_id, "usb2_3") == 0) return run_usb2_3(fd, test_start, test_end);
     if (strcmp(test_id, "pcba_test_points") == 0) return run_pcba_test_points(fd, test_start, test_end);
     if (strcmp(test_id, "bluetooth") == 0) return run_bluetooth(fd, config, test_start, test_end);
+    if (strcmp(test_id, "battery_management") == 0) return run_battery_management(fd, test_start, test_end);
     if (strcmp(test_id, "typec_fast_charge") == 0 || strcmp(test_id, "fast_charge") == 0) {
         return run_fast_charge(fd, config, test_start, test_end);
     }
@@ -837,6 +962,7 @@ static int failure_code_for_test(const char *test_id)
     if (strcmp(test_id, "usb2_3") == 0) return 3012;
     if (strcmp(test_id, "pcba_test_points") == 0) return 3013;
     if (strcmp(test_id, "bluetooth") == 0) return 3005;
+    if (strcmp(test_id, "battery_management") == 0) return 3014;
     if (strcmp(test_id, "typec_fast_charge") == 0 || strcmp(test_id, "fast_charge") == 0) return 3006;
     if (strcmp(test_id, "hdmi") == 0) return 3009;
     if (strcmp(test_id, "lcd") == 0) return 3010;
@@ -857,6 +983,10 @@ int test_runner_run_plan(int fd, const char *session_id, const char *request_jso
     const char *test_start;
     const char *test_end;
     char test_id[80];
+    char session_start_time[40];
+    char session_end_time[40];
+
+    format_timestamp_now(session_start_time, sizeof(session_start_time));
 
     while (read_next_test(&cursor, test_id, sizeof(test_id), &test_start, &test_end)) {
         executed++;
@@ -872,8 +1002,14 @@ int test_runner_run_plan(int fd, const char *session_id, const char *request_jso
         }
     }
 
+    format_timestamp_now(session_end_time, sizeof(session_end_time));
+
     if (executed == 0) {
         if (strstr(request_json, "\"tests\"") != NULL) {
+            if (config != NULL) {
+                board_state_record_session_result(config->board_state_path, session_id,
+                                                  session_start_time, session_end_time, "Fail");
+            }
             send_report(fd, "unknown", "failed", 3000, "No supported test id found", "{}");
             return send_completed(fd, session_id, "failed", 3000, "No supported test id found");
         }
@@ -884,12 +1020,24 @@ int test_runner_run_plan(int fd, const char *session_id, const char *request_jso
         char message[160];
         snprintf(message, sizeof(message), "Session completed with %d failed test(s), %d skipped, first failed: %s",
                  failed_count, skipped_count, first_failed_test);
+        if (config != NULL) {
+            board_state_record_session_result(config->board_state_path, session_id,
+                                              session_start_time, session_end_time, "Fail");
+        }
         return send_completed(fd, session_id, "failed", first_failed_code, message);
     }
     if (skipped_count > 0) {
         char message[160];
         snprintf(message, sizeof(message), "Session completed with %d skipped test(s)", skipped_count);
+        if (config != NULL) {
+            board_state_record_session_result(config->board_state_path, session_id,
+                                              session_start_time, session_end_time, "Pass");
+        }
         return send_completed(fd, session_id, "passed", 0, message);
+    }
+    if (config != NULL) {
+        board_state_record_session_result(config->board_state_path, session_id,
+                                          session_start_time, session_end_time, "Pass");
     }
     return send_completed(fd, session_id, "passed", 0, "Session completed");
 }

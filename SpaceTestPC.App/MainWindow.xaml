@@ -43,7 +43,7 @@
     <Grid Margin="20">
         <Grid.RowDefinitions>
             <RowDefinition Height="76" />
-            <RowDefinition Height="92" />
+            <RowDefinition Height="136" />
             <RowDefinition Height="*" />
             <RowDefinition Height="190" />
         </Grid.RowDefinitions>
@@ -69,6 +69,12 @@
                         <TextBlock Foreground="#B8C7D9" Text="CONNECTION" />
                         <TextBlock FontSize="16" FontWeight="SemiBold" Foreground="White" Text="{Binding BoardState}" />
                     </StackPanel>
+                    <StackPanel Margin="0,0,28,0">
+                        <TextBlock Foreground="#B8C7D9" Text="MODE" />
+                        <Border Margin="0,4,0,0" Padding="10,4" Background="{Binding SnPolicyModeBackground}" CornerRadius="12" HorizontalAlignment="Left">
+                            <TextBlock FontSize="14" FontWeight="SemiBold" Foreground="{Binding SnPolicyModeForeground}" Text="{Binding SnPolicyModeName}" />
+                        </Border>
+                    </StackPanel>
                     <StackPanel>
                         <TextBlock Foreground="#B8C7D9" Text="VERSION" />
                         <TextBlock FontSize="16" FontWeight="SemiBold" Foreground="White" Text="{Binding AppVersion}" />
@@ -80,7 +86,7 @@
         <Grid Grid.Row="1" Margin="0,14,0,14" Visibility="{Binding IsTestPage, Converter={StaticResource BoolToVisibilityConverter}}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="330" />
+                <ColumnDefinition Width="420" />
             </Grid.ColumnDefinitions>
             <Border Style="{StaticResource Card}" Padding="18,12" Margin="0,0,14,0">
                 <Grid>
@@ -108,12 +114,13 @@
                     <TextBlock Grid.Column="3" Margin="18,0,0,0" VerticalAlignment="Center" Foreground="#475467" TextWrapping="Wrap" Text="{Binding OperatorInstruction}" />
                 </Grid>
             </Border>
-            <Border Grid.Column="1" Style="{StaticResource Card}" Padding="18,12" Background="#102A50" BorderBrush="#102A50">
+            <Border Grid.Column="1" MinHeight="108" Style="{StaticResource Card}" Padding="20,16" Background="#F8FAFC" BorderBrush="#D8E0EA">
                 <StackPanel VerticalAlignment="Center">
-                    <TextBlock Foreground="#B8C7D9" FontSize="12" Text="CURRENT RESULT" />
-                    <TextBlock Margin="0,3,0,0" FontSize="24" FontWeight="Bold" Foreground="White" Text="{Binding LastResult}" />
-                    <TextBlock Margin="0,3,0,0" Foreground="#D0DAE7" Text="{Binding CurrentSn, StringFormat=SN: {0}}" />
-                    <TextBlock Margin="0,3,0,0" Foreground="#D0DAE7" Text="{Binding HistorySummary}" Visibility="{Binding IsHistoryLoaded, Converter={StaticResource BoolToVisibilityConverter}}" />
+                    <TextBlock Foreground="#667085" FontSize="12" Text="FINAL RESULT" />
+                    <TextBlock Margin="0,8,0,0" FontSize="36" FontWeight="Bold" Foreground="{Binding FinalVerdictForeground}" Text="{Binding FinalVerdictDisplay}" />
+                    <TextBlock Margin="0,10,0,0" Foreground="#1D2939" FontSize="14" TextWrapping="Wrap" Text="{Binding LastResult}" />
+                    <TextBlock Margin="0,4,0,0" Foreground="#475467" FontSize="12" TextWrapping="Wrap" Text="{Binding HistorySummary}" Visibility="{Binding IsHistoryLoaded, Converter={StaticResource BoolToVisibilityConverter}}" />
+                    <Button Margin="0,8,0,0" Height="28" Padding="10,0" HorizontalAlignment="Left" Background="#175CD3" Command="{Binding ToggleContinuousTestCommand}" Content="{Binding ContinuousTestButtonText}" />
                     <Button Margin="0,8,0,0" Height="28" Padding="10,0" HorizontalAlignment="Left" Background="#175CD3" Command="{Binding StartPhaseOneCommand}" Content="Re-test" Visibility="{Binding IsHistoryLoaded, Converter={StaticResource BoolToVisibilityConverter}}" />
                 </StackPanel>
             </Border>

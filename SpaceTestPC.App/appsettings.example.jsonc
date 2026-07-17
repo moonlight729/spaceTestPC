@@ -68,11 +68,23 @@
         "batterySimulationVoltageMv": 7400,
         "chargeVoltageMinMv": 7400,
         "chargeVoltageMaxMv": 8400,
-        "chargeCurrentMinMa": 500,
-        "chargeCurrentMaxMa": 3000,
+        "chargeCurrentMinMa": 2200,
+        "chargeCurrentMaxMa": 2800,
         "stableSampleCount": 3,
         "sampleIntervalMs": 500,
         "timeoutMs": 20000
+      },
+      "battery_management": {
+        "batterySimulationVoltageMv": 7400,
+        "dischargeVoltageMinMv": 7000,
+        "dischargeVoltageMaxMv": 7600,
+        "dischargeCurrentMinMa": 450,
+        "dischargeCurrentMaxMa": 550,
+        "stableSampleCount": 3,
+        "sampleIntervalMs": 500,
+        "samplingDurationMs": 10000,
+        "stabilityToleranceMa": 80,
+        "timeoutMs": 15000
       },
       "typec_camera": {
         "streamProfile": "1080p30",
@@ -108,6 +120,9 @@
       "resultHoldMs": 1000,
       "boardStateRunningDelayMs": 3000,
       "boardStateResultHoldMs": 5000
+    },
+    "continuous": {
+      "enabledByDefault": false
     }
   }
 }

@@ -14,4 +14,12 @@ public sealed class BoardState
     public int FailCount { get; init; }
     public int TotalCount { get; init; }
     public int Version { get; init; } = 1;
+    public IReadOnlyList<BoardTestItemSummary> TestItems { get; init; } = Array.Empty<BoardTestItemSummary>();
+}
+
+public sealed class BoardTestItemSummary
+{
+    public string TestId { get; init; } = string.Empty;
+    public string LastStatus { get; init; } = string.Empty;
+    public int TestCount { get; init; }
 }

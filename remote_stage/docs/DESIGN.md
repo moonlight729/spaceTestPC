@@ -114,6 +114,10 @@ The current 3576 service supports a host-driven test plan with optional `skip`.
 
 - `skip=true` returns `test.report/status=skipped`, `resultCode=2900`.
 - Skipped items are recorded but are not counted in the final verdict.
+- `typec_fast_charge` and `battery_management` are host-judged items:
+  3576 only controls the PMIC, collects measurements, reports `running` data, waits for `test.decision`, and then reports final `passed/failed`.
+- After the full session ends, the upper PC syncs a minimal summary back to 3576 through `sys.sync_session_summary`.
+  The board keeps only aggregate counts plus per-test latest status and cumulative test count. Detailed measurement data remains on the upper PC.
 
 New / updated modules:
 
@@ -123,6 +127,6 @@ New / updated modules:
 
 Recommended order:
 
-`board_state -> hdmi -> keys -> lcd -> ethernet -> wifi -> bluetooth -> fingerprint -> typec_fast_charge -> typec_camera -> tf -> usb2_3 -> pcba_test_points -> indicator_led -> fan -> battery_management`
+`board_state -> hdmi -> keys -> lcd -> ethernet -> wifi -> bluetooth -> fingerprint -> battery_management -> typec_fast_charge -> typec_camera -> tf -> usb2_3 -> pcba_test_points -> indicator_led -> fan`
 
 `ethernet` must stay before `wifi` because Ethernet test disables Wi-Fi and Wi-Fi test re-enables it.
