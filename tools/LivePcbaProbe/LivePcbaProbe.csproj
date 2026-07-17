@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="SpaceTestPC.App">
+      <HintPath>..\..\SpaceTestPC.App\bin\Debug\net10.0-windows\SpaceTestPC.App.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>
