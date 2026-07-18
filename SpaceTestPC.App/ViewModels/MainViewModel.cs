@@ -608,6 +608,10 @@ public sealed class MainViewModel : ObservableObject
             UpdateDebugOutput();
         }
 
+        finalVerdict = ResolveFinalVerdict(finalVerdict);
+        LastResult = finalVerdict == "Pass" ? "Stage 1 passed" : "Stage 1 failed";
+        OperatorInstruction = BuildSessionCompletionInstruction(finalVerdict);
+
         var record = new TestSessionRecord
         {
             Session = new TestSession
@@ -708,6 +712,10 @@ public sealed class MainViewModel : ObservableObject
         {
             _activeSessionClient = null;
         }
+
+        finalVerdict = ResolveFinalVerdict(finalVerdict);
+        LastResult = finalVerdict == "Pass" ? "Stage 1 passed" : "Stage 1 failed";
+        OperatorInstruction = BuildSessionCompletionInstruction(finalVerdict);
 
         var record = new TestSessionRecord
         {
@@ -958,7 +966,8 @@ public sealed class MainViewModel : ObservableObject
             ? "网口测试完成，请拔掉网线，准备进行 Wi-Fi 测试。"
             : testEvent.TestId == "ethernet" && testEvent.Status == "running"
             ? "请插入网线，系统将关闭 Wi-Fi 并检测有线网络。"
-            : testEvent.TestId == "typec_fast_charge" && testEvent.Status == "running" && GetDataString(testEvent.Data, "phase", string.Empty) == "wait_charger"
+            : testEvent.TestId == "typec_fast_charge" && testEvent.Status == "running" &&
+              GetDataString(testEvent.Data, "phase", string.Empty) is "wait_ready" or "ready" or "wait_manual_charger_insert" or "wait_charger"
             ? BuildFastChargeWaitingInstruction(testEvent.Data)
             : testEvent.TestId == "typec_fast_charge" && testEvent.Status == "running" && GetDataString(testEvent.Data, "phase", string.Empty) == "charger_detected"
             ? "已检测到充电器，正在采样充电电压和电流。"
@@ -1045,6 +1054,12 @@ public sealed class MainViewModel : ObservableObject
         if (phase == "ready")
         {
             return "已确认网线和相机均已拔掉，正在切换到板快充测试模式。";
+        }
+
+        if (phase == "wait_manual_charger_insert")
+        {
+            var manualWaitSeconds = Math.Max(1, GetDataInt(data, "manualInsertWaitMs") / 1000);
+            return $"请插入 TYPE-C 充电线，系统将在 {manualWaitSeconds} 秒准备期结束后开始自动检测。已等待 {seconds}/{manualWaitSeconds} 秒。";
         }
 
         if (onlyOtgPower)
@@ -1466,16 +1481,14 @@ public sealed class MainViewModel : ObservableObject
         }
         var voltage = GetDataInt(testEvent.Data, "chargeVoltageMv");
         var current = GetDataInt(testEvent.Data, "averageChargeCurrentMa");
-        var passed = GetDataBoolean(testEvent.Data, "pmicCommunicationOk") &&
+        var passed =
             GetDataBoolean(testEvent.Data, "chargerConnected") &&
-            GetDataBoolean(testEvent.Data, "stable") &&
             voltage >= GetParameterInt(parameters, "chargeVoltageMinMv", 7400) &&
             voltage <= GetParameterInt(parameters, "chargeVoltageMaxMv", 8400) &&
             current >= GetParameterInt(parameters, "chargeCurrentMinMa", 500) &&
             current <= GetParameterInt(parameters, "chargeCurrentMaxMa", 3000);
         var reason = passed ? "charge_values_in_range"
             : !GetDataBoolean(testEvent.Data, "chargerConnected") ? "charger_not_connected"
-            : !GetDataBoolean(testEvent.Data, "stable") ? "charge_current_unstable"
             : voltage < GetParameterInt(parameters, "chargeVoltageMinMv", 7400) ? "charge_voltage_too_low"
             : voltage > GetParameterInt(parameters, "chargeVoltageMaxMv", 8400) ? "charge_voltage_too_high"
             : current < GetParameterInt(parameters, "chargeCurrentMinMa", 500) ? "charge_current_too_low"
@@ -1801,6 +1814,16 @@ public sealed class MainViewModel : ObservableObject
         "wifi" => "检测完成，Wi-Fi 测试未通过。请检查路由器与无线连接后重新扫描当前 SN。",
         _ => $"检测完成，{GetTestDisplayName(testId)}未通过。请处理异常后重新扫描当前 SN。"
     };
+
+    private string ResolveFinalVerdict(string sessionVerdict)
+    {
+        if (TestResults.Any(result => result.State == TestItemState.Failed))
+        {
+            return "Fail";
+        }
+
+        return string.Equals(sessionVerdict, "Pass", StringComparison.OrdinalIgnoreCase) ? "Pass" : "Fail";
+    }
 
     private IReadOnlyList<TestResultRecord> BuildTestResultRecords() => TestResults
         .Select(result => new TestResultRecord

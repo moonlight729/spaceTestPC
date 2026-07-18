@@ -2,11 +2,14 @@
 #include "board_state.h"
 
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
-#define BOARD_SN_PATH "/tmp/spacetest3576_board_sn.txt"
+#define BOARD_STATE_DIR "/userdata/factory_test"
+#define BOARD_SN_PATH "/userdata/factory_test/spacetest3576_board_sn.txt"
 #define VENDOR_STORAGE_TOOL "/usr/bin/vendor_storage"
 #define VENDOR_SN_ID "VENDOR_SN_ID"
 
@@ -28,6 +31,32 @@ static int parse_int_value(const char *text, int fallback)
 {
     int value;
     return text != NULL && sscanf(text, "%d", &value) == 1 ? value : fallback;
+}
+
+static int ensure_directory_exists(const char *path)
+{
+    struct stat st;
+
+    if (path == NULL || path[0] == '\0') return -1;
+    if (stat(path, &st) == 0) return S_ISDIR(st.st_mode) ? 0 : -1;
+    if (mkdir(path, 0775) == 0) return 0;
+    return errno == EEXIST ? 0 : -1;
+}
+
+static int ensure_parent_directory(const char *path)
+{
+    char directory[256];
+    const char *slash;
+    size_t length;
+
+    if (path == NULL || path[0] == '\0') return -1;
+    slash = strrchr(path, '/');
+    if (slash == NULL) return 0;
+    length = (size_t)(slash - path);
+    if (length == 0 || length >= sizeof(directory)) return -1;
+    memcpy(directory, path, length);
+    directory[length] = '\0';
+    return ensure_directory_exists(directory);
 }
 
 static void append_json_escaped(char *buffer, size_t buffer_size, size_t *used, const char *text)
@@ -204,6 +233,7 @@ int board_state_save_to_file(const char *path, const struct board_state *state)
     int index;
 
     if (path == NULL || state == NULL) return -1;
+    if (ensure_parent_directory(path) != 0) return -1;
     snprintf(temp_path, sizeof(temp_path), "%s.tmp", path);
     file = fopen(temp_path, "w");
     if (file == NULL) return -1;
@@ -254,6 +284,7 @@ int board_state_write_sn_if_empty(const char *sn)
     /* Keep a temporary mirror only for diagnostics and old smoke scripts.
      * The authoritative SN source is Rockchip vendor storage VENDOR_SN_ID.
      */
+    ensure_directory_exists(BOARD_STATE_DIR);
     file = fopen(BOARD_SN_PATH, "w");
     if (file != NULL) {
         if (fprintf(file, "%s\n", sn) < 0) {
@@ -269,6 +300,12 @@ int board_state_to_json(const struct board_state *state, char *buffer, size_t bu
 {
     size_t used = 0;
     int index;
+    int passed_item_count = 0;
+    int failed_item_count = 0;
+    int skipped_item_count = 0;
+    int first_passed = 1;
+    int first_failed = 1;
+    int first_skipped = 1;
 
     used += (size_t)snprintf(buffer, buffer_size,
                              "{\"boardId\":\"%s\",\"boardSn\":\"%s\",\"testMode\":\"%s\",\"currentState\":\"%s\","
@@ -290,6 +327,42 @@ int board_state_to_json(const struct board_state *state, char *buffer, size_t bu
         append_json_escaped(buffer, buffer_size, &used, item->last_status);
         used += (size_t)snprintf(buffer + used, buffer_size - used,
                                  "\",\"testCount\":%d}", item->test_count);
+
+        if (strcmp(item->last_status, "passed") == 0 || strcmp(item->last_status, "PASS") == 0) passed_item_count++;
+        else if (strcmp(item->last_status, "skipped") == 0 || strcmp(item->last_status, "SKIPPED") == 0) skipped_item_count++;
+        else if (item->last_status[0] != '\0') failed_item_count++;
+    }
+    used += (size_t)snprintf(buffer + used, buffer_size - used,
+                             "],\"passedItemCount\":%d,\"failedItemCount\":%d,\"skippedItemCount\":%d,"
+                             "\"passedItems\":[",
+                             passed_item_count, failed_item_count, skipped_item_count);
+    for (index = 0; index < state->test_item_count && used + 1 < buffer_size; ++index) {
+        const struct board_test_item_summary *item = &state->test_items[index];
+        if (!(strcmp(item->last_status, "passed") == 0 || strcmp(item->last_status, "PASS") == 0)) continue;
+        used += (size_t)snprintf(buffer + used, buffer_size - used, "%s\"", first_passed ? "" : ",");
+        append_json_escaped(buffer, buffer_size, &used, item->test_id);
+        used += (size_t)snprintf(buffer + used, buffer_size - used, "\"");
+        first_passed = 0;
+    }
+    used += (size_t)snprintf(buffer + used, buffer_size - used, "],\"failedItems\":[");
+    for (index = 0; index < state->test_item_count && used + 1 < buffer_size; ++index) {
+        const struct board_test_item_summary *item = &state->test_items[index];
+        if (item->last_status[0] == '\0') continue;
+        if (strcmp(item->last_status, "passed") == 0 || strcmp(item->last_status, "PASS") == 0 ||
+            strcmp(item->last_status, "skipped") == 0 || strcmp(item->last_status, "SKIPPED") == 0) continue;
+        used += (size_t)snprintf(buffer + used, buffer_size - used, "%s\"", first_failed ? "" : ",");
+        append_json_escaped(buffer, buffer_size, &used, item->test_id);
+        used += (size_t)snprintf(buffer + used, buffer_size - used, "\"");
+        first_failed = 0;
+    }
+    used += (size_t)snprintf(buffer + used, buffer_size - used, "],\"skippedItems\":[");
+    for (index = 0; index < state->test_item_count && used + 1 < buffer_size; ++index) {
+        const struct board_test_item_summary *item = &state->test_items[index];
+        if (!(strcmp(item->last_status, "skipped") == 0 || strcmp(item->last_status, "SKIPPED") == 0)) continue;
+        used += (size_t)snprintf(buffer + used, buffer_size - used, "%s\"", first_skipped ? "" : ",");
+        append_json_escaped(buffer, buffer_size, &used, item->test_id);
+        used += (size_t)snprintf(buffer + used, buffer_size - used, "\"");
+        first_skipped = 0;
     }
     used += (size_t)snprintf(buffer + used, buffer_size - used, "]}");
     return (int)used;

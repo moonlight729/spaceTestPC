@@ -721,7 +721,8 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
         .timeout_ms = 1000,
     };
     struct fast_charge_result result;
-    char data[512];
+    char data[1024];
+    int manual_insert_wait_ms = 30000;
     int wait_charger_timeout_ms = 30000;
     int wait_ready_timeout_ms = 120000;
     int progress_report_interval_ms = 1000;
@@ -752,6 +753,7 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
     request.stable_sample_count = param_int(test_start, test_end, "stableSampleCount", request.stable_sample_count);
     request.sample_interval_ms = param_int(test_start, test_end, "sampleIntervalMs", request.sample_interval_ms);
     request.timeout_ms = param_int(test_start, test_end, "timeoutMs", request.timeout_ms);
+    manual_insert_wait_ms = param_int(test_start, test_end, "manualInsertWaitMs", manual_insert_wait_ms);
     wait_ready_timeout_ms = param_int(test_start, test_end, "waitReadyTimeoutMs", wait_ready_timeout_ms);
     wait_charger_timeout_ms = param_int(test_start, test_end, "waitChargerTimeoutMs", wait_charger_timeout_ms);
     progress_report_interval_ms = param_int(test_start, test_end, "progressReportIntervalMs", progress_report_interval_ms);
@@ -812,12 +814,35 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
         return send_report(fd, "typec_fast_charge", "failed", 4401,
                            "Unable to enable charge before fast charge test", data);
     }
+
+    /*
+     * OTG 通信链路必须常接，PMIC 在部分场景下会把当前 VBUS 提前识别成
+     * 类似充电器的输入类型，导致“还没插独立充电器就直接进入检测”。
+     * 这里先增加一个固定的人工插线等待窗口：
+     * 1. 先提示操作员插入充电线。
+     * 2. 等待 15 秒后，再进入后续 PMIC 自动识别逻辑。
+     * 这样不会改变后面的真实充电采样和判定流程，只是避免 OTG 误触发。
+     */
+    elapsed_ms = 0;
+    while (elapsed_ms < manual_insert_wait_ms) {
+        snprintf(data, sizeof(data),
+                 "{\"phase\":\"wait_manual_charger_insert\",\"chargeControlCommand\":\"enable_charge\",\"chargeControlOk\":true,"
+                 "\"pmicCommunicationOk\":true,\"chargerConnected\":false,\"charging\":false,\"chargeStage\":\"not_charging\","
+                 "\"manualInsertWaitMs\":%d,\"elapsedMs\":%d,\"samplingDurationMs\":%d}",
+                 manual_insert_wait_ms, elapsed_ms, request.timeout_ms);
+        send_report(fd, "typec_fast_charge", "running", 0,
+                    "Please insert charger before automatic detection starts", data);
+        sleep_ms_local(progress_report_interval_ms);
+        elapsed_ms += progress_report_interval_ms;
+    }
+
+    elapsed_ms = 0;
     snprintf(data, sizeof(data),
              "{\"phase\":\"wait_charger\",\"chargeControlCommand\":\"enable_charge\",\"chargeControlOk\":true,"
              "\"pmicCommunicationOk\":true,\"chargerConnected\":false,\"charging\":false,\"chargeStage\":\"not_charging\","
              "\"chargeVoltageMv\":0,\"chargeCurrentMa\":0,\"averageChargeCurrentMa\":0,\"stable\":false,\"stableSamples\":0,"
-             "\"waitChargerTimeoutMs\":%d,\"elapsedMs\":0,\"samplingDurationMs\":%d}",
-             wait_charger_timeout_ms, request.timeout_ms);
+             "\"waitChargerTimeoutMs\":%d,\"elapsedMs\":0,\"samplingDurationMs\":%d,\"manualInsertWaitMs\":%d}",
+             wait_charger_timeout_ms, request.timeout_ms, manual_insert_wait_ms);
     send_report(fd, "typec_fast_charge", "running", 0, "Please insert charger", data);
 
     /*
@@ -890,6 +915,42 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
          * show "charger was detected and charging started, but PMIC reads later
          * failed" instead of incorrectly falling back to "charger not connected".
          */
+        if (charger_detected && result.voltage_mv > 0 && result.current_ma > 0) {
+            /*
+             * 充电采样已经拿到有效电压、电流时，采样后的 PMIC 复读失败只做诊断上报。
+             * 最终 PASS/FAIL 仍由上位机依据采样结果判定，3576 不在这里提前拦截。
+             */
+            snprintf(data, sizeof(data),
+                     "{\"phase\":\"ready_for_host_decision\",\"chargeControlCommand\":\"enable_charge\",\"chargeControlOk\":true,"
+                     "\"pmicCommunicationOk\":false,\"pmicReadFailedAfterSampling\":true,"
+                     "\"chargerConnected\":true,\"charging\":%s,\"chargeStage\":\"%s\","
+                     "\"chargeVoltageMv\":%d,\"chargeCurrentMa\":%d,\"stable\":%s,\"stableSamples\":%d,"
+                     "\"averageChargeCurrentMa\":%d,\"voltageMinMv\":%d,\"voltageMaxMv\":%d,\"currentMinMa\":%d,\"currentMaxMa\":%d,"
+                     "\"samplingDurationMs\":%d,"
+                     "\"pmicStatus0\":%d,\"pmicStatus1\":%d,\"vbusStat\":%d,\"vbusType\":\"%s\",\"bc12Done\":%d,\"readyForHostDecision\":true}",
+                     last_known_charging ? "true" : "false",
+                     map_charge_stage_name(last_known_charge_stage),
+                     result.voltage_mv, result.current_ma,
+                     result.stable_samples >= request.stable_sample_count ? "true" : "false",
+                     result.stable_samples, result.current_ma, request.voltage_min_mv, request.voltage_max_mv,
+                     request.current_min_ma, request.current_max_ma, request.timeout_ms,
+                     last_known_pmic_status0, last_known_pmic_status1, last_known_vbus_stat,
+                     map_vbus_type_name(last_known_vbus_stat), last_known_bc12_done);
+            send_report(fd, "typec_fast_charge", "running", 0,
+                        "Charging samples captured, waiting for host decision", data);
+            switch (wait_test_decision(fd, "typec_fast_charge", request.timeout_ms, &passed)) {
+            case 1:
+                return send_report(fd, "typec_fast_charge", passed ? "passed" : "failed",
+                                   passed ? 0 : 4402,
+                                   passed ? "Host confirmed fast charge pass" : "Host confirmed fast charge fail",
+                                   data);
+            case 0:
+                return send_report(fd, "typec_fast_charge", "failed", 4403, "Host decision timed out", data);
+            default:
+                return send_report(fd, "typec_fast_charge", "failed", 4404, "Unable to read host decision", data);
+            }
+        }
+
         snprintf(data, sizeof(data),
                  "{\"phase\":\"sampling_failed\",\"chargeControlCommand\":\"enable_charge\",\"chargeControlOk\":true,"
                  "\"pmicCommunicationOk\":false,\"pmicReadFailedAfterSampling\":true,"
