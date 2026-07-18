@@ -46,6 +46,8 @@
         "routerIp": "192.168.110.1",
         "pingCount": 4,
         "timeoutMs": 15000,
+        "waitCableTimeoutMs": 30000,
+        "progressReportIntervalMs": 1000,
         "waitCableUnplug": true,
         "unplugTimeoutMs": 10000
       },
@@ -68,23 +70,27 @@
         "batterySimulationVoltageMv": 7400,
         "chargeVoltageMinMv": 7400,
         "chargeVoltageMaxMv": 8400,
-        "chargeCurrentMinMa": 2200,
+        "chargeCurrentMinMa": 2300,
         "chargeCurrentMaxMa": 2800,
         "stableSampleCount": 3,
         "sampleIntervalMs": 500,
+        "waitChargerTimeoutMs": 30000,
+        "progressReportIntervalMs": 1000,
         "timeoutMs": 20000
       },
       "battery_management": {
         "batterySimulationVoltageMv": 7400,
         "dischargeVoltageMinMv": 7000,
         "dischargeVoltageMaxMv": 7600,
-        "dischargeCurrentMinMa": 450,
-        "dischargeCurrentMaxMa": 550,
+        "dischargeCurrentMinMa": 200,
+        "dischargeCurrentMaxMa": 300,
         "stableSampleCount": 3,
         "sampleIntervalMs": 500,
         "samplingDurationMs": 10000,
         "stabilityToleranceMa": 80,
-        "timeoutMs": 15000
+        "waitReadyTimeoutMs": 120000,
+        "progressReportIntervalMs": 1000,
+        "timeoutMs": 30000
       },
       "typec_camera": {
         "streamProfile": "1080p30",

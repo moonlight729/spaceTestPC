@@ -106,6 +106,9 @@
 
 - [x] Host/3576 skip protocol: `status=skipped`, `resultCode=2900`, excluded from final verdict.
 - [x] Ethernet protocol: host item `ethernet`, 3576 disables Wi-Fi, checks carrier/IP/ping, prompts cable unplug.
+- [x] Wi-Fi cable-unplug protocol: if Ethernet is still linked, 3576 reports `phase=wait_unplug` progress, waits for cable removal, then auto-continues Wi-Fi test or times out with `4105/ethernet_still_connected`.
+- [x] Battery discharge precheck protocol: if Ethernet or `/dev/video*` camera nodes are still present, 3576 reports `phase=wait_ready` progress, waits for removal, then auto-continues discharge setup or times out with `4705/external_load_not_removed`.
+- [x] Camera insert wait protocol: if the expected `/dev/video*` node is missing, 3576 reports `phase=wait_camera` progress, waits for insertion, then auto-continues camera stream test or times out with `4706/camera_not_inserted`.
 - [x] USB2.0&3.0 protocol: host item `usb2_3`, 3576 reads `/tmp/spacetest_usb_ports.json`.
 - [x] USB2.0&3.0 default policy: default skip until board file producer is ready.
 - [x] PCBA test points protocol: host item `pcba_test_points`, 32 channel voltage result contract defined.

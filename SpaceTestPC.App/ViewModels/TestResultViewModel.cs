@@ -121,77 +121,18 @@ public sealed class TestResultViewModel : ObservableObject
         Data = new Dictionary<string, object?>();
     }
 
-    private string FormatDataText(TestSessionEvent testEvent)
+    private static string FormatDataText(TestSessionEvent testEvent)
     {
         if (testEvent.Data.Count == 0)
         {
             return "No result data";
         }
 
-        if (TestId == "typec_fast_charge")
-        {
-            return FormatFastChargeData(testEvent.Data);
-        }
-
-        if (TestId == "battery_management")
-        {
-            return FormatBatteryDischargeData(testEvent.Data);
-        }
-
-        return string.Join(Environment.NewLine, testEvent.Data.Select(pair => $"{pair.Key}: {FormatValue(pair.Value)}"));
-    }
-
-    private static string FormatFastChargeData(IReadOnlyDictionary<string, object?> data)
-    {
-        var lines = new List<string>
-        {
-            $"PMIC通信: {FormatBoolean(data, "pmicCommunicationOk")}",
-            $"充电器接入: {FormatBoolean(data, "chargerConnected")}",
-            $"正在充电: {FormatBoolean(data, "charging")}",
-            $"充电阶段: {GetString(data, "chargeStage", "-")}",
-            $"充电电压: {FormatNumber(data, "chargeVoltageMv", "mV")}",
-            $"充电电流: {FormatNumber(data, "chargeCurrentMa", "mA")}",
-            $"平均充电电流: {FormatNumber(data, "averageChargeCurrentMa", "mA")}",
-            $"稳定判定: {FormatBoolean(data, "stable")}",
-            $"稳定样本数: {GetString(data, "stableSamples", "-")}"
-        };
-
-        AppendIfPresent(lines, data, "voltageMinMv", "电压下限", "mV");
-        AppendIfPresent(lines, data, "voltageMaxMv", "电压上限", "mV");
-        AppendIfPresent(lines, data, "currentMinMa", "电流下限", "mA");
-        AppendIfPresent(lines, data, "currentMaxMa", "电流上限", "mA");
-
-        return string.Join(Environment.NewLine, lines);
-    }
-
-    private static string FormatBatteryDischargeData(IReadOnlyDictionary<string, object?> data)
-    {
-        var lines = new List<string>
-        {
-            $"禁充命令: {GetString(data, "chargeControlCommand", "-")}",
-            $"禁充成功: {FormatBoolean(data, "chargeControlOk")}",
-            $"PMIC通信: {FormatBoolean(data, "pmicCommunicationOk")}",
-            $"测试时长: {FormatNumber(data, "samplingDurationMs", "ms")}",
-            $"已测时长: {FormatNumber(data, "elapsedMs", "ms")}",
-            $"实测电压: {FormatNumber(data, "dischargeVoltageMv", "mV")}",
-            $"稳定电流: {FormatNumber(data, "dischargeCurrentMa", "mA")}",
-            $"最小电流: {FormatNumber(data, "measuredCurrentMinMa", "mA")}",
-            $"最大电流: {FormatNumber(data, "measuredCurrentMaxMa", "mA")}",
-            $"电流波动: {FormatNumber(data, "currentRippleMa", "mA")}",
-            $"采样点数: {GetString(data, "sampleCount", "-")}",
-            $"有效点数: {GetString(data, "validSampleCount", "-")}",
-            $"异常点数: {GetString(data, "outlierSampleCount", "-")}",
-            $"电流中位数: {FormatNumber(data, "rawCurrentMedianMa", "mA")}",
-            $"失败原因: {GetString(data, "failureReason", "-")}"
-        };
-
-        AppendIfPresent(lines, data, "dischargeVoltageMinMv", "电压下限", "mV");
-        AppendIfPresent(lines, data, "dischargeVoltageMaxMv", "电压上限", "mV");
-        AppendIfPresent(lines, data, "dischargeCurrentMinMa", "电流下限", "mA");
-        AppendIfPresent(lines, data, "dischargeCurrentMaxMa", "电流上限", "mA");
-        AppendIfPresent(lines, data, "stabilityToleranceMa", "稳定容差", "mA");
-
-        return string.Join(Environment.NewLine, lines);
+        return string.Join(
+            Environment.NewLine,
+            testEvent.Data
+                .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                .Select(pair => $"{pair.Key}: {FormatValue(pair.Value)}"));
     }
 
     private static string FormatValue(object? value)
@@ -203,9 +144,14 @@ public sealed class TestResultViewModel : ObservableObject
 
         if (value is JsonElement element)
         {
-            return element.ValueKind == JsonValueKind.String
-                ? element.GetString() ?? string.Empty
-                : element.GetRawText();
+            return element.ValueKind switch
+            {
+                JsonValueKind.String => element.GetString() ?? string.Empty,
+                JsonValueKind.Array or JsonValueKind.Object => element.GetRawText(),
+                JsonValueKind.True => "true",
+                JsonValueKind.False => "false",
+                _ => element.GetRawText()
+            };
         }
 
         if (value is string text)
@@ -213,57 +159,11 @@ public sealed class TestResultViewModel : ObservableObject
             return text;
         }
 
-        if (value is System.Collections.IEnumerable enumerable)
+        if (value is System.Collections.IEnumerable enumerable and not string)
         {
             return string.Join(", ", enumerable.Cast<object?>().Select(FormatValue));
         }
 
         return value.ToString() ?? string.Empty;
-    }
-
-    private static string FormatBoolean(IReadOnlyDictionary<string, object?> data, string key)
-    {
-        var value = GetString(data, key, string.Empty);
-        return value.Equals("true", StringComparison.OrdinalIgnoreCase)
-            ? "是"
-            : value.Equals("false", StringComparison.OrdinalIgnoreCase)
-                ? "否"
-                : "-";
-    }
-
-    private static string FormatNumber(IReadOnlyDictionary<string, object?> data, string key, string unit)
-    {
-        var value = GetString(data, key, string.Empty);
-        return string.IsNullOrWhiteSpace(value) ? "-" : $"{value} {unit}";
-    }
-
-    private static void AppendIfPresent(List<string> lines, IReadOnlyDictionary<string, object?> data, string key, string label, string unit)
-    {
-        var value = GetString(data, key, string.Empty);
-        if (!string.IsNullOrWhiteSpace(value))
-        {
-            lines.Add($"{label}: {value} {unit}");
-        }
-    }
-
-    private static string GetString(IReadOnlyDictionary<string, object?> data, string key, string fallback)
-    {
-        if (!data.TryGetValue(key, out var value) || value is null)
-        {
-            return fallback;
-        }
-
-        if (value is JsonElement element)
-        {
-            return element.ValueKind switch
-            {
-                JsonValueKind.String => element.GetString() ?? fallback,
-                JsonValueKind.True => "true",
-                JsonValueKind.False => "false",
-                _ => element.GetRawText()
-            };
-        }
-
-        return value.ToString() ?? fallback;
     }
 }

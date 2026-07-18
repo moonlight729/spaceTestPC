@@ -121,7 +121,8 @@ The current 3576 service supports a host-driven test plan with optional `skip`.
 
 New / updated modules:
 
-- `hardware/ethernet`: uses `nmcli`, disables Wi-Fi first, waits Ethernet link/IP, pings with `-I <interfaceName>`, optionally waits for cable unplug.
+- `hardware/ethernet`: uses `nmcli`, disconnects active Wi-Fi connections in software first without turning off the Wi-Fi radio, waits Ethernet link/IP, pings with `-I <interfaceName>`, optionally waits for cable unplug.
+- `hardware/wifi`: if `waitEthernetUnplug=true` and Ethernet is still linked, 3576 reports `phase=wait_unplug` every `progressReportIntervalMs`, waits for cable removal, then automatically continues Wi-Fi connect/ping. Timeout returns `failureReason=ethernet_still_connected`.
 - `hardware/usb3.0`: `usb2_3` reads `/tmp/spacetest_usb_ports.json` and validates `usb2Count` / `usb3Count`; default host config skips it until the board file producer is ready.
 - `hardware/pcba_points`: `pcba_test_points` reads `/tmp/spacetest_pcba_points.json`, validates up to 32 `voltageMv` values against host-provided default limits, and returns per-channel results; default host config skips it until the acquisition interface is ready.
 
@@ -130,3 +131,84 @@ Recommended order:
 `board_state -> hdmi -> keys -> lcd -> ethernet -> wifi -> bluetooth -> fingerprint -> battery_management -> typec_fast_charge -> typec_camera -> tf -> usb2_3 -> pcba_test_points -> indicator_led -> fan`
 
 `ethernet` must stay before `wifi` because Ethernet test disables Wi-Fi and Wi-Fi test re-enables it.
+
+## 2026-07-18 Wi-Fi Phase Update
+
+- `wifi` now mirrors the Ethernet operator flow when a network cable is still inserted.
+- Host parameters:
+  - `waitEthernetUnplug`
+  - `unplugTimeoutMs`
+  - `progressReportIntervalMs`
+- During the wait period, 3576 reports:
+  - `status=running`
+  - `phase=wait_unplug`
+  - `requiresCableUnplug=true`
+  - `ethernetLinkUp=true`
+  - `elapsedMs`
+- After cable removal, 3576 reports:
+  - `status=running`
+  - `phase=unplugged`
+  - `requiresCableUnplug=false`
+  - `ethernetLinkUp=false`
+- If the cable is not removed before timeout, 3576 reports:
+  - `status=failed`
+  - `resultCode=4105`
+  - `phase=wait_unplug`
+  - `failureReason=ethernet_still_connected`
+- After cable removal, Wi-Fi connect / DHCP / ping continues automatically without requiring a rescan.
+
+## 2026-07-18 Battery Discharge Precheck Update
+
+- `battery_management` now performs a precheck before disabling charging.
+- The purpose is to avoid extra external loads affecting the discharge-current reading.
+- Precheck items:
+  - Ethernet cable link status on `end0`
+  - Camera device nodes under `/dev/video*`
+- New host parameters:
+  - `waitReadyTimeoutMs`
+  - `progressReportIntervalMs`
+- During the precheck wait period, 3576 reports:
+  - `status=running`
+  - `phase=wait_ready`
+  - `ethernetLinkUp`
+  - `cameraPresent`
+  - `requiresEthernetUnplug`
+  - `requiresCameraUnplug`
+  - `elapsedMs`
+- When all external loads are removed, 3576 reports:
+  - `status=running`
+  - `phase=ready`
+  - `ethernetLinkUp=false`
+  - `cameraPresent=false`
+- If the timeout is reached before cleanup, 3576 reports:
+  - `status=failed`
+  - `resultCode=4705`
+  - `phase=wait_ready`
+  - `failureReason=external_load_not_removed`
+- Only after the precheck passes does 3576 send the PMIC disable-charge command and enter:
+  - `phase=ready_for_host_decision`
+  - `readyForHostDecision=true`
+
+## 2026-07-18 Camera Insert Wait Update
+
+- `typec_camera` now waits for the expected `/dev/video*` node before starting stream verification.
+- New host parameters:
+  - `waitCameraTimeoutMs`
+  - `progressReportIntervalMs`
+- During the wait period, 3576 reports:
+  - `status=running`
+  - `phase=wait_camera`
+  - `device`
+  - `cameraPresent=false`
+  - `requiresCameraInsert=true`
+  - `elapsedMs`
+- When the camera node appears, 3576 reports:
+  - `status=running`
+  - `phase=camera_detected`
+  - `cameraPresent=true`
+  - `requiresCameraInsert=false`
+- If the timeout is reached before camera insertion, 3576 reports:
+  - `status=failed`
+  - `resultCode=4706`
+  - `failureReason=camera_not_inserted`
+- After camera insertion, stream and exposure checks continue automatically.

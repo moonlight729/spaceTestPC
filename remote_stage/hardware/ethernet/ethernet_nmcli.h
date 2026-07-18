@@ -16,6 +16,7 @@ struct ethernet_result {
     char interface_name[64];
     char ip[64];
     char router_ip[64];
+    char failure_reason[64];
     int completed_ping_count;
     int avg_delay_ms;
     bool wifi_disabled;

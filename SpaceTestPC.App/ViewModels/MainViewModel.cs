@@ -1,6 +1,7 @@
 ﻿using System.Collections.ObjectModel;
 using System.Reflection;
 using System.Text.Json;
+using System.Windows.Threading;
 using SpaceTestPC.App.Models;
 using SpaceTestPC.App.Services;
 
@@ -40,6 +41,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly Dictionary<string, bool> _voltagePhaseResults = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, IReadOnlyDictionary<string, object?>> _hostDecisionData = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _voltageControlCommands = new(StringComparer.OrdinalIgnoreCase);
+    private readonly DispatcherTimer _keyCountdownTimer;
     private readonly IReadOnlyList<TestPlanItem> _testPlan;
     private readonly IReadOnlyDictionary<string, int> _testItemIndexes;
     private readonly bool _allowSnMismatchForDebug;
@@ -89,6 +91,8 @@ public sealed class MainViewModel : ObservableObject
     private readonly HashSet<string> _automaticDecisionTests = new(StringComparer.OrdinalIgnoreCase);
     private bool _isContinuousTestEnabled;
     private bool _isSessionRunning;
+    private DateTimeOffset? _keyDeadline;
+    private TestSessionEvent? _latestKeyTestEvent;
 
     public MainViewModel(
         IScannerService scannerService,
@@ -116,6 +120,17 @@ public sealed class MainViewModel : ObservableObject
         var appConfiguration = configuration ?? new AppConfiguration();
         _allowSnMismatchForDebug = appConfiguration.TestPlan.AllowSnMismatchForDebug;
         _keyTestTimeoutMs = GetConfiguredKeyTimeoutMs(appConfiguration);
+        _keyCountdownTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _keyCountdownTimer.Tick += (_, _) =>
+        {
+            if (_latestKeyTestEvent is null || _latestKeyTestEvent.Status != "running")
+            {
+                _keyCountdownTimer.Stop();
+                return;
+            }
+
+            OperatorInstruction = BuildKeyTestInstruction(_latestKeyTestEvent);
+        };
         _isContinuousTestEnabled = appConfiguration.TestPlan.Continuous.EnabledByDefault;
         _testPlan = BuildActiveTestPlan(appConfiguration);
         _testItemIndexes = _testPlan
@@ -342,7 +357,11 @@ public sealed class MainViewModel : ObservableObject
     public void SelectTestResult(string testId)
     {
         var result = TestResults.FirstOrDefault(item => item.TestId == testId);
-        if (result is not null) SelectedTestResult = result;
+        if (result is not null)
+        {
+            SelectedTestResult = result;
+            OperatorInstruction = BuildInstructionForSelectedResult(result);
+        }
     }
     public bool IsManualDecisionVisible => _manualDecisionTestId == SelectedTestResult?.TestId;
     public bool IsKeyTestDetailVisible => SelectedTestResult?.TestId == "keys";
@@ -576,9 +595,7 @@ public sealed class MainViewModel : ObservableObject
             var stagePassed = bluetoothPassed && wifiPassed && ethernetPassed;
             LastResult = stagePassed ? "Stage 1 passed" : "Stage 1 failed";
             finalVerdict = stagePassed ? "Pass" : "Fail";
-            OperatorInstruction = stagePassed
-                ? "检测完成，请取下产品并扫描下一台。"
-                : "检测失败，请处理异常后扫描下一台或重新扫描当前 SN。";
+            OperatorInstruction = BuildSessionCompletionInstruction(stagePassed ? "Pass" : "Fail");
         }
         catch (Exception ex)
         {
@@ -676,9 +693,7 @@ public sealed class MainViewModel : ObservableObject
                 {
                     finalVerdict = testEvent.Status == "passed" ? "Pass" : "Fail";
                     LastResult = finalVerdict == "Pass" ? "Stage 1 passed" : "Stage 1 failed";
-                    OperatorInstruction = finalVerdict == "Pass"
-                        ? "检测完成，请取下产品并扫描下一台。"
-                        : "检测完成，存在失败项目。请处理异常后扫描下一台或重新扫描当前 SN。";
+                    OperatorInstruction = BuildSessionCompletionInstruction(finalVerdict);
                     AppendLog($"Session completed: status={testEvent.Status}, code={testEvent.ResultCode}, message={testEvent.Message}");
                 }
             }
@@ -867,6 +882,23 @@ public sealed class MainViewModel : ObservableObject
 
         if (testEvent.TestId == "keys")
         {
+            _latestKeyTestEvent = testEvent;
+            if (testEvent.Status == "running")
+            {
+                var remainingMs = GetDataInt(testEvent.Data, "remainingMs");
+                if (remainingMs <= 0) remainingMs = GetDataInt(testEvent.Data, "timeoutMs");
+                if (remainingMs <= 0) remainingMs = _keyTestTimeoutMs;
+                _keyDeadline = DateTimeOffset.Now.AddMilliseconds(remainingMs);
+                if (!_keyCountdownTimer.IsEnabled)
+                {
+                    _keyCountdownTimer.Start();
+                }
+            }
+            else
+            {
+                _keyDeadline = null;
+                _keyCountdownTimer.Stop();
+            }
             OperatorInstruction = BuildKeyTestInstruction(testEvent);
             AppendLog(FormatTestEventLog(testEvent));
             return;
@@ -886,7 +918,39 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
-        OperatorInstruction = testEvent.TestId == "usb2_3" && testEvent.Status == "running"
+        if (testEvent.TestId == "battery_management")
+        {
+            OperatorInstruction = BuildBatteryDischargeInstruction(testEvent);
+            AppendLog(FormatTestEventLog(testEvent));
+            return;
+        }
+
+        if (testEvent.TestId == "ethernet")
+        {
+            OperatorInstruction = BuildEthernetInstruction(testEvent);
+            AppendLog(FormatTestEventLog(testEvent));
+            return;
+        }
+
+        OperatorInstruction = BuildGeneralTestInstruction(testEvent);
+        AppendLog(FormatTestEventLog(testEvent));
+    }
+
+    private string BuildGeneralTestInstruction(TestSessionEvent testEvent)
+    {
+        if (testEvent.TestId == "hdmi")
+        {
+            return testEvent.Status switch
+            {
+                "running" => "正在检测HDMI。",
+                "passed" => "HDMI测试完成。",
+                "failed" => "HDMI测试失败。",
+                "skipped" => "HDMI：本轮不测试。",
+                _ => "HDMI状态更新。"
+            };
+        }
+
+        return testEvent.TestId == "usb2_3" && testEvent.Status == "running"
             ? "请确保测试前已经使用 2.0 U盘和 3.0 U盘插入过需要测试的 USB 口，并已经生成 USB 汇总文件。"
             : testEvent.TestId == "pcba_test_points" && testEvent.Status == "running"
             ? "正在读取 PCBA 32 通道测试点电压，系统将自动判断是否在阈值范围内。"
@@ -894,16 +958,104 @@ public sealed class MainViewModel : ObservableObject
             ? "网口测试完成，请拔掉网线，准备进行 Wi-Fi 测试。"
             : testEvent.TestId == "ethernet" && testEvent.Status == "running"
             ? "请插入网线，系统将关闭 Wi-Fi 并检测有线网络。"
+            : testEvent.TestId == "typec_fast_charge" && testEvent.Status == "running" && GetDataString(testEvent.Data, "phase", string.Empty) == "wait_charger"
+            ? BuildFastChargeWaitingInstruction(testEvent.Data)
+            : testEvent.TestId == "typec_fast_charge" && testEvent.Status == "running" && GetDataString(testEvent.Data, "phase", string.Empty) == "charger_detected"
+            ? "已检测到充电器，正在采样充电电压和电流。"
             : testEvent.TestId == "typec_fast_charge" && testEvent.Status == "running" && !GetDataBoolean(testEvent.Data, "readyForHostDecision")
-            ? "请先拔掉充电器。系统将自动允许充电，再读取充电电压和电流。"
+            ? "正在准备快充测试，系统将自动允许充电并等待充电器接入。"
             : testEvent.TestId == "typec_fast_charge" && testEvent.Status == "running"
             ? "请插入 TYPE-C 充电器，系统将按 7.4V 电池模拟条件采样充电电流，并等待上位机判定。"
+            : testEvent.TestId == "typec_camera" && testEvent.Status == "running" && GetDataString(testEvent.Data, "phase", string.Empty) == "wait_camera"
+            ? "请插入 TYPE-C 相机，系统检测到 /dev/video 节点后会自动继续测试。"
+            : testEvent.TestId == "typec_camera" && testEvent.Status == "running" && GetDataString(testEvent.Data, "phase", string.Empty) == "camera_detected"
+            ? "已检测到 TYPE-C 相机，正在进行相机拉流测试。"
             : testEvent.Status == "skipped"
             ? $"{GetTestDisplayName(testEvent.TestId)}：本轮不测试。"
             : testEvent.Status == "running"
             ? $"正在检测：{GetTestDisplayName(testEvent.TestId)}。"
+            : testEvent.Status == "passed"
+            ? $"{GetTestDisplayName(testEvent.TestId)}测试完成。"
+            : testEvent.Status == "failed"
+            ? $"{GetTestDisplayName(testEvent.TestId)}测试失败。"
             : $"{GetTestDisplayName(testEvent.TestId)}：{testEvent.Status}。";
-        AppendLog(FormatTestEventLog(testEvent));
+    }
+
+    private string BuildInstructionForSelectedResult(TestResultViewModel result)
+    {
+        var testEvent = new TestSessionEvent
+        {
+            Event = "test.report",
+            TestId = result.TestId,
+            Status = result.State switch
+            {
+                TestItemState.Running => "running",
+                TestItemState.Passed => "passed",
+                TestItemState.Failed => "failed",
+                TestItemState.Skipped => "skipped",
+                _ => "pending"
+            },
+            ResultCode = result.ResultCode,
+            Message = result.Message,
+            Timestamp = result.StartedAt ?? DateTimeOffset.Now,
+            Data = result.Data
+        };
+
+        return result.TestId switch
+        {
+            "keys" => BuildKeyTestInstruction(testEvent),
+            "bluetooth" => BuildBluetoothInstruction(testEvent),
+            "wifi" => BuildWifiInstruction(testEvent),
+            "battery_management" => BuildBatteryDischargeInstruction(testEvent),
+            "ethernet" => BuildEthernetInstruction(testEvent),
+            _ => BuildGeneralTestInstruction(testEvent)
+        };
+    }
+
+    private static string BuildFastChargeWaitingInstruction(IReadOnlyDictionary<string, object?> data)
+    {
+        var phase = GetDataString(data, "phase", string.Empty);
+        var elapsedMs = GetDataInt(data, "elapsedMs");
+        var seconds = elapsedMs > 0 ? elapsedMs / 1000 : 0;
+        var waitReadySeconds = Math.Max(1, GetDataInt(data, "waitReadyTimeoutMs") / 1000);
+        var waitChargerSeconds = Math.Max(1, GetDataInt(data, "waitChargerTimeoutMs") / 1000);
+        var vbusType = GetDataString(data, "vbusType", string.Empty);
+        var onlyOtgPower = vbusType is "usb_sdp" or "usb_cdp" or "otg_mode" or "powered_from_vbus";
+
+        if (phase == "wait_ready")
+        {
+            var needsEthernet = GetDataBoolean(data, "requiresEthernetUnplug");
+            var needsCamera = GetDataBoolean(data, "requiresCameraUnplug");
+            if (needsEthernet && needsCamera)
+            {
+                return $"请先拔掉网线和相机，再开始板快充测试。已等待 {seconds}/{waitReadySeconds} 秒。";
+            }
+
+            if (needsEthernet)
+            {
+                return $"请先拔掉网线，再开始板快充测试。已等待 {seconds}/{waitReadySeconds} 秒。";
+            }
+
+            if (needsCamera)
+            {
+                return $"请先拔掉相机，再开始板快充测试。已等待 {seconds}/{waitReadySeconds} 秒。";
+            }
+        }
+
+        if (phase == "ready")
+        {
+            return "已确认网线和相机均已拔掉，正在切换到板快充测试模式。";
+        }
+
+        if (onlyOtgPower)
+        {
+            return seconds > 0
+                ? $"当前仅检测到 OTG/主机口供电，请插入独立充电器。已等待 {seconds}/{waitChargerSeconds} 秒。"
+                : "当前仅检测到 OTG/主机口供电，请插入独立充电器。";
+        }
+        return seconds > 0
+            ? $"请插入 TYPE-C 充电器，系统正在等待接入。已等待 {seconds}/{waitChargerSeconds} 秒。"
+            : "请插入 TYPE-C 充电器，系统正在等待接入。";
     }
 
     private bool ShouldSelectTestResult(TestSessionEvent testEvent, TestResultViewModel result)
@@ -982,6 +1134,7 @@ public sealed class MainViewModel : ObservableObject
 
     private string BuildKeyTestInstruction(TestSessionEvent testEvent)
     {
+        var remainingSeconds = GetRemainingKeySeconds(testEvent);
         if (testEvent.Status == "passed")
         {
             return "按键测试通过，五个按键均已识别。";
@@ -1002,7 +1155,27 @@ public sealed class MainViewModel : ObservableObject
         var missing = DirectionalKeys.Where(key => !key.IsDetected).Select(key => key.Label).ToArray();
         var detectedText = detected.Length == 0 ? "无" : string.Join("、", detected);
         var missingText = missing.Length == 0 ? "无" : string.Join("、", missing);
-        return $"按键测试：请在 {FormatKeyTimeoutSeconds()} 秒内依次按上、下、左、右、确认键。已识别：{detectedText}；剩余：{missingText}。";
+        return $"按键测试：请在 {FormatKeyTimeoutSeconds()} 秒内依次按上、下、左、右、确认键。已识别：{detectedText}；剩余：{missingText}；倒计时：{remainingSeconds} 秒。";
+    }
+
+    private int GetRemainingKeySeconds(TestSessionEvent testEvent)
+    {
+        if (_keyDeadline.HasValue)
+        {
+            var seconds = (int)Math.Ceiling((_keyDeadline.Value - DateTimeOffset.Now).TotalSeconds);
+            if (seconds > 0)
+            {
+                return seconds;
+            }
+        }
+
+        var remainingMs = GetDataInt(testEvent.Data, "remainingMs");
+        if (remainingMs > 0)
+        {
+            return Math.Max(1, (int)Math.Ceiling(remainingMs / 1000d));
+        }
+
+        return Math.Max(1, _keyTestTimeoutMs / 1000);
     }
 
     private static string BuildBluetoothInstruction(TestSessionEvent testEvent)
@@ -1044,6 +1217,98 @@ public sealed class MainViewModel : ObservableObject
         }
 
         return $"Wi‑Fi 测试失败：reason={GetDataString(testEvent.Data, "failureReason", string.Empty)}，ip={GetDataString(testEvent.Data, "ip", string.Empty)}，iface={GetDataString(testEvent.Data, "interfaceName", string.Empty)}，pingOk={GetDataBoolean(testEvent.Data, "pingOk")}。";
+    }
+
+    private static string BuildBatteryDischargeInstruction(TestSessionEvent testEvent)
+    {
+        var phase = GetDataString(testEvent.Data, "phase", string.Empty);
+        var elapsedSeconds = Math.Max(0, GetDataInt(testEvent.Data, "elapsedMs") / 1000);
+        var totalWaitSeconds = Math.Max(1, GetDataInt(testEvent.Data, "waitReadyTimeoutMs") / 1000);
+        var samplingSeconds = Math.Max(1, GetDataInt(testEvent.Data, "samplingDurationMs") / 1000);
+
+        if (testEvent.Status == "running" && phase == "wait_ready")
+        {
+            var needsEthernet = GetDataBoolean(testEvent.Data, "requiresEthernetUnplug");
+            var needsCamera = GetDataBoolean(testEvent.Data, "requiresCameraUnplug");
+
+            if (needsEthernet && needsCamera)
+            {
+                return $"请先拔掉网线和相机，再开始板放电测试。已等待 {elapsedSeconds}/{totalWaitSeconds} 秒。";
+            }
+
+            if (needsEthernet)
+            {
+                return $"请先拔掉网线，再开始板放电测试。已等待 {elapsedSeconds}/{totalWaitSeconds} 秒。";
+            }
+
+            if (needsCamera)
+            {
+                return $"请先拔掉相机，再开始板放电测试。已等待 {elapsedSeconds}/{totalWaitSeconds} 秒。";
+            }
+        }
+
+        if (testEvent.Status == "running" && phase == "ready")
+        {
+            return "已确认网线和相机均已拔掉，正在切换到板放电测试模式。";
+        }
+
+        if (testEvent.Status == "running" && phase == "ready_for_host_decision")
+        {
+            return $"板放电测试进行中，正在采样并等待上位机判定。检测时长 {elapsedSeconds}/{samplingSeconds} 秒。";
+        }
+
+        if (testEvent.Status == "running")
+        {
+            return $"板放电测试进行中，上位机将采样电流并完成判定。检测时长 {elapsedSeconds}/{samplingSeconds} 秒。";
+        }
+
+        if (testEvent.Status == "passed")
+        {
+            return "板放电测试完成。";
+        }
+
+        return "板放电测试失败。";
+    }
+
+    private static string BuildEthernetInstruction(TestSessionEvent testEvent)
+    {
+        var phase = GetDataString(testEvent.Data, "phase", string.Empty);
+        var elapsedMs = GetDataInt(testEvent.Data, "elapsedMs");
+        var elapsedSeconds = elapsedMs > 0 ? elapsedMs / 1000 : 0;
+        var routerIp = GetDataString(testEvent.Data, "routerIp", "-");
+        var ip = GetDataString(testEvent.Data, "ip", "-");
+        var reason = GetDataString(testEvent.Data, "failureReason", string.Empty);
+
+        if (testEvent.Status == "running")
+        {
+            return phase switch
+            {
+                "wait_cable" => elapsedSeconds > 0
+                    ? $"请插入网线，系统正在等待连接。已等待 {elapsedSeconds} 秒。"
+                    : "请插入网线，系统正在等待连接。",
+                "link_up" => "已检测到网线，正在开始网口检测。",
+                "dhcp" => "网口已连通，正在获取 IP。",
+                "ping" => $"网口已获取 IP，正在连通路由器 {routerIp}。",
+                "ping_ok" => "网口连通正常，请拔掉网线，准备进行 Wi‑Fi 测试。",
+                _ => "正在检测：网口。"
+            };
+        }
+
+        if (testEvent.Status == "passed")
+        {
+            return $"网口测试完成：IP {ip}，路由器 {routerIp}。";
+        }
+
+        return reason switch
+        {
+            "ethernet_insert_timeout" => "网口测试失败：等待插入网线超时。",
+            "ethernet_disconnect_wifi_failed" => "网口测试失败：断开 Wi‑Fi 连接失败。",
+            "ethernet_disable_wifi_failed" => "网口测试失败：断开 Wi‑Fi 连接失败。",
+            "ethernet_no_ip" => "网口测试失败：未获取到 IP。",
+            "ethernet_ping_failed" => $"网口测试失败：无法连通路由器 {routerIp}。",
+            "ethernet_cable_not_inserted" => "网口测试失败：未检测到网线连接。",
+            _ => $"网口测试失败：reason={reason}，ip={ip}。"
+        };
     }
 
     private static string GetTestDisplayName(string testId) => testId switch
@@ -1179,7 +1444,7 @@ public sealed class MainViewModel : ObservableObject
 
     private async void HandleTypecChargingReport(TestSessionEvent testEvent)
     {
-        if (_activeSessionClient is null || !_automaticDecisionTests.Add(testEvent.TestId) || !GetDataBoolean(testEvent.Data, "readyForHostDecision"))
+        if (_activeSessionClient is null || !GetDataBoolean(testEvent.Data, "readyForHostDecision") || !_automaticDecisionTests.Add(testEvent.TestId))
         {
             return;
         }
@@ -1263,7 +1528,7 @@ public sealed class MainViewModel : ObservableObject
 
     private async void HandleBatteryDischargeReport(TestSessionEvent testEvent)
     {
-        if (_activeSessionClient is null || !_automaticDecisionTests.Add(testEvent.TestId) || !GetDataBoolean(testEvent.Data, "readyForHostDecision")) return;
+        if (_activeSessionClient is null || !GetDataBoolean(testEvent.Data, "readyForHostDecision") || !_automaticDecisionTests.Add(testEvent.TestId)) return;
         var parameters = _testPlan.First(item => item.Id == testEvent.TestId).Parameters;
         var sampleIntervalMs = Math.Max(100, GetParameterInt(parameters, "sampleIntervalMs", 500));
         var samplingDurationMs = Math.Max(sampleIntervalMs, GetParameterInt(parameters, "samplingDurationMs", 10000));
@@ -1295,6 +1560,24 @@ public sealed class MainViewModel : ObservableObject
                 samples.Add((voltageMv, currentMa));
 
                 var elapsedMs = Math.Min(samplingDurationMs, (int)(DateTimeOffset.Now - testEvent.Timestamp).TotalMilliseconds);
+                _hostDecisionData[testEvent.TestId] = new Dictionary<string, object?>
+                {
+                    ["phase"] = "sampling",
+                    ["chargeControlCommand"] = GetDataString(testEvent.Data, "chargeControlCommand", "disable_charge"),
+                    ["chargeControlOk"] = GetDataBoolean(testEvent.Data, "chargeControlOk"),
+                    ["pmicCommunicationOk"] = GetDataBoolean(testEvent.Data, "pmicCommunicationOk"),
+                    ["readyForHostDecision"] = GetDataBoolean(testEvent.Data, "readyForHostDecision"),
+                    ["samplingDurationMs"] = samplingDurationMs,
+                    ["elapsedMs"] = elapsedMs,
+                    ["sampleCount"] = samples.Count,
+                    ["dischargeVoltageMv"] = voltageMv,
+                    ["dischargeCurrentMa"] = currentMa,
+                    ["dischargeVoltageMinMv"] = voltageMinMv,
+                    ["dischargeVoltageMaxMv"] = voltageMaxMv,
+                    ["dischargeCurrentMinMa"] = currentMinMv,
+                    ["dischargeCurrentMaxMa"] = currentMaxMv,
+                    ["stabilityToleranceMa"] = stabilityToleranceMa
+                };
                 ApplyTestReport(new TestSessionEvent
                 {
                     Event = "test.report",
@@ -1344,8 +1627,7 @@ public sealed class MainViewModel : ObservableObject
             var passed = avgVoltageMv >= voltageMinMv &&
                 avgVoltageMv <= voltageMaxMv &&
                 avgCurrentMa >= currentMinMv &&
-                avgCurrentMa <= currentMaxMv &&
-                rippleMa <= stabilityToleranceMa;
+                avgCurrentMa <= currentMaxMv;
 
             var failureReason = passed
                 ? "discharge_current_in_range"
@@ -1353,13 +1635,15 @@ public sealed class MainViewModel : ObservableObject
                 : avgVoltageMv > voltageMaxMv ? "discharge_voltage_too_high"
                 : avgCurrentMa < currentMinMv ? "discharge_current_too_low"
                 : avgCurrentMa > currentMaxMv ? "discharge_current_too_high"
-                : "discharge_current_unstable";
+                : "discharge_current_out_of_range";
 
             _hostDecisionData[testEvent.TestId] = new Dictionary<string, object?>
             {
+                ["phase"] = "sampling_completed",
                 ["chargeControlCommand"] = GetDataString(testEvent.Data, "chargeControlCommand", "disable_charge"),
                 ["chargeControlOk"] = GetDataBoolean(testEvent.Data, "chargeControlOk"),
                 ["pmicCommunicationOk"] = GetDataBoolean(testEvent.Data, "pmicCommunicationOk"),
+                ["readyForHostDecision"] = GetDataBoolean(testEvent.Data, "readyForHostDecision"),
                 ["samplingDurationMs"] = samplingDurationMs,
                 ["elapsedMs"] = samplingDurationMs,
                 ["sampleCount"] = samples.Count,
@@ -1386,9 +1670,11 @@ public sealed class MainViewModel : ObservableObject
         {
             _hostDecisionData[testEvent.TestId] = new Dictionary<string, object?>
             {
+                ["phase"] = "sampling_failed",
                 ["chargeControlCommand"] = GetDataString(testEvent.Data, "chargeControlCommand", "disable_charge"),
                 ["chargeControlOk"] = GetDataBoolean(testEvent.Data, "chargeControlOk"),
                 ["pmicCommunicationOk"] = GetDataBoolean(testEvent.Data, "pmicCommunicationOk"),
+                ["readyForHostDecision"] = GetDataBoolean(testEvent.Data, "readyForHostDecision"),
                 ["samplingDurationMs"] = samplingDurationMs,
                 ["failureReason"] = "jk5506_read_error"
             };
@@ -1467,6 +1753,54 @@ public sealed class MainViewModel : ObservableObject
         }
         RaisePropertyChanged(nameof(LogsText));
     }
+
+    private string BuildSessionCompletionInstruction(string finalVerdict)
+    {
+        if (string.Equals(finalVerdict, "Pass", StringComparison.OrdinalIgnoreCase))
+        {
+            return "检测完成，全部项目通过。请取下产品并扫描下一台。";
+        }
+
+        var failedResults = TestResults
+            .Where(result => result.State == TestItemState.Failed)
+            .Select(result => result.TestId)
+            .ToArray();
+
+        if (failedResults.Length == 0)
+        {
+            return "检测完成，本轮结果异常。请检查记录后重新扫描当前 SN 或继续下一台。";
+        }
+
+        if (failedResults.Length == 1)
+        {
+            return BuildSingleFailureInstruction(failedResults[0]);
+        }
+
+        var failedNames = failedResults
+            .Select(GetTestDisplayName)
+            .ToArray();
+
+        return $"检测完成，失败项目：{string.Join("、", failedNames)}。请处理对应异常后重新扫描当前 SN 或继续下一台。";
+    }
+
+    private static string BuildSingleFailureInstruction(string testId) => testId switch
+    {
+        "board_state" => "检测完成，板状态读取失败。请检查设备连接状态后重新扫描当前 SN。",
+        "hdmi" => "检测完成，HDMI 测试未通过。请检查显示输出后重新扫描当前 SN。",
+        "lcd" => "检测完成，LCD 测试未通过。请检查屏幕显示后重新扫描当前 SN。",
+        "keys" => "检测完成，按键测试未通过。请检查按键输入后重新扫描当前 SN。",
+        "usb2_3" => "检测完成，USB 测试未通过。请检查 U 盘与 USB 口后重新扫描当前 SN。",
+        "indicator_led" => "检测完成，指示灯测试未通过。请检查指示灯状态后重新扫描当前 SN。",
+        "fan" => "检测完成，风扇测试未通过。请检查风扇与供电后重新扫描当前 SN。",
+        "fingerprint" => "检测完成，指纹测试未通过。请检查指纹模组后重新扫描当前 SN。",
+        "pcba_test_points" => "检测完成，PCBA 测试点未通过。请检查测试点电压后重新扫描当前 SN。",
+        "battery_management" => "检测完成，放电测试未通过。请检查放电电流与治具连接后重新扫描当前 SN。",
+        "typec_fast_charge" => "检测完成，快充测试未通过。请检查充电器与充电电流后重新扫描当前 SN。",
+        "bluetooth" => "检测完成，蓝牙测试未通过。请检查广播设备与信号后重新扫描当前 SN。",
+        "ethernet" => "检测完成，网口测试未通过。请检查网线与网络连接后重新扫描当前 SN。",
+        "wifi" => "检测完成，Wi-Fi 测试未通过。请检查路由器与无线连接后重新扫描当前 SN。",
+        _ => $"检测完成，{GetTestDisplayName(testId)}未通过。请处理异常后重新扫描当前 SN。"
+    };
 
     private IReadOnlyList<TestResultRecord> BuildTestResultRecords() => TestResults
         .Select(result => new TestResultRecord
@@ -1610,8 +1944,37 @@ public sealed class MainViewModel : ObservableObject
     private void ApplyBoardState(BoardState state)
     {
         BoardId = state.BoardId;
-        BoardState = state.CurrentState;
+        BoardState = BuildBoardStateDisplay(state.CurrentState, state.LastVerdict);
         TestMode = state.TestMode;
+    }
+
+    private static string BuildBoardStateDisplay(string currentState, string lastVerdict)
+    {
+        if (string.Equals(lastVerdict, "Pass", StringComparison.OrdinalIgnoreCase))
+        {
+            return "测试完成";
+        }
+
+        if (string.Equals(lastVerdict, "Fail", StringComparison.OrdinalIgnoreCase))
+        {
+            return "测试失败";
+        }
+
+        if (string.IsNullOrWhiteSpace(currentState))
+        {
+            return "待机";
+        }
+
+        return currentState.Trim().ToLowerInvariant() switch
+        {
+            "idle" => "待机",
+            "ready" => "待机",
+            "waiting" => "待机",
+            "completed" => "测试完成",
+            "passed" => "测试完成",
+            "failed" => "测试失败",
+            _ => "测试中"
+        };
     }
 
     private async Task<bool> RunBluetoothAsync(IPcbaCommandClient client)

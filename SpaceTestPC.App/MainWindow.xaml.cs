@@ -57,11 +57,23 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (_viewModel.ScanCommand.CanExecute(null))
+        SubmitScanIfPossible();
+        e.Handled = true;
+    }
+
+    private void ScannerInputTextBox_OnTextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (sender is not TextBox textBox)
         {
-            _viewModel.ScanCommand.Execute(null);
-            e.Handled = true;
+            return;
         }
+
+        if (!textBox.Text.Contains('\r') && !textBox.Text.Contains('\n'))
+        {
+            return;
+        }
+
+        SubmitScanIfPossible();
     }
 
     private void TestSequenceListBox_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -109,6 +121,17 @@ public partial class MainWindow : Window
     {
         var dialog = new TestRecordDialog(record) { Owner = this };
         dialog.ShowDialog();
+    }
+
+    private void SubmitScanIfPossible()
+    {
+        if (_viewModel.ScanCommand.CanExecute(null))
+        {
+            _viewModel.ScanCommand.Execute(null);
+        }
+
+        ScannerInputTextBox.Focus();
+        Keyboard.Focus(ScannerInputTextBox);
     }
 
     private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject

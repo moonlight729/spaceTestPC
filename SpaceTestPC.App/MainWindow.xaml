@@ -89,13 +89,12 @@
                 <ColumnDefinition Width="420" />
             </Grid.ColumnDefinitions>
             <Border Style="{StaticResource Card}" Padding="18,12" Margin="0,0,14,0">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="360" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="360" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
                     <StackPanel VerticalAlignment="Center" Margin="0,0,18,0">
                         <TextBlock Style="{StaticResource SectionTitle}" Text="SCAN SN" />
                         <TextBlock Margin="0,4,0,0" Foreground="#667085" FontSize="12" Text="Scan to start a new test" />
@@ -109,9 +108,9 @@
                              BorderBrush="#98A2B3"
                              FontSize="16"
                              KeyDown="ScannerInputTextBox_OnKeyDown"
+                             TextChanged="ScannerInputTextBox_OnTextChanged"
                              Text="{Binding ScannerInput, UpdateSourceTrigger=PropertyChanged}" />
                     <Button Grid.Column="2" Margin="10,0,0,0" Command="{Binding ScanCommand}" Content="Scan / Query" />
-                    <TextBlock Grid.Column="3" Margin="18,0,0,0" VerticalAlignment="Center" Foreground="#475467" TextWrapping="Wrap" Text="{Binding OperatorInstruction}" />
                 </Grid>
             </Border>
             <Border Grid.Column="1" MinHeight="108" Style="{StaticResource Card}" Padding="20,16" Background="#F8FAFC" BorderBrush="#D8E0EA">

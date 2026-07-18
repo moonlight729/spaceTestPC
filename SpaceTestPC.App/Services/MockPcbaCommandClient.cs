@@ -159,6 +159,24 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
             }
             else if (test.Id == "typec_fast_charge")
             {
+                yield return new TestSessionEvent
+                {
+                    Event = "test.report",
+                    TestId = test.Id,
+                    Status = "running",
+                    Message = "Please insert charger",
+                    Data = new Dictionary<string, object?>
+                    {
+                        ["phase"] = "wait_charger",
+                        ["chargeControlCommand"] = "enable_charge",
+                        ["chargeControlOk"] = true,
+                        ["pmicCommunicationOk"] = true,
+                        ["chargerConnected"] = false,
+                        ["charging"] = false,
+                        ["chargeStage"] = "not_charging",
+                        ["elapsedMs"] = 0
+                    }
+                };
                 var passed = await WaitForManualDecisionAsync(test.Id, cancellationToken);
                 if (!passed)
                 {
@@ -237,12 +255,40 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 await Task.Delay(GetMockRunningDelay(test.Id), cancellationToken);
                 yield return new TestSessionEvent
                 {
+                    Event = "test.report", TestId = test.Id, Status = "running", Message = "Insert Ethernet cable",
+                    Data = new Dictionary<string, object?>
+                    {
+                        ["interfaceName"] = GetParameterString(test.Parameters, "interfaceName", "end0"),
+                        ["routerIp"] = GetParameterString(test.Parameters, "routerIp", "192.168.110.1"),
+                        ["phase"] = "wait_cable",
+                        ["ethernetLinkUp"] = false,
+                        ["requiresCableInsert"] = true,
+                        ["elapsedMs"] = 0
+                    }
+                };
+                await Task.Delay(GetMockRunningDelay(test.Id), cancellationToken);
+                yield return new TestSessionEvent
+                {
+                    Event = "test.report", TestId = test.Id, Status = "running", Message = "Ethernet cable detected",
+                    Data = new Dictionary<string, object?>
+                    {
+                        ["interfaceName"] = GetParameterString(test.Parameters, "interfaceName", "end0"),
+                        ["routerIp"] = GetParameterString(test.Parameters, "routerIp", "192.168.110.1"),
+                        ["phase"] = "link_up",
+                        ["ethernetLinkUp"] = true
+                    }
+                };
+                await Task.Delay(GetMockRunningDelay(test.Id), cancellationToken);
+                yield return new TestSessionEvent
+                {
                     Event = "test.report", TestId = test.Id, Status = "running", Message = "Remove Ethernet cable",
                     Data = new Dictionary<string, object?>
                     {
                         ["interfaceName"] = GetParameterString(test.Parameters, "interfaceName", "end0"),
                         ["routerIp"] = GetParameterString(test.Parameters, "routerIp", "192.168.110.1"),
-                        ["pingOk"] = true
+                        ["phase"] = "ping_ok",
+                        ["pingOk"] = true,
+                        ["ethernetLinkUp"] = true
                     }
                 };
             }
