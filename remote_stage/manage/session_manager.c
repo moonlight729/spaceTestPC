@@ -67,6 +67,9 @@ static int handle_sync_session_summary(int fd, const struct protocol_request *re
     if (item_count > 0 && board_state_record_test_items(config->board_state_path, items, item_count) != 0) {
         return send_failure(fd, request->session_id, 2203, "Unable to save test item summary");
     }
+    if (board_state_write_last_result_json(config->board_state_path, request->session_id, verdict, items, item_count) != 0) {
+        return send_failure(fd, request->session_id, 2204, "Unable to save last result detail");
+    }
     return send_ok_response(fd, request->session_id, "Session summary synced");
 }
 

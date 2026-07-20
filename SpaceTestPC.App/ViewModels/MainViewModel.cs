@@ -264,6 +264,7 @@ public sealed class MainViewModel : ObservableObject
         : "要求板端 SN 与扫码 SN 一致；不一致时禁止继续测试。";
     public string SnPolicyModeForeground => _allowSnMismatchForDebug ? "#F97316" : "#16A34A";
     public string SnPolicyModeBackground => _allowSnMismatchForDebug ? "#FFF7ED" : "#ECFDF3";
+    public bool IsMockVisible => _allowSnMismatchForDebug;
     public string FinalVerdictDisplay => LastResult switch
     {
         "Stage 1 passed" => "PASS",
@@ -739,6 +740,18 @@ public sealed class MainViewModel : ObservableObject
         };
 
         await _databaseRepository.SaveSessionAsync(record);
+        if (state is not null)
+        {
+            try
+            {
+                await client.SyncSessionSummaryAsync(SessionId, CurrentSn, state.BoardId, finalVerdict, record.TestResults);
+                AppendLog("Board summary synced.");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"Board summary sync failed: {ex.Message}");
+            }
+        }
         await LoadRecentSessionsAsync();
         await SetMockQueryDefaultAsync();
         AppendLog("Session persisted.");

@@ -41,5 +41,9 @@ int board_state_update_last_result(const char *path, const char *session_id,
 int board_state_record_test_items(const char *path,
                                   const struct board_test_item_summary *items,
                                   int item_count);
+int board_state_write_last_result_json(const char *path, const char *session_id,
+                                       const char *verdict,
+                                       const struct board_test_item_summary *items,
+                                       int item_count);
 
 #endif

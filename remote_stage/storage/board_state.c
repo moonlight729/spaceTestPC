@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #define BOARD_STATE_DIR "/userdata/factory_test"
 #define BOARD_SN_PATH "/userdata/factory_test/spacetest3576_board_sn.txt"
@@ -57,6 +58,48 @@ static int ensure_parent_directory(const char *path)
     memcpy(directory, path, length);
     directory[length] = '\0';
     return ensure_directory_exists(directory);
+}
+
+static int write_sn_mirror_file(const char *sn)
+{
+    FILE *file;
+
+    if (ensure_directory_exists(BOARD_STATE_DIR) != 0) return -1;
+    file = fopen(BOARD_SN_PATH, "w");
+    if (file == NULL) return -1;
+    if (fprintf(file, "%s\n", sn == NULL ? "" : sn) < 0) {
+        fclose(file);
+        return -1;
+    }
+    fclose(file);
+    return 0;
+}
+
+static int build_last_result_path(const char *board_state_path, char *buffer, size_t buffer_size)
+{
+    const char *slash;
+    size_t directory_length;
+
+    if (board_state_path == NULL || buffer == NULL || buffer_size == 0) return -1;
+    slash = strrchr(board_state_path, '/');
+    if (slash == NULL) return -1;
+    directory_length = (size_t)(slash - board_state_path);
+    if (directory_length == 0 || directory_length + strlen("/last_result.json") + 1 > buffer_size) return -1;
+    memcpy(buffer, board_state_path, directory_length);
+    buffer[directory_length] = '\0';
+    strcat(buffer, "/last_result.json");
+    return 0;
+}
+
+static void format_timestamp_now(char *buffer, size_t buffer_size)
+{
+    time_t now;
+    struct tm tm_value;
+
+    if (buffer == NULL || buffer_size == 0) return;
+    now = time(NULL);
+    localtime_r(&now, &tm_value);
+    strftime(buffer, buffer_size, "%Y-%m-%dT%H:%M:%S%z", &tm_value);
 }
 
 static void append_json_escaped(char *buffer, size_t buffer_size, size_t *used, const char *text)
@@ -266,13 +309,15 @@ int board_state_save_to_file(const char *path, const struct board_state *state)
         remove(temp_path);
         return -1;
     }
+    if (state->board_sn[0] != '\0') {
+        write_sn_mirror_file(state->board_sn);
+    }
     return 0;
 }
 
 int board_state_write_sn_if_empty(const char *sn)
 {
     struct board_state state;
-    FILE *file;
     char verify_sn[80];
     if (!is_valid_sn(sn)) return -1;
     board_state_load_defaults(&state);
@@ -284,15 +329,7 @@ int board_state_write_sn_if_empty(const char *sn)
     /* Keep a temporary mirror only for diagnostics and old smoke scripts.
      * The authoritative SN source is Rockchip vendor storage VENDOR_SN_ID.
      */
-    ensure_directory_exists(BOARD_STATE_DIR);
-    file = fopen(BOARD_SN_PATH, "w");
-    if (file != NULL) {
-        if (fprintf(file, "%s\n", sn) < 0) {
-            fclose(file);
-            return -1;
-        }
-        fclose(file);
-    }
+    if (write_sn_mirror_file(sn) != 0) return -1;
     return 0;
 }
 
@@ -428,4 +465,82 @@ int board_state_record_test_items(const char *path,
         state.test_items[target].test_count += source->test_count;
     }
     return board_state_save_to_file(path, &state);
+}
+
+int board_state_write_last_result_json(const char *path, const char *session_id,
+                                       const char *verdict,
+                                       const struct board_test_item_summary *items,
+                                       int item_count)
+{
+    char last_result_path[256];
+    char temp_path[272];
+    char timestamp[40];
+    FILE *file;
+    int index;
+    int passed_count = 0;
+    int failed_count = 0;
+    int skipped_count = 0;
+
+    if (path == NULL || verdict == NULL) return -1;
+    if (build_last_result_path(path, last_result_path, sizeof(last_result_path)) != 0) return -1;
+    if (ensure_parent_directory(last_result_path) != 0) return -1;
+    snprintf(temp_path, sizeof(temp_path), "%s.tmp", last_result_path);
+    format_timestamp_now(timestamp, sizeof(timestamp));
+
+    for (index = 0; index < item_count; ++index) {
+        const struct board_test_item_summary *item = &items[index];
+        if (strcmp(item->last_status, "passed") == 0 || strcmp(item->last_status, "PASS") == 0) passed_count++;
+        else if (strcmp(item->last_status, "skipped") == 0 || strcmp(item->last_status, "SKIPPED") == 0) skipped_count++;
+        else if (item->last_status[0] != '\0') failed_count++;
+    }
+
+    file = fopen(temp_path, "w");
+    if (file == NULL) return -1;
+    if (fprintf(file,
+                "{\n"
+                "  \"sessionId\": \"%s\",\n"
+                "  \"finalVerdict\": \"%s\",\n"
+                "  \"updatedAt\": \"%s\",\n"
+                "  \"passedItemCount\": %d,\n"
+                "  \"failedItemCount\": %d,\n"
+                "  \"skippedItemCount\": %d,\n"
+                "  \"testItems\": [\n",
+                session_id == NULL ? "" : session_id,
+                verdict,
+                timestamp,
+                passed_count,
+                failed_count,
+                skipped_count) < 0) {
+        fclose(file);
+        remove(temp_path);
+        return -1;
+    }
+
+    for (index = 0; index < item_count; ++index) {
+        const struct board_test_item_summary *item = &items[index];
+        if (item->test_id[0] == '\0') continue;
+        if (fprintf(file,
+                    "    {\"testId\": \"%s\", \"status\": \"%s\", \"testCount\": %d}%s\n",
+                    item->test_id,
+                    item->last_status,
+                    item->test_count,
+                    index == item_count - 1 ? "" : ",") < 0) {
+            fclose(file);
+            remove(temp_path);
+            return -1;
+        }
+    }
+
+    if (fprintf(file, "  ]\n}\n") < 0) {
+        fclose(file);
+        remove(temp_path);
+        return -1;
+    }
+
+    fclose(file);
+    if (rename(temp_path, last_result_path) != 0) {
+        remove(temp_path);
+        return -1;
+    }
+    return 0;
 }
