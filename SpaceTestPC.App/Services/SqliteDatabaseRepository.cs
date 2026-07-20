@@ -9,6 +9,9 @@ namespace SpaceTestPC.App.Services;
 
 public sealed class SqliteDatabaseRepository : IDatabaseRepository
 {
+    private const int SqliteBusyTimeoutSeconds = 10;
+    private const int SaveRetryCount = 5;
+    private static readonly TimeSpan SaveRetryDelay = TimeSpan.FromMilliseconds(300);
     private readonly string _databasePath;
     private readonly string _connectionString;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -17,7 +20,13 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
     {
         _databasePath = databasePath;
         Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
-        _connectionString = new SqliteConnectionStringBuilder { DataSource = databasePath, Pooling = false }.ToString();
+        _connectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Pooling = false,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            DefaultTimeout = SqliteBusyTimeoutSeconds
+        }.ToString();
     }
 
     public async Task SaveSessionAsync(TestSessionRecord record, CancellationToken cancellationToken = default)
@@ -25,29 +34,7 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
         await _gate.WaitAsync(cancellationToken);
         try
         {
-            await using var connection = new SqliteConnection(_connectionString);
-            await connection.OpenAsync(cancellationToken);
-            await EnsureSchemaAsync(connection, cancellationToken);
-            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
-
-            await ExecuteAsync(connection, transaction, """
-                INSERT INTO test_sessions(session_id, sn, start_time, end_time, final_verdict, board_id)
-                VALUES($id, $sn, $start, $end, $verdict, $boardId)
-                """, cancellationToken,
-                ("$id", record.Session.SessionId), ("$sn", record.Session.Sn), ("$start", record.Session.StartTime.ToString("O")),
-                ("$end", record.Session.EndTime?.ToString("O") ?? string.Empty), ("$verdict", record.Session.FinalVerdict), ("$boardId", record.BoardState?.BoardId ?? string.Empty));
-
-            foreach (var result in record.TestResults)
-            {
-                await ExecuteAsync(connection, transaction, """
-                    INSERT INTO test_results(session_id, test_id, status, result_code, message, data_json)
-                    VALUES($sessionId, $testId, $status, $code, $message, $data)
-                    """, cancellationToken,
-                    ("$sessionId", record.Session.SessionId), ("$testId", result.TestId), ("$status", result.Status),
-                    ("$code", result.ResultCode), ("$message", result.Message), ("$data", JsonSerializer.Serialize(result.Data)));
-            }
-
-            await transaction.CommitAsync(cancellationToken);
+            await SaveSessionWithRetryAsync(record, cancellationToken);
             await ExportPendingCsvAsync(cancellationToken);
         }
         finally { _gate.Release(); }
@@ -156,6 +143,44 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
         command.CommandText = sql;
         foreach (var (name, value) in values) command.Parameters.AddWithValue(name, value);
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task SaveSessionWithRetryAsync(TestSessionRecord record, CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await using var connection = new SqliteConnection(_connectionString);
+                await connection.OpenAsync(cancellationToken);
+                await EnsureSchemaAsync(connection, cancellationToken);
+                await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+
+                await ExecuteAsync(connection, transaction, """
+                    INSERT INTO test_sessions(session_id, sn, start_time, end_time, final_verdict, board_id)
+                    VALUES($id, $sn, $start, $end, $verdict, $boardId)
+                    """, cancellationToken,
+                    ("$id", record.Session.SessionId), ("$sn", record.Session.Sn), ("$start", record.Session.StartTime.ToString("O")),
+                    ("$end", record.Session.EndTime?.ToString("O") ?? string.Empty), ("$verdict", record.Session.FinalVerdict), ("$boardId", record.BoardState?.BoardId ?? string.Empty));
+
+                foreach (var result in record.TestResults)
+                {
+                    await ExecuteAsync(connection, transaction, """
+                        INSERT INTO test_results(session_id, test_id, status, result_code, message, data_json)
+                        VALUES($sessionId, $testId, $status, $code, $message, $data)
+                        """, cancellationToken,
+                        ("$sessionId", record.Session.SessionId), ("$testId", result.TestId), ("$status", result.Status),
+                        ("$code", result.ResultCode), ("$message", result.Message), ("$data", JsonSerializer.Serialize(result.Data)));
+                }
+
+                await transaction.CommitAsync(cancellationToken);
+                return;
+            }
+            catch (SqliteException ex) when (ex.SqliteErrorCode == 5 && attempt < SaveRetryCount)
+            {
+                await Task.Delay(SaveRetryDelay, cancellationToken);
+            }
+        }
     }
 
     private async Task ExportPendingCsvAsync(CancellationToken cancellationToken)

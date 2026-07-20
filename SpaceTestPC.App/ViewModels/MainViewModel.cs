@@ -696,6 +696,10 @@ public sealed class MainViewModel : ObservableObject
                 else if (testEvent.Event == "session.completed")
                 {
                     finalVerdict = testEvent.Status == "passed" ? "Pass" : "Fail";
+                    if (testEvent.Status == "failed")
+                    {
+                        ApplySessionFailureFallback(testEvent);
+                    }
                     LastResult = finalVerdict == "Pass" ? "Stage 1 passed" : "Stage 1 failed";
                     OperatorInstruction = BuildSessionCompletionInstruction(finalVerdict);
                     AppendLog($"Session completed: status={testEvent.Status}, code={testEvent.ResultCode}, message={testEvent.Message}");
@@ -800,6 +804,84 @@ public sealed class MainViewModel : ObservableObject
         return updatedState;
     }
 
+    private void ApplySessionFailureFallback(TestSessionEvent sessionCompletedEvent)
+    {
+        var failedTestId = TryExtractFirstFailedTestId(sessionCompletedEvent.Message);
+        if (!string.IsNullOrWhiteSpace(failedTestId))
+        {
+            ForceFailTestItem(failedTestId, sessionCompletedEvent);
+            return;
+        }
+
+        if (CurrentTestItem is not null)
+        {
+            ForceFailTestItem(CurrentTestItem.TestId, sessionCompletedEvent);
+            return;
+        }
+
+        var runningResult = TestResults.FirstOrDefault(result => result.State == TestItemState.Running);
+        if (runningResult is not null)
+        {
+            ForceFailTestItem(runningResult.TestId, sessionCompletedEvent);
+        }
+    }
+
+    private void ForceFailTestItem(string testId, TestSessionEvent sessionCompletedEvent)
+    {
+        var result = TestResults.FirstOrDefault(item => item.TestId == testId);
+        if (result is null || result.State != TestItemState.Running)
+        {
+            return;
+        }
+
+        var failedEvent = new TestSessionEvent
+        {
+            Event = "test.report",
+            TestId = testId,
+            Status = "failed",
+            ResultCode = sessionCompletedEvent.ResultCode,
+            Message = string.IsNullOrWhiteSpace(sessionCompletedEvent.Message)
+                ? "Session failed before final test item status was reported"
+                : sessionCompletedEvent.Message,
+            Timestamp = sessionCompletedEvent.Timestamp,
+            Data = new Dictionary<string, object?>
+            {
+                ["failureSource"] = "session_completed_fallback"
+            }
+        };
+
+        ApplyTestReport(failedEvent);
+    }
+
+    private static string? TryExtractFirstFailedTestId(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return null;
+        }
+
+        const string marker = "first failed:";
+        var index = message.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
+        {
+            return null;
+        }
+
+        var value = message[(index + marker.Length)..].Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var commaIndex = value.IndexOf(',');
+        if (commaIndex >= 0)
+        {
+            value = value[..commaIndex].Trim();
+        }
+
+        return value.Length == 0 ? null : value;
+    }
+
     private void ApplyTestReport(TestSessionEvent testEvent)
     {
         if (testEvent.TestId == "battery_management" &&
@@ -890,6 +972,7 @@ public sealed class MainViewModel : ObservableObject
 
         if (testEvent.TestId == "keys")
         {
+            _logService.Event("test.report", testEvent);
             _latestKeyTestEvent = testEvent;
             if (testEvent.Status == "running")
             {
@@ -914,6 +997,7 @@ public sealed class MainViewModel : ObservableObject
 
         if (testEvent.TestId == "bluetooth")
         {
+            _logService.Event("test.report", testEvent);
             OperatorInstruction = BuildBluetoothInstruction(testEvent);
             AppendLog(FormatTestEventLog(testEvent));
             return;
@@ -921,6 +1005,7 @@ public sealed class MainViewModel : ObservableObject
 
         if (testEvent.TestId == "wifi")
         {
+            _logService.Event("test.report", testEvent);
             OperatorInstruction = BuildWifiInstruction(testEvent);
             AppendLog(FormatTestEventLog(testEvent));
             return;
@@ -928,6 +1013,7 @@ public sealed class MainViewModel : ObservableObject
 
         if (testEvent.TestId == "battery_management")
         {
+            _logService.Event("test.report", testEvent);
             OperatorInstruction = BuildBatteryDischargeInstruction(testEvent);
             AppendLog(FormatTestEventLog(testEvent));
             return;
@@ -935,11 +1021,13 @@ public sealed class MainViewModel : ObservableObject
 
         if (testEvent.TestId == "ethernet")
         {
+            _logService.Event("test.report", testEvent);
             OperatorInstruction = BuildEthernetInstruction(testEvent);
             AppendLog(FormatTestEventLog(testEvent));
             return;
         }
 
+        _logService.Event("test.report", testEvent);
         OperatorInstruction = BuildGeneralTestInstruction(testEvent);
         AppendLog(FormatTestEventLog(testEvent));
     }
@@ -1104,8 +1192,7 @@ public sealed class MainViewModel : ObservableObject
     private static string FormatEventData(IReadOnlyDictionary<string, object?> data)
     {
         if (data.Count == 0) return string.Empty;
-        var json = JsonSerializer.Serialize(data);
-        return json.Length <= 220 ? json : json[..220] + "...";
+        return JsonSerializer.Serialize(data);
     }
 
     private static string FormatFailureHint(TestSessionEvent testEvent) =>

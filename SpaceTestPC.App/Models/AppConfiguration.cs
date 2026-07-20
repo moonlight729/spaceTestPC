@@ -15,6 +15,7 @@ public sealed class LoggingConfiguration
 {
     public bool FileEnabled { get; set; } = true;
     public string FilePath { get; set; } = "logs/space-test-pc.log";
+    public string EventFilePath { get; set; } = "logs/space-test-events.jsonl";
 }
 
 public sealed class BluetoothBroadcasterConfiguration
