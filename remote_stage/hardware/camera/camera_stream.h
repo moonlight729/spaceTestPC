@@ -10,6 +10,9 @@ struct camera_stream_request {
     bool require_exposure_interrupt;
     const char *exposure_counter_path;
     int exposure_frame_count;
+    bool require_pwm_pulse;
+    const char *pwm_status_path;
+    int pwm_min_pulse_delta;
 };
 
 struct camera_stream_result {
@@ -18,6 +21,12 @@ struct camera_stream_result {
     int exposure_delta;
     bool stream_ok;
     bool exposure_ok;
+    unsigned long long pwm_pulse_count_before;
+    unsigned long long pwm_pulse_count_after;
+    unsigned long long pwm_pulse_delta;
+    long long pwm_mono_ns;
+    long long pwm_rtc_ns;
+    bool pwm_ok;
     int error_code;
     char message[192];
 };

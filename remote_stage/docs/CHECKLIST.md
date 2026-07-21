@@ -108,7 +108,9 @@
 - [x] Ethernet protocol: host item `ethernet`, 3576 disables Wi-Fi, checks carrier/IP/ping, prompts cable unplug.
 - [x] Wi-Fi cable-unplug protocol: if Ethernet is still linked, 3576 reports `phase=wait_unplug` progress, waits for cable removal, then auto-continues Wi-Fi test or times out with `4105/ethernet_still_connected`.
 - [x] Battery discharge precheck protocol: if Ethernet or `/dev/video*` camera nodes are still present, 3576 reports `phase=wait_ready` progress, waits for removal, then auto-continues discharge setup or times out with `4705/external_load_not_removed`.
+- [x] Fast-charge current limit: before enabling charging, `typec_fast_charge` writes PMIC register `0x03` with `0x0032` through I2C bus 7, fixing the charge-current limit at 500mA; failure is reported as `4407`.
 - [x] Camera insert wait protocol: if the expected `/dev/video*` node is missing, 3576 reports `phase=wait_camera` progress, waits for insertion, then auto-continues camera stream test or times out with `4706/camera_not_inserted`.
+- [x] Camera PWM pulse protocol: `typec_camera` reads `/sys/devices/platform/sync-pwm/status_bin`, compares `pulse_count` before/after stream test, and reports `pwmPulseDelta/pwmOk` to the host.
 - [x] USB2.0&3.0 protocol: host item `usb2_3`, 3576 reads `/tmp/spacetest_usb_ports.json`.
 - [x] USB2.0&3.0 default policy: default skip until board file producer is ready.
 - [x] PCBA test points protocol: host item `pcba_test_points`, 32 channel voltage result contract defined.

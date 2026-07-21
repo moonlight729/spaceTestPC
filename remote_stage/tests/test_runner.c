@@ -23,6 +23,8 @@
 
 #define CHARGE_CONTROL_ENABLE_COMMAND "i2ctransfer -f -y 7 w2@0x6b 0x12 0x00"
 #define CHARGE_CONTROL_DISABLE_COMMAND "i2ctransfer -f -y 7 w2@0x6b 0x12 0x80"
+#define CHARGE_CURRENT_LIMIT_500MA_COMMAND "i2ctransfer -f -y 7 w3@0x6b 0x03 0x00 0x32"
+#define CHARGE_CURRENT_LIMIT_MA 500
 #define PMIC_STATUS0_READ_COMMAND "i2ctransfer -f -y 7 w1@0x6b 0x1b r1"
 #define PMIC_STATUS1_READ_COMMAND "i2ctransfer -f -y 7 w1@0x6b 0x1c r1"
 
@@ -211,6 +213,11 @@ static int send_report(int fd, const char *test_id, const char *status,
 static int set_charge_enabled(int enabled)
 {
     return system(enabled ? CHARGE_CONTROL_ENABLE_COMMAND : CHARGE_CONTROL_DISABLE_COMMAND);
+}
+
+static int set_charge_current_limit_500ma(void)
+{
+    return system(CHARGE_CURRENT_LIMIT_500MA_COMMAND);
 }
 
 static int read_i2c_register_value(const char *command, int *value)
@@ -803,13 +810,25 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
     send_report(fd, "typec_fast_charge", "running", 0,
                 "External loads removed, enabling fast charge mode", data);
 
+    snprintf(data, sizeof(data),
+             "{\"phase\":\"set_charge_current_limit\",\"chargeCurrentLimitMa\":%d,"
+             "\"chargeCurrentLimitCommand\":\"set_500ma\",\"chargeCurrentLimitOk\":false}",
+             CHARGE_CURRENT_LIMIT_MA);
+    send_report(fd, "typec_fast_charge", "running", 0,
+                "Setting charge current limit to 500mA", data);
+    if (set_charge_current_limit_500ma() != 0) {
+        return send_report(fd, "typec_fast_charge", "failed", 4407,
+                           "Unable to set charge current limit to 500mA", data);
+    }
+
     if (set_charge_enabled(1) != 0) {
         snprintf(data, sizeof(data),
                  "{\"chargeControlCommand\":\"enable_charge\",\"chargeControlOk\":false,"
+                 "\"chargeCurrentLimitMa\":%d,\"chargeCurrentLimitCommand\":\"set_500ma\",\"chargeCurrentLimitOk\":true,"
                  "\"pmicCommunicationOk\":false,\"chargerConnected\":false,\"charging\":false,"
                  "\"chargeStage\":\"unknown\",\"chargeVoltageMv\":0,\"chargeCurrentMa\":0,\"stable\":false,"
                  "\"stableSamples\":0,\"averageChargeCurrentMa\":0,\"voltageMinMv\":%d,\"voltageMaxMv\":%d,\"currentMinMa\":%d,\"currentMaxMa\":%d}",
-                 request.voltage_min_mv, request.voltage_max_mv,
+                 CHARGE_CURRENT_LIMIT_MA, request.voltage_min_mv, request.voltage_max_mv,
                  request.current_min_ma, request.current_max_ma);
         return send_report(fd, "typec_fast_charge", "failed", 4401,
                            "Unable to enable charge before fast charge test", data);
@@ -1270,6 +1289,7 @@ static int run_camera(int fd, const struct app_config *config, const char *test_
 {
     char device_path[128];
     char exposure_counter_path[160];
+    char pwm_status_path[192];
     int wait_camera_timeout_ms = 30000;
     int progress_report_interval_ms = 1000;
     int elapsed_ms = 0;
@@ -1280,22 +1300,29 @@ static int run_camera(int fd, const struct app_config *config, const char *test_
         .require_exposure_interrupt = config->camera_require_exposure_interrupt != 0,
         .exposure_counter_path = exposure_counter_path,
         .exposure_frame_count = config->camera_exposure_frame_count,
+        .require_pwm_pulse = config->camera_require_pwm_pulse != 0,
+        .pwm_status_path = pwm_status_path,
+        .pwm_min_pulse_delta = config->camera_pwm_min_pulse_delta,
     };
     struct camera_stream_result result;
-    char data[512];
+    char data[1024];
 
     snprintf(device_path, sizeof(device_path), "%s", config->camera_device_path);
     exposure_counter_path[0] = '\0';
+    snprintf(pwm_status_path, sizeof(pwm_status_path), "%s", config->camera_pwm_status_path);
     if (config->camera_exposure_counter_path != NULL) {
         snprintf(exposure_counter_path, sizeof(exposure_counter_path), "%s", config->camera_exposure_counter_path);
     }
     param_string(test_start, test_end, "devicePath", device_path, sizeof(device_path));
     param_string(test_start, test_end, "exposureCounterPath", exposure_counter_path, sizeof(exposure_counter_path));
+    param_string(test_start, test_end, "pwmStatusPath", pwm_status_path, sizeof(pwm_status_path));
     request.stream_frame_count = param_int(test_start, test_end, "streamFrameCount", request.stream_frame_count);
     request.timeout_ms = param_int(test_start, test_end, "timeoutMs", request.timeout_ms);
     request.exposure_frame_count = param_int(test_start, test_end, "minInterruptCount", request.exposure_frame_count);
     request.exposure_frame_count = param_int(test_start, test_end, "exposureFrameCount", request.exposure_frame_count);
     request.require_exposure_interrupt = param_bool(test_start, test_end, "requireExposureInterrupt", request.require_exposure_interrupt);
+    request.require_pwm_pulse = param_bool(test_start, test_end, "requirePwmPulse", request.require_pwm_pulse);
+    request.pwm_min_pulse_delta = param_int(test_start, test_end, "minPwmPulseDelta", request.pwm_min_pulse_delta);
     wait_camera_timeout_ms = param_int(test_start, test_end, "waitCameraTimeoutMs", wait_camera_timeout_ms);
     progress_report_interval_ms = param_int(test_start, test_end, "progressReportIntervalMs", progress_report_interval_ms);
     if (progress_report_interval_ms <= 0) progress_report_interval_ms = 1000;
@@ -1329,11 +1356,19 @@ static int run_camera(int fd, const struct app_config *config, const char *test_
 
     if (camera_stream_run_test(&request, &result) != 0) {
         snprintf(data, sizeof(data),
-                 "{\"phase\":\"failed\",\"device\":\"%s\",\"capturedFrames\":%d,\"exposureDelta\":%d,\"streamOk\":%s,\"exposureOk\":%s,\"requiredExposureFrames\":%d}",
+                 "{\"phase\":\"failed\",\"device\":\"%s\",\"capturedFrames\":%d,\"exposureDelta\":%d,"
+                 "\"pwmStatusPath\":\"%s\",\"pwmPulseCountBefore\":%llu,\"pwmPulseCountAfter\":%llu,"
+                 "\"pwmPulseDelta\":%llu,\"pwmMonoNs\":%lld,\"pwmRtcNs\":%lld,\"pwmOk\":%s,"
+                 "\"streamOk\":%s,\"exposureOk\":%s,\"requiredExposureFrames\":%d,\"requiredPwmPulseDelta\":%d}",
                  result.device_path, result.captured_frames, result.exposure_delta,
+                 pwm_status_path,
+                 result.pwm_pulse_count_before, result.pwm_pulse_count_after,
+                 result.pwm_pulse_delta, result.pwm_mono_ns, result.pwm_rtc_ns,
+                 result.pwm_ok ? "true" : "false",
                  result.stream_ok ? "true" : "false",
                  result.exposure_ok ? "true" : "false",
-                 request.exposure_frame_count);
+                 request.exposure_frame_count,
+                 request.pwm_min_pulse_delta);
         send_report(fd, "typec_camera", "failed",
                     result.error_code == 0 ? 4700 : result.error_code,
                     result.message[0] == '\0' ? "Camera stream test failed" : result.message,
@@ -1341,11 +1376,19 @@ static int run_camera(int fd, const struct app_config *config, const char *test_
         return -1;
     }
     snprintf(data, sizeof(data),
-             "{\"phase\":\"completed\",\"device\":\"%s\",\"capturedFrames\":%d,\"exposureDelta\":%d,\"streamOk\":%s,\"exposureOk\":%s,\"requiredExposureFrames\":%d}",
+             "{\"phase\":\"completed\",\"device\":\"%s\",\"capturedFrames\":%d,\"exposureDelta\":%d,"
+             "\"pwmStatusPath\":\"%s\",\"pwmPulseCountBefore\":%llu,\"pwmPulseCountAfter\":%llu,"
+             "\"pwmPulseDelta\":%llu,\"pwmMonoNs\":%lld,\"pwmRtcNs\":%lld,\"pwmOk\":%s,"
+             "\"streamOk\":%s,\"exposureOk\":%s,\"requiredExposureFrames\":%d,\"requiredPwmPulseDelta\":%d}",
              result.device_path, result.captured_frames, result.exposure_delta,
+             pwm_status_path,
+             result.pwm_pulse_count_before, result.pwm_pulse_count_after,
+             result.pwm_pulse_delta, result.pwm_mono_ns, result.pwm_rtc_ns,
+             result.pwm_ok ? "true" : "false",
              result.stream_ok ? "true" : "false",
              result.exposure_ok ? "true" : "false",
-             request.exposure_frame_count);
+             request.exposure_frame_count,
+             request.pwm_min_pulse_delta);
     return send_report(fd, "typec_camera", "passed", 0, result.message, data);
 }
 

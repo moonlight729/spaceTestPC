@@ -7,6 +7,7 @@
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -17,6 +18,12 @@
 struct camera_buffer {
     void *start;
     size_t length;
+};
+
+struct sync_pwm_status {
+    uint64_t pulse_count;
+    int64_t mono_ns;
+    int64_t rtc_ns;
 };
 
 static void copy_text(char *dst, size_t dst_size, const char *src)
@@ -59,6 +66,26 @@ static int read_int_file(const char *path, int *value)
         return -1;
     }
     fclose(file);
+    return 0;
+}
+
+static int read_sync_pwm_status(const char *path, struct sync_pwm_status *status)
+{
+    int fd;
+    ssize_t bytes_read;
+
+    if (path == NULL || status == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    bytes_read = read(fd, status, sizeof(*status));
+    close(fd);
+    if (bytes_read != (ssize_t)sizeof(*status)) {
+        errno = EIO;
+        return -1;
+    }
     return 0;
 }
 
@@ -154,6 +181,8 @@ int camera_stream_run_test(const struct camera_stream_request *request,
     int fd;
     int exposure_before = 0;
     int exposure_after = 0;
+    struct sync_pwm_status pwm_before;
+    struct sync_pwm_status pwm_after;
     int i;
 
     if (request == NULL || result == NULL || request->device_path == NULL ||
@@ -167,12 +196,20 @@ int camera_stream_run_test(const struct camera_stream_request *request,
         buffers[i].start = NULL;
         buffers[i].length = 0;
     }
+    memset(&pwm_before, 0, sizeof(pwm_before));
+    memset(&pwm_after, 0, sizeof(pwm_after));
 
     if (request->require_exposure_interrupt &&
         read_int_file(request->exposure_counter_path, &exposure_before) != 0) {
         set_message(result, 4700, "Unable to read camera exposure counter before streaming");
         return -1;
     }
+    if (request->require_pwm_pulse &&
+        read_sync_pwm_status(request->pwm_status_path, &pwm_before) != 0) {
+        set_message(result, 4707, "Unable to read PWM pulse counter before streaming");
+        return -1;
+    }
+    result->pwm_pulse_count_before = pwm_before.pulse_count;
 
     fd = open(request->device_path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0) {
@@ -211,6 +248,23 @@ int camera_stream_run_test(const struct camera_stream_request *request,
         result->exposure_ok = result->exposure_delta >= request->exposure_frame_count;
         if (!result->exposure_ok) {
             set_message(result, 4706, "Camera exposure interrupt count is below requirement");
+            return -1;
+        }
+    }
+    if (request->require_pwm_pulse) {
+        if (read_sync_pwm_status(request->pwm_status_path, &pwm_after) != 0) {
+            set_message(result, 4708, "Unable to read PWM pulse counter after streaming");
+            return -1;
+        }
+        result->pwm_pulse_count_after = pwm_after.pulse_count;
+        result->pwm_pulse_delta = pwm_after.pulse_count >= pwm_before.pulse_count
+                                      ? pwm_after.pulse_count - pwm_before.pulse_count
+                                      : 0;
+        result->pwm_mono_ns = pwm_after.mono_ns;
+        result->pwm_rtc_ns = pwm_after.rtc_ns;
+        result->pwm_ok = result->pwm_pulse_delta >= (unsigned long long)request->pwm_min_pulse_delta;
+        if (!result->pwm_ok) {
+            set_message(result, 4709, "PWM pulse count is below requirement");
             return -1;
         }
     }

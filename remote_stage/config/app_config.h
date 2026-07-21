@@ -22,6 +22,9 @@ struct app_config {
     int camera_require_exposure_interrupt;
     int camera_stream_frame_count;
     int camera_exposure_frame_count;
+    const char *camera_pwm_status_path;
+    int camera_require_pwm_pulse;
+    int camera_pwm_min_pulse_delta;
 };
 
 void app_config_load_defaults(struct app_config *config);

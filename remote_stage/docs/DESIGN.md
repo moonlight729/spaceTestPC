@@ -211,4 +211,6 @@ Recommended order:
   - `status=failed`
   - `resultCode=4706`
   - `failureReason=camera_not_inserted`
-- After camera insertion, stream and exposure checks continue automatically.
+- After camera insertion, stream, exposure-interrupt, and PWM pulse-count checks continue automatically.
+- `typec_camera.parameters` also accepts `pwmStatusPath`, `requirePwmPulse`, and `minPwmPulseDelta`.
+- `typec_camera.data` also reports `pwmPulseCountBefore`, `pwmPulseCountAfter`, `pwmPulseDelta`, `pwmMonoNs`, `pwmRtcNs`, and `pwmOk`.

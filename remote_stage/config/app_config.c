@@ -25,6 +25,9 @@ void app_config_load_defaults(struct app_config *config)
     config->camera_require_exposure_interrupt = 0;
     config->camera_stream_frame_count = 1;
     config->camera_exposure_frame_count = 30;
+    config->camera_pwm_status_path = "/sys/devices/platform/sync-pwm/status_bin";
+    config->camera_require_pwm_pulse = 1;
+    config->camera_pwm_min_pulse_delta = 1;
     keys_timeout_ms = getenv("SPACETEST_KEYS_TIMEOUT_MS");
     if (keys_timeout_ms != NULL && keys_timeout_ms[0] != '\0') {
         int value = atoi(keys_timeout_ms);
