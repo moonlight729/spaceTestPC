@@ -943,13 +943,14 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
                      "{\"phase\":\"ready_for_host_decision\",\"chargeControlCommand\":\"enable_charge\",\"chargeControlOk\":true,"
                      "\"pmicCommunicationOk\":false,\"pmicReadFailedAfterSampling\":true,"
                      "\"chargerConnected\":true,\"charging\":%s,\"chargeStage\":\"%s\","
-                     "\"chargeVoltageMv\":%d,\"chargeCurrentMa\":%d,\"stable\":%s,\"stableSamples\":%d,"
+                     "\"chargeVoltageMv\":%d,\"chargeCurrentMa\":%d,\"rawVoltageSamplesMv\":[%d],\"rawCurrentSamplesMa\":[%d],\"sampleCount\":1,"
+                     "\"stable\":%s,\"stableSamples\":%d,"
                      "\"averageChargeCurrentMa\":%d,\"voltageMinMv\":%d,\"voltageMaxMv\":%d,\"currentMinMa\":%d,\"currentMaxMa\":%d,"
                      "\"samplingDurationMs\":%d,"
                      "\"pmicStatus0\":%d,\"pmicStatus1\":%d,\"vbusStat\":%d,\"vbusType\":\"%s\",\"bc12Done\":%d,\"readyForHostDecision\":true}",
                      last_known_charging ? "true" : "false",
                      map_charge_stage_name(last_known_charge_stage),
-                     result.voltage_mv, result.current_ma,
+                     result.voltage_mv, result.current_ma, result.voltage_mv, result.current_ma,
                      result.stable_samples >= request.stable_sample_count ? "true" : "false",
                      result.stable_samples, result.current_ma, request.voltage_min_mv, request.voltage_max_mv,
                      request.current_min_ma, request.current_max_ma, request.timeout_ms,
@@ -974,14 +975,15 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
                  "{\"phase\":\"sampling_failed\",\"chargeControlCommand\":\"enable_charge\",\"chargeControlOk\":true,"
                  "\"pmicCommunicationOk\":false,\"pmicReadFailedAfterSampling\":true,"
                  "\"chargerConnected\":%s,\"charging\":%s,\"chargeStage\":\"%s\","
-                 "\"chargeVoltageMv\":%d,\"chargeCurrentMa\":%d,\"stable\":false,\"stableSamples\":0,"
+                 "\"chargeVoltageMv\":%d,\"chargeCurrentMa\":%d,\"rawVoltageSamplesMv\":[%d],\"rawCurrentSamplesMa\":[%d],\"sampleCount\":1,"
+                 "\"stable\":false,\"stableSamples\":0,"
                  "\"averageChargeCurrentMa\":%d,\"voltageMinMv\":%d,\"voltageMaxMv\":%d,\"currentMinMa\":%d,\"currentMaxMa\":%d,"
                  "\"samplingDurationMs\":%d,"
                  "\"pmicStatus0\":%d,\"pmicStatus1\":%d,\"vbusStat\":%d,\"vbusType\":\"%s\",\"bc12Done\":%d}",
                  charger_detected ? "true" : "false",
                  last_known_charging ? "true" : "false",
                  charger_detected ? map_charge_stage_name(last_known_charge_stage) : "unknown",
-                 result.voltage_mv, result.current_ma, result.current_ma,
+                 result.voltage_mv, result.current_ma, result.voltage_mv, result.current_ma, result.current_ma,
                  request.voltage_min_mv, request.voltage_max_mv,
                  request.current_min_ma, request.current_max_ma, request.timeout_ms,
                  charger_detected ? last_known_pmic_status0 : pmic_status0,
@@ -999,14 +1001,15 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
     snprintf(data, sizeof(data),
              "{\"phase\":\"ready_for_host_decision\",\"chargeControlCommand\":\"enable_charge\",\"chargeControlOk\":true,"
              "\"pmicCommunicationOk\":true,\"chargerConnected\":%s,\"charging\":%s,\"chargeStage\":\"%s\","
-             "\"chargeVoltageMv\":%d,\"chargeCurrentMa\":%d,\"stable\":%s,\"stableSamples\":%d,"
+             "\"chargeVoltageMv\":%d,\"chargeCurrentMa\":%d,\"rawVoltageSamplesMv\":[%d],\"rawCurrentSamplesMa\":[%d],\"sampleCount\":1,"
+             "\"stable\":%s,\"stableSamples\":%d,"
              "\"averageChargeCurrentMa\":%d,\"voltageMinMv\":%d,\"voltageMaxMv\":%d,\"currentMinMa\":%d,\"currentMaxMa\":%d,"
              "\"samplingDurationMs\":%d,"
              "\"pmicStatus0\":%d,\"pmicStatus1\":%d,\"vbusStat\":%d,\"vbusType\":\"%s\",\"bc12Done\":%d,\"readyForHostDecision\":true}",
              result.charger_online ? "true" : "false",
              result.charger_online ? "true" : "false",
              result.current_ma >= request.current_min_ma ? "cc" : "attached",
-             result.voltage_mv, result.current_ma,
+             result.voltage_mv, result.current_ma, result.voltage_mv, result.current_ma,
              result.stable_samples >= request.stable_sample_count ? "true" : "false",
              result.stable_samples, result.current_ma, request.voltage_min_mv, request.voltage_max_mv,
              request.current_min_ma, request.current_max_ma, request.timeout_ms,

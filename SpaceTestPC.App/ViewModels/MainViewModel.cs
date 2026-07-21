@@ -1565,36 +1565,98 @@ public sealed class MainViewModel : ObservableObject
         }
 
         var parameters = _testPlan.First(item => item.Id == testEvent.TestId).Parameters;
-        try
+        var samplingDurationMs = Math.Max(100, GetParameterInt(parameters, "timeoutMs", 10000));
+        var currentMinMa = GetParameterInt(parameters, "chargeCurrentMinMa", 0);
+        var currentMaxMa = GetParameterInt(parameters, "chargeCurrentMaxMa", int.MaxValue);
+
+        var rawCurrents = GetIntValues(testEvent.Data, "rawCurrentSamplesMa");
+        var rawVoltages = GetIntValues(testEvent.Data, "rawVoltageSamplesMv");
+
+        if (rawCurrents.Length == 0)
         {
-            if (_jk5506Service is not null)
+            var singleCurrent = GetDataInt(testEvent.Data, "chargeCurrentMa");
+            if (singleCurrent > 0)
             {
-                await _jk5506Service.PrepareChargeTestAsync(GetParameterInt(parameters, "batterySimulationVoltageMv", 7400));
-                AppendLog("JK5506 battery simulator set for TYPE-C charging test.");
+                rawCurrents = [singleCurrent];
             }
         }
-        catch (Exception ex)
+
+        if (rawVoltages.Length == 0)
         {
-            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, false, "battery_simulator_communication_error");
-            AppendLog($"JK5506 preparation failed: {ex.Message}");
+            var singleVoltage = GetDataInt(testEvent.Data, "chargeVoltageMv");
+            if (singleVoltage > 0)
+            {
+                rawVoltages = [singleVoltage];
+            }
+        }
+
+        if (!GetDataBoolean(testEvent.Data, "chargeControlOk"))
+        {
+            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, false, "charge_enable_failed");
+            AppendLog("TYPE-C charging automatic decision: FAIL (charge_enable_failed)");
             return;
         }
-        var voltage = GetDataInt(testEvent.Data, "chargeVoltageMv");
-        var current = GetDataInt(testEvent.Data, "averageChargeCurrentMa");
-        var passed =
-            GetDataBoolean(testEvent.Data, "chargerConnected") &&
-            voltage >= GetParameterInt(parameters, "chargeVoltageMinMv", 7400) &&
-            voltage <= GetParameterInt(parameters, "chargeVoltageMaxMv", 8400) &&
-            current >= GetParameterInt(parameters, "chargeCurrentMinMa", 500) &&
-            current <= GetParameterInt(parameters, "chargeCurrentMaxMa", 3000);
-        var reason = passed ? "charge_values_in_range"
-            : !GetDataBoolean(testEvent.Data, "chargerConnected") ? "charger_not_connected"
-            : voltage < GetParameterInt(parameters, "chargeVoltageMinMv", 7400) ? "charge_voltage_too_low"
-            : voltage > GetParameterInt(parameters, "chargeVoltageMaxMv", 8400) ? "charge_voltage_too_high"
-            : current < GetParameterInt(parameters, "chargeCurrentMinMa", 500) ? "charge_current_too_low"
+
+        if (rawCurrents.Length == 0)
+        {
+            _hostDecisionData[testEvent.TestId] = new Dictionary<string, object?>
+            {
+                ["phase"] = "sampling_failed",
+                ["chargeControlCommand"] = GetDataString(testEvent.Data, "chargeControlCommand", "enable_charge"),
+                ["chargeControlOk"] = GetDataBoolean(testEvent.Data, "chargeControlOk"),
+                ["pmicCommunicationOk"] = GetDataBoolean(testEvent.Data, "pmicCommunicationOk"),
+                ["readyForHostDecision"] = GetDataBoolean(testEvent.Data, "readyForHostDecision"),
+                ["samplingDurationMs"] = samplingDurationMs,
+                ["failureReason"] = "missing_charge_samples"
+            };
+            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, false, "missing_charge_samples");
+            AppendLog("TYPE-C charging automatic decision: FAIL (missing_charge_samples)");
+            return;
+        }
+
+        var orderedRawCurrents = rawCurrents.OrderBy(value => value).ToArray();
+        var filteredCurrents = FilterStableCurrentSamples(orderedRawCurrents);
+        var medianCurrentMa = filteredCurrents[filteredCurrents.Length / 2];
+        var avgCurrentMa = (int)Math.Round(filteredCurrents.Average());
+        var measuredCurrentMin = filteredCurrents.Min();
+        var measuredCurrentMax = filteredCurrents.Max();
+        var rippleMa = measuredCurrentMax - measuredCurrentMin;
+        var outlierCount = orderedRawCurrents.Length - filteredCurrents.Length;
+        var avgVoltageMv = rawVoltages.Length == 0 ? 0 : (int)Math.Round(rawVoltages.Average());
+
+        var passed = avgCurrentMa >= currentMinMa && avgCurrentMa <= currentMaxMa;
+        var reason = passed
+            ? "charge_current_in_range"
+            : avgCurrentMa < currentMinMa ? "charge_current_too_low"
             : "charge_current_too_high";
+
+        _hostDecisionData[testEvent.TestId] = new Dictionary<string, object?>
+        {
+            ["phase"] = "sampling_completed",
+            ["chargeControlCommand"] = GetDataString(testEvent.Data, "chargeControlCommand", "enable_charge"),
+            ["chargeControlOk"] = GetDataBoolean(testEvent.Data, "chargeControlOk"),
+            ["pmicCommunicationOk"] = GetDataBoolean(testEvent.Data, "pmicCommunicationOk"),
+            ["readyForHostDecision"] = GetDataBoolean(testEvent.Data, "readyForHostDecision"),
+            ["samplingDurationMs"] = GetDataInt(testEvent.Data, "samplingDurationMs") > 0 ? GetDataInt(testEvent.Data, "samplingDurationMs") : samplingDurationMs,
+            ["elapsedMs"] = GetDataInt(testEvent.Data, "samplingDurationMs") > 0 ? GetDataInt(testEvent.Data, "samplingDurationMs") : samplingDurationMs,
+            ["sampleCount"] = orderedRawCurrents.Length,
+            ["validSampleCount"] = filteredCurrents.Length,
+            ["outlierSampleCount"] = outlierCount,
+            ["rawCurrentSamplesMa"] = orderedRawCurrents,
+            ["rawVoltageSamplesMv"] = rawVoltages,
+            ["chargeVoltageMv"] = avgVoltageMv,
+            ["averageChargeCurrentMa"] = avgCurrentMa,
+            ["measuredCurrentMinMa"] = measuredCurrentMin,
+            ["measuredCurrentMaxMa"] = measuredCurrentMax,
+            ["currentRippleMa"] = rippleMa,
+            ["rawCurrentMedianMa"] = medianCurrentMa,
+            ["chargeCurrentMinMa"] = currentMinMa,
+            ["chargeCurrentMaxMa"] = currentMaxMa,
+            ["failureReason"] = reason
+        };
+
         await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, passed, reason);
-        AppendLog($"TYPE-C charging automatic decision: {(passed ? "PASS" : "FAIL")} ({reason})");
+        AppendLog($"TYPE-C charging automatic decision: {(passed ? "PASS" : "FAIL")} ({reason}), samples={orderedRawCurrents.Length}, current={avgCurrentMa}mA, ripple={rippleMa}mA, outliers={outlierCount}");
     }
 
     private async void HandleVoltageMeasurementReport(TestSessionEvent testEvent)
@@ -1722,14 +1784,8 @@ public sealed class MainViewModel : ObservableObject
 
             var avgVoltageMv = (int)Math.Round(samples.Average(item => item.VoltageMv));
             var rawCurrents = samples.Select(item => item.CurrentMa).OrderBy(value => value).ToArray();
-            var medianCurrentMa = rawCurrents[rawCurrents.Length / 2];
-            var filteredCurrents = rawCurrents
-                .Where(value => Math.Abs(value - medianCurrentMa) <= Math.Max(stabilityToleranceMa * 2, 200))
-                .ToArray();
-            if (filteredCurrents.Length == 0)
-            {
-                filteredCurrents = rawCurrents;
-            }
+            var filteredCurrents = FilterStableCurrentSamples(rawCurrents);
+            var medianCurrentMa = filteredCurrents[filteredCurrents.Length / 2];
 
             var avgCurrentMa = (int)Math.Round(filteredCurrents.Average());
             var measuredCurrentMin = filteredCurrents.Min();
@@ -1794,6 +1850,68 @@ public sealed class MainViewModel : ObservableObject
             await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, false, "jk5506_read_error");
             AppendLog($"Battery discharge measurement failed: {ex.Message}");
         }
+    }
+
+    private static int[] FilterStableCurrentSamples(int[] rawCurrents)
+    {
+        var hardFilteredCurrents = rawCurrents
+            .Where(value => value > 0 && value <= 1000)
+            .ToArray();
+        if (hardFilteredCurrents.Length == 0)
+        {
+            hardFilteredCurrents = rawCurrents;
+        }
+
+        var filteredCurrents = hardFilteredCurrents;
+        for (var pass = 0; pass < 2; pass++)
+        {
+            var medianCurrentMa = filteredCurrents[filteredCurrents.Length / 2];
+            var medianToleranceMa = Math.Max(30, medianCurrentMa / 5);
+            var nextFilteredCurrents = filteredCurrents
+                .Where(value => Math.Abs(value - medianCurrentMa) <= medianToleranceMa)
+                .ToArray();
+
+            if (nextFilteredCurrents.Length == 0 || nextFilteredCurrents.Length == filteredCurrents.Length)
+            {
+                break;
+            }
+
+            filteredCurrents = nextFilteredCurrents;
+        }
+
+        return filteredCurrents;
+    }
+
+    private static int[] GetIntValues(IReadOnlyDictionary<string, object?> data, string key)
+    {
+        if (!data.TryGetValue(key, out var value) || value is null)
+        {
+            return [];
+        }
+
+        if (value is JsonElement element && element.ValueKind == JsonValueKind.Array)
+        {
+            return element.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.Number && item.TryGetInt32(out _))
+                .Select(item => item.GetInt32())
+                .ToArray();
+        }
+
+        if (value is IEnumerable<int> intValues)
+        {
+            return intValues.ToArray();
+        }
+
+        if (value is IEnumerable<object?> objectValues)
+        {
+            return objectValues
+                .Select(item => TryGetInt(item, out var parsed) ? parsed : (int?)null)
+                .Where(item => item.HasValue)
+                .Select(item => item!.Value)
+                .ToArray();
+        }
+
+        return [];
     }
 
     private static int GetDataInt(IReadOnlyDictionary<string, object?> data, string key)

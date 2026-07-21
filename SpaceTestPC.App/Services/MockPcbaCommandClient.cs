@@ -718,6 +718,8 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
 
         if (testId == "typec_fast_charge")
         {
+            var currentSamples = new[] { 498, 505, 512, 507, 501, 690, 496 };
+            var voltageSamples = new[] { 8180, 8205, 8196, 8211, 8202, 8194, 8208 };
             return new Dictionary<string, object?>
             {
                 ["batterySimulationVoltageMv"] = GetParameterInt(test.Parameters, "batterySimulationVoltageMv", 7400),
@@ -726,10 +728,12 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 ["charging"] = true,
                 ["chargeStage"] = "cc",
                 ["chargeVoltageMv"] = 8200,
-                ["chargeCurrentMa"] = 1850,
+                ["chargeCurrentMa"] = 505,
+                ["rawVoltageSamplesMv"] = voltageSamples,
+                ["rawCurrentSamplesMa"] = currentSamples,
                 ["stable"] = true,
-                ["stableSamples"] = GetParameterInt(test.Parameters, "stableSampleCount", 3),
-                ["sampleIndex"] = GetParameterInt(test.Parameters, "stableSampleCount", 3),
+                ["stableSamples"] = currentSamples.Length,
+                ["sampleIndex"] = currentSamples.Length,
                 ["readyForHostDecision"] = true
             };
         }
