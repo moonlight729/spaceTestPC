@@ -1324,23 +1324,30 @@ public sealed class MainViewModel : ObservableObject
 
     private static string BuildBluetoothInstruction(TestSessionEvent testEvent)
     {
+        var attempt = Math.Max(1, GetDataInt(testEvent.Data, "attempt"));
+        var maxRetryCount = Math.Max(attempt, GetDataInt(testEvent.Data, "maxRetryCount"));
+        var phase = GetDataString(testEvent.Data, "phase", string.Empty);
+        var targetName = GetDataString(testEvent.Data, "targetName", "-");
+        var rssi = GetDataInt(testEvent.Data, "rssi");
+        var minRssi = GetDataInt(testEvent.Data, "minRssi");
         if (testEvent.Status == "running")
         {
-            return $"正在检测：蓝牙。目标名 {GetDataString(testEvent.Data, "targetName", "-")}，最小 RSSI {GetDataInt(testEvent.Data, "minRssi")}。";
+            return phase == "retry_wait"
+                ? $"蓝牙扫描未通过，2 秒后自动重试。当前第 {attempt}/{maxRetryCount} 次。"
+                : $"正在检测：蓝牙。目标名 {targetName}，第 {attempt}/{maxRetryCount} 次，最小 RSSI {minRssi} dBm。";
         }
 
         if (testEvent.Status == "passed")
         {
-            return $"蓝牙测试通过：名称 {GetDataString(testEvent.Data, "name", "-")}，RSSI {GetDataInt(testEvent.Data, "rssi")}。";
+            return $"蓝牙测试通过：名称 {GetDataString(testEvent.Data, "name", "-")}，第 {attempt}/{maxRetryCount} 次，RSSI {rssi} dBm。";
         }
 
         var reason = GetDataString(testEvent.Data, "failureReason", string.Empty);
         var matchedName = GetDataString(testEvent.Data, "matchedName", string.Empty);
         var matchedRssi = GetDataInt(testEvent.Data, "matchedRssi");
-        var minRssi = GetDataInt(testEvent.Data, "minRssi");
         var bestSeenName = GetDataString(testEvent.Data, "bestSeenName", string.Empty);
         var bestSeenRssi = GetDataInt(testEvent.Data, "bestSeenRssi");
-        return $"蓝牙测试失败：reason={reason}，matched={matchedName}/{matchedRssi}，bestSeen={bestSeenName}/{bestSeenRssi}，minRssi={minRssi}。";
+        return $"蓝牙测试失败：第 {attempt}/{maxRetryCount} 次，reason={reason}，matched={matchedName}/{matchedRssi}，bestSeen={bestSeenName}/{bestSeenRssi}，minRssi={minRssi}。";
     }
 
     private static string BuildWifiInstruction(TestSessionEvent testEvent)

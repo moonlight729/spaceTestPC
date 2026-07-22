@@ -332,8 +332,10 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                     Event = "test.report", TestId = test.Id, Status = "running", Message = "Target Bluetooth advertisement found",
                     Data = new Dictionary<string, object?>
                     {
-                        ["stage"] = "target_found", ["mode"] = GetParameterString(test.Parameters, "mode", "observer"),
-                        ["targetName"] = GetParameterString(test.Parameters, "targetName", "NODE_A_01"), ["found"] = true, ["rssi"] = -62
+                        ["phase"] = "scan_started", ["mode"] = GetParameterString(test.Parameters, "mode", "observer"),
+                        ["targetName"] = GetParameterString(test.Parameters, "targetName", "NODE_A_01"), ["attempt"] = 1,
+                        ["maxRetryCount"] = GetParameterInt(test.Parameters, "maxRetryCount", 5), ["found"] = true,
+                        ["rssi"] = -62, ["minRssi"] = GetParameterInt(test.Parameters, "minRssi", -80)
                     }
                 };
             }
@@ -593,6 +595,8 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 data["mode"] = GetParameterString(test.Parameters, "mode", "observer");
                 data["targetName"] = GetParameterString(test.Parameters, "targetName", "NODE_A_01");
                 data["scanWindowMs"] = GetParameterInt(test.Parameters, "scanWindowMs", 10000);
+                data["attempt"] = 1;
+                data["maxRetryCount"] = GetParameterInt(test.Parameters, "maxRetryCount", 5);
                 data["found"] = true;
                 data["rssi"] = -62;
                 data["minRssi"] = GetParameterInt(test.Parameters, "minRssi", -80);

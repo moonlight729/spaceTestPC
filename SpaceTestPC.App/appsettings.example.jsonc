@@ -55,7 +55,9 @@
         // This value is overridden by bluetoothBroadcaster.broadcastName in the real test plan.
         "targetName": "yctc_bt_01",
         "minRssi": -80,
-        "scanWindowMs": 10000
+        "scanWindowMs": 10000,
+        "maxRetryCount": 5,
+        "retryIntervalMs": 2000
       },
       "keys": {
         "timeoutMs": 45000
