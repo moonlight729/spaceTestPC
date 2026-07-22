@@ -287,11 +287,13 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
             ("ethernet", "Ethernet test passed", _, _, _) => "网口测试通过",
             ("ethernet", "Ethernet cable insert timeout", _, _, _) => "网线插入超时",
 
-            ("wifi", "Wi-Fi test passed", _, _, _) => "Wi-Fi测试通过",
-            ("wifi", "Please unplug Ethernet cable before Wi-Fi test", _, _, _) => "请先拔掉网线再进行Wi-Fi测试",
-            ("wifi", "Wi-Fi test failed", "ethernet_still_connected", _, _) => "Wi-Fi测试失败，请先拔掉网线",
-            ("wifi", "Wi-Fi test failed", "ssid_not_found", _, _) => "Wi-Fi测试失败，未找到指定Wi-Fi",
-            ("wifi", "Wi-Fi test failed", _, _, _) => "Wi-Fi测试失败",
+            ("wifi", "Host confirmed Wi-Fi RSSI pass", _, _, _) => "Wi-Fi测试通过",
+            ("wifi", "Host confirmed Wi-Fi RSSI fail", "rssi_too_low", _, _) => "Wi-Fi测试失败，RSSI低于阈值",
+            ("wifi", "Host confirmed Wi-Fi RSSI fail", "ssid_not_found", _, _) => "Wi-Fi测试失败，未找到指定Wi-Fi",
+            ("wifi", "Host confirmed Wi-Fi RSSI fail", _, _, _) => "Wi-Fi测试失败",
+            ("wifi", "Wi-Fi scan failed", _, _, _) => "Wi-Fi扫描失败",
+            ("wifi", "Wi-Fi host decision timed out", _, _, _) => "Wi-Fi测试失败，上位机判定超时",
+            ("wifi", "Unable to read Wi-Fi host decision", _, _, _) => "Wi-Fi测试失败，无法读取上位机判定",
 
             ("bluetooth", "Bluetooth target found", _, _, _) => "蓝牙测试通过",
             ("bluetooth", "Target found but RSSI is below threshold", _, _, _) => "蓝牙已找到，但信号强度不足",

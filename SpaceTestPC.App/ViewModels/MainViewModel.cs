@@ -919,6 +919,30 @@ public sealed class MainViewModel : ObservableObject
             };
         }
 
+        if (testEvent.TestId == "wifi" && testEvent.Status is "passed" or "failed")
+        {
+            var attempt = Math.Max(1, GetDataInt(testEvent.Data, "attempt"));
+            if (_hostDecisionData.TryGetValue($"{testEvent.TestId}:{attempt}", out var wifiHostData))
+            {
+                var merged = wifiHostData.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+                foreach (var pair in testEvent.Data)
+                {
+                    merged[pair.Key] = pair.Value;
+                }
+
+                testEvent = new TestSessionEvent
+                {
+                    Event = testEvent.Event,
+                    TestId = testEvent.TestId,
+                    Status = testEvent.Status,
+                    ResultCode = testEvent.ResultCode,
+                    Message = testEvent.Message,
+                    Timestamp = testEvent.Timestamp,
+                    Data = merged
+                };
+            }
+        }
+
         var result = TestResults.FirstOrDefault(item => item.TestId == testEvent.TestId);
         result?.Apply(testEvent);
         if (result is not null && ShouldSelectTestResult(testEvent, result))
@@ -943,6 +967,11 @@ public sealed class MainViewModel : ObservableObject
         if (testEvent.TestId == "battery_management" && testEvent.Status == "running")
         {
             HandleBatteryDischargeReport(testEvent);
+        }
+
+        if (testEvent.TestId == "wifi" && testEvent.Status == "running")
+        {
+            HandleWifiReport(testEvent);
         }
 
         if (testEvent.TestId is "indicator_led" or "fan" && testEvent.Status == "running")
@@ -1240,11 +1269,11 @@ public sealed class MainViewModel : ObservableObject
     {
         var reason = GetDataString(data, "failureReason", string.Empty);
         var iface = GetDataString(data, "interfaceName", string.Empty);
-        var ip = GetDataString(data, "ip", string.Empty);
-        var connected = GetDataBoolean(data, "connected");
-        var pingOk = GetDataBoolean(data, "pingOk");
-        var ethernetLinkUp = GetDataBoolean(data, "ethernetLinkUp");
-        return $"hint=reason:{reason}, iface:{iface}, ip:{ip}, connected:{connected}, pingOk:{pingOk}, ethernetLinkUp:{ethernetLinkUp}";
+        var attempt = GetDataInt(data, "attempt");
+        var rssi = GetDataInt(data, "rssi");
+        var minRssi = GetDataInt(data, "minRssi");
+        var found = GetDataBoolean(data, "found");
+        return $"hint=reason:{reason}, iface:{iface}, attempt:{attempt}, found:{found}, rssi:{rssi}, minRssi:{minRssi}";
     }
 
     private string BuildKeyTestInstruction(TestSessionEvent testEvent)
@@ -1316,22 +1345,32 @@ public sealed class MainViewModel : ObservableObject
 
     private static string BuildWifiInstruction(TestSessionEvent testEvent)
     {
-        if (testEvent.Status == "running" && GetDataBoolean(testEvent.Data, "requiresCableUnplug"))
-        {
-            return "请先拔掉网线，系统将在检测到网线断开后自动继续 Wi‑Fi 测试。";
-        }
+        var attempt = Math.Max(1, GetDataInt(testEvent.Data, "attempt"));
+        var maxRetryCount = Math.Max(attempt, GetDataInt(testEvent.Data, "maxRetryCount"));
+        var ssid = GetDataString(testEvent.Data, "ssid", "-");
+        var rssi = GetDataInt(testEvent.Data, "rssi");
+        var minRssi = GetDataInt(testEvent.Data, "minRssi");
+        var found = GetDataBoolean(testEvent.Data, "found");
+        var phase = GetDataString(testEvent.Data, "phase", string.Empty);
+        var reason = GetDataString(testEvent.Data, "failureReason", string.Empty);
 
         if (testEvent.Status == "running")
         {
-            return $"正在检测：Wi‑Fi。SSID {GetDataString(testEvent.Data, "ssid", "-")}，目标网关 {GetDataString(testEvent.Data, "routerIp", "-")}。";
+            return phase switch
+            {
+                "retry_wait" => $"Wi‑Fi 扫描未通过，2 秒后自动重试。当前第 {attempt}/{maxRetryCount} 次，RSSI {rssi} dBm。",
+                "scan_completed" when found => $"Wi‑Fi 扫描完成，等待上位机判定。SSID {ssid}，第 {attempt}/{maxRetryCount} 次，RSSI {rssi} dBm，阈值 {minRssi} dBm。",
+                "scan_completed" => $"Wi‑Fi 扫描完成，等待上位机判定。SSID {ssid}，第 {attempt}/{maxRetryCount} 次，未找到目标热点。",
+                _ => $"正在检测：Wi‑Fi。SSID {ssid}，第 {attempt}/{maxRetryCount} 次扫描。"
+            };
         }
 
         if (testEvent.Status == "passed")
         {
-            return $"Wi‑Fi 测试通过：IP {GetDataString(testEvent.Data, "ip", "-")}，平均延时 {GetDataInt(testEvent.Data, "avgDelayMs")} ms。";
+            return $"Wi‑Fi 测试通过：SSID {ssid}，第 {attempt}/{maxRetryCount} 次，RSSI {rssi} dBm。";
         }
 
-        return $"Wi‑Fi 测试失败：reason={GetDataString(testEvent.Data, "failureReason", string.Empty)}，ip={GetDataString(testEvent.Data, "ip", string.Empty)}，iface={GetDataString(testEvent.Data, "interfaceName", string.Empty)}，pingOk={GetDataBoolean(testEvent.Data, "pingOk")}。";
+        return $"Wi‑Fi 测试失败：reason={reason}，SSID {ssid}，第 {attempt}/{maxRetryCount} 次，found={found}，RSSI {rssi} dBm，阈值 {minRssi} dBm。";
     }
 
     private static string BuildBatteryDischargeInstruction(TestSessionEvent testEvent)
@@ -1404,7 +1443,7 @@ public sealed class MainViewModel : ObservableObject
                 "link_up" => "已检测到网线，正在开始网口检测。",
                 "dhcp" => "网口已连通，正在获取 IP。",
                 "ping" => $"网口已获取 IP，正在连通路由器 {routerIp}。",
-                "ping_ok" => "网口连通正常，请拔掉网线，准备进行 Wi‑Fi 测试。",
+                "ping_ok" => "网口连通正常，请拔掉网线。",
                 _ => "正在检测：网口。"
             };
         }
@@ -1417,7 +1456,6 @@ public sealed class MainViewModel : ObservableObject
         return reason switch
         {
             "ethernet_insert_timeout" => "网口测试失败：等待插入网线超时。",
-            "ethernet_disconnect_wifi_failed" => "网口测试失败：断开 Wi‑Fi 连接失败。",
             "ethernet_disable_wifi_failed" => "网口测试失败：断开 Wi‑Fi 连接失败。",
             "ethernet_no_ip" => "网口测试失败：未获取到 IP。",
             "ethernet_ping_failed" => $"网口测试失败：无法连通路由器 {routerIp}。",
@@ -1657,6 +1695,49 @@ public sealed class MainViewModel : ObservableObject
 
         await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, passed, reason);
         AppendLog($"TYPE-C charging automatic decision: {(passed ? "PASS" : "FAIL")} ({reason}), samples={orderedRawCurrents.Length}, current={avgCurrentMa}mA, ripple={rippleMa}mA, outliers={outlierCount}");
+    }
+
+    private async void HandleWifiReport(TestSessionEvent testEvent)
+    {
+        if (_activeSessionClient is null || !GetDataBoolean(testEvent.Data, "readyForHostDecision"))
+        {
+            return;
+        }
+
+        var attempt = Math.Max(1, GetDataInt(testEvent.Data, "attempt"));
+        var decisionKey = $"{testEvent.TestId}:{attempt}";
+        if (!_automaticDecisionTests.Add(decisionKey))
+        {
+            return;
+        }
+
+        var parameters = _testPlan.First(item => item.Id == testEvent.TestId).Parameters;
+        var minRssi = GetParameterInt(parameters, "minRssi", -75);
+        var ssid = GetDataString(testEvent.Data, "ssid", string.Empty);
+        var iface = GetDataString(testEvent.Data, "interfaceName", string.Empty);
+        var found = GetDataBoolean(testEvent.Data, "found");
+        var rssi = GetDataInt(testEvent.Data, "rssi");
+        var passed = found && rssi >= minRssi;
+        var reason = !found
+            ? GetDataString(testEvent.Data, "failureReason", "ssid_not_found")
+            : rssi < minRssi ? "rssi_too_low" : "rssi_in_range";
+
+        _hostDecisionData[decisionKey] = new Dictionary<string, object?>
+        {
+            ["phase"] = "host_decision_completed",
+            ["ssid"] = ssid,
+            ["interfaceName"] = iface,
+            ["attempt"] = attempt,
+            ["maxRetryCount"] = Math.Max(attempt, GetDataInt(testEvent.Data, "maxRetryCount")),
+            ["found"] = found,
+            ["rssi"] = rssi,
+            ["minRssi"] = minRssi,
+            ["readyForHostDecision"] = true,
+            ["failureReason"] = reason
+        };
+
+        await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, passed, reason);
+        AppendLog($"Wi-Fi automatic decision: {(passed ? "PASS" : "FAIL")} ({reason}), ssid={ssid}, iface={iface}, attempt={attempt}, rssi={rssi}dBm, minRssi={minRssi}dBm");
     }
 
     private async void HandleVoltageMeasurementReport(TestSessionEvent testEvent)

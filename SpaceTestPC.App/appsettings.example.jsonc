@@ -33,13 +33,12 @@
     "testParameters": {
       "wifi": {
         "ssid": "test_router_001",
-        "password": "test_router_001",
-        "routerIp": "192.168.1.1",
-        "pingCount": 4,
-        "timeoutMs": 15000,
-        "ethernetInterfaceName": "end0",
-        "waitEthernetUnplug": true,
-        "unplugTimeoutMs": 10000
+        "interfaceName": "wlan0",
+        "minRssi": -75,
+        "maxRetryCount": 5,
+        "retryIntervalMs": 2000,
+        "decisionTimeoutMs": 5000,
+        "scanTimeoutMs": 10000
       },
       "ethernet": {
         "interfaceName": "end0",

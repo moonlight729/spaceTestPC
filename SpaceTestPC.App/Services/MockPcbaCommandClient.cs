@@ -242,13 +242,45 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 await Task.Delay(GetMockRunningDelay(test.Id), cancellationToken);
                 yield return new TestSessionEvent
                 {
-                    Event = "test.report", TestId = test.Id, Status = "running", Message = "WiFi connected, pinging router",
+                    Event = "test.report", TestId = test.Id, Status = "running", Message = "Wi-Fi scan completed, waiting for host decision",
                     Data = new Dictionary<string, object?>
                     {
-                        ["stage"] = "pinging", ["ssid"] = GetParameterString(test.Parameters, "ssid", "test_router_001"),
-                        ["connected"] = true, ["ip"] = "192.168.1.20", ["routerIp"] = GetParameterString(test.Parameters, "routerIp", "192.168.1.1")
+                        ["phase"] = "scan_completed",
+                        ["ssid"] = GetParameterString(test.Parameters, "ssid", "test_router_001"),
+                        ["interfaceName"] = GetParameterString(test.Parameters, "interfaceName", "wlan0"),
+                        ["attempt"] = 1,
+                        ["maxRetryCount"] = GetParameterInt(test.Parameters, "maxRetryCount", 5),
+                        ["readyForHostDecision"] = true,
+                        ["found"] = true,
+                        ["rssi"] = -62,
+                        ["minRssi"] = GetParameterInt(test.Parameters, "minRssi", -75)
                     }
                 };
+                if (!await WaitForManualDecisionAsync(test.Id, cancellationToken))
+                {
+                    yield return new TestSessionEvent
+                    {
+                        Event = "test.report",
+                        TestId = test.Id,
+                        Status = "failed",
+                        ResultCode = 4106,
+                        Message = "Host confirmed Wi-Fi RSSI fail",
+                        Data = new Dictionary<string, object?>
+                        {
+                            ["phase"] = "completed",
+                            ["ssid"] = GetParameterString(test.Parameters, "ssid", "test_router_001"),
+                            ["interfaceName"] = GetParameterString(test.Parameters, "interfaceName", "wlan0"),
+                            ["attempt"] = 1,
+                            ["maxRetryCount"] = GetParameterInt(test.Parameters, "maxRetryCount", 5),
+                            ["found"] = true,
+                            ["rssi"] = -62,
+                            ["minRssi"] = GetParameterInt(test.Parameters, "minRssi", -75),
+                            ["failureReason"] = "rssi_too_low"
+                        }
+                    };
+                    yield return new TestSessionEvent { Event = "session.completed", TestId = test.Id, Status = "failed", ResultCode = 4106, Message = "Mock session stopped after Wi-Fi RSSI failure" };
+                    yield break;
+                }
             }
             else if (test.Id == "ethernet")
             {
@@ -541,18 +573,17 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 break;
             case "wifi":
                 data["ssid"] = GetParameterString(test.Parameters, "ssid", "test_router_001");
-                data["routerIp"] = GetParameterString(test.Parameters, "routerIp", "192.168.1.1");
-                data["pingCount"] = GetParameterInt(test.Parameters, "pingCount", 4);
-                data["connected"] = true;
-                data["ip"] = "192.168.1.20";
-                data["pingOk"] = true;
-                data["avgDelayMs"] = 12;
+                data["interfaceName"] = GetParameterString(test.Parameters, "interfaceName", "wlan0");
+                data["attempt"] = 1;
+                data["maxRetryCount"] = GetParameterInt(test.Parameters, "maxRetryCount", 5);
+                data["found"] = true;
+                data["rssi"] = -62;
+                data["minRssi"] = GetParameterInt(test.Parameters, "minRssi", -75);
                 break;
             case "ethernet":
                 data["interfaceName"] = GetParameterString(test.Parameters, "interfaceName", "end0");
                 data["routerIp"] = GetParameterString(test.Parameters, "routerIp", "192.168.110.1");
                 data["pingCount"] = GetParameterInt(test.Parameters, "pingCount", 4);
-                data["wifiDisabled"] = true;
                 data["ip"] = "192.168.110.220";
                 data["pingOk"] = true;
                 data["cableUnplugged"] = true;
@@ -742,8 +773,11 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
         {
             return new Dictionary<string, object?>
             {
-                ["stage"] = "connecting", ["ssid"] = GetParameterString(test.Parameters, "ssid", "test_router_001"),
-                ["routerIp"] = GetParameterString(test.Parameters, "routerIp", "192.168.1.1")
+                ["phase"] = "scan_started",
+                ["ssid"] = GetParameterString(test.Parameters, "ssid", "test_router_001"),
+                ["interfaceName"] = GetParameterString(test.Parameters, "interfaceName", "wlan0"),
+                ["attempt"] = 1,
+                ["maxRetryCount"] = GetParameterInt(test.Parameters, "maxRetryCount", 5)
             };
         }
 
@@ -806,7 +840,7 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
         "keys" => "Input subsystem key test passed",
         "lcd" => "SPI LCD test passed",
         "ethernet" => "Ethernet cable test passed",
-        "wifi" => "WiFi router ping passed",
+        "wifi" => "WiFi RSSI scan passed",
         "bluetooth" => "Target Bluetooth name scanned",
         "fingerprint" => "Fingerprint module is not implemented yet",
         "typec_fast_charge" => "TYPE-C fast charge current passed",
