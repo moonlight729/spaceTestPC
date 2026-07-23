@@ -43,7 +43,7 @@
     <Grid Margin="20">
         <Grid.RowDefinitions>
             <RowDefinition Height="76" />
-            <RowDefinition Height="136" />
+            <RowDefinition Height="190" />
             <RowDefinition Height="*" />
             <RowDefinition Height="190" />
         </Grid.RowDefinitions>
@@ -86,34 +86,35 @@
         <Grid Grid.Row="1" Margin="0,14,0,14" Visibility="{Binding IsTestPage, Converter={StaticResource BoolToVisibilityConverter}}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="420" />
+                <ColumnDefinition Width="320" />
             </Grid.ColumnDefinitions>
             <Border Style="{StaticResource Card}" Padding="18,12" Margin="0,0,14,0">
-                    <Grid>
+                <Grid VerticalAlignment="Center">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="360" />
+                            <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                     <StackPanel VerticalAlignment="Center" Margin="0,0,18,0">
                         <TextBlock Style="{StaticResource SectionTitle}" Text="SCAN SN" />
                         <TextBlock Margin="0,4,0,0" Foreground="#667085" FontSize="12" Text="Scan to start a new test" />
                     </StackPanel>
-                    <TextBox x:Name="ScannerInputTextBox"
-                             Grid.Column="1"
-                             Height="42"
-                             Padding="12,0"
-                             VerticalContentAlignment="Center"
-                             Background="#F8FAFC"
-                             BorderBrush="#98A2B3"
-                             FontSize="16"
-                             KeyDown="ScannerInputTextBox_OnKeyDown"
-                             TextChanged="ScannerInputTextBox_OnTextChanged"
-                             Text="{Binding ScannerInput, UpdateSourceTrigger=PropertyChanged}" />
-                    <Button Grid.Column="2" Margin="10,0,0,0" Command="{Binding ScanCommand}" Content="Scan / Query" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBox x:Name="ScannerInputTextBox"
+                                 Height="42"
+                                 Padding="12,0"
+                                 VerticalContentAlignment="Center"
+                                 Background="#F8FAFC"
+                                 BorderBrush="#98A2B3"
+                                 FontSize="16"
+                                 KeyDown="ScannerInputTextBox_OnKeyDown"
+                                 TextChanged="ScannerInputTextBox_OnTextChanged"
+                                 Text="{Binding ScannerInput, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+                    <Button Grid.Column="2" Width="116" Height="42" Margin="10,0,0,0" VerticalAlignment="Center" Command="{Binding ScanCommand}" Content="Scan / Query" />
                 </Grid>
             </Border>
-            <Border Grid.Column="1" MinHeight="108" Style="{StaticResource Card}" Padding="20,16" Background="#F8FAFC" BorderBrush="#D8E0EA">
+            <Border Grid.Column="1" Height="150" VerticalAlignment="Top" Style="{StaticResource Card}" Padding="14,10" Background="#F8FAFC" BorderBrush="#D8E0EA">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*" />
@@ -122,7 +123,7 @@
                     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
                         <TextBlock Foreground="#667085" FontSize="12" HorizontalAlignment="Center" Text="FINAL RESULT" />
                         <TextBlock Margin="0,10,0,0"
-                                   FontSize="52"
+                                   FontSize="40"
                                    FontWeight="Bold"
                                    HorizontalAlignment="Center"
                                    TextAlignment="Center"
@@ -238,6 +239,15 @@
                             <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
                                 <Button Width="116" Margin="0,0,10,0" Command="{Binding ConfirmManualPassCommand}" Content="PASS" />
                                 <Button Width="116" Background="#B42318" Command="{Binding ConfirmManualFailCommand}" Content="FAIL" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Row="3" Margin="0,22,0,0" Padding="16" Background="#EFF8FF" BorderBrush="#84CAFF" BorderThickness="1" CornerRadius="6" Visibility="{Binding IsUpgradePromptVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                        <Grid>
+                            <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Foreground="#175CD3" TextWrapping="Wrap" Text="{Binding UpgradePromptText}" />
+                            <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+                                <Button Width="116" Margin="0,0,10,0" Command="{Binding UpgradeNowCommand}" Content="立即升级" />
+                                <Button Width="116" Background="#667085" Command="{Binding SkipUpgradeCommand}" Content="暂不升级" />
                             </StackPanel>
                         </Grid>
                     </Border>

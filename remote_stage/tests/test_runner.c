@@ -317,104 +317,137 @@ static int run_wifi(int fd, const struct app_config *config, const char *test_st
 {
     struct wifi_device device;
     char ssid[128];
-    char router_ip[64];
-    int elapsed_ms = 0;
-    int progress_report_interval_ms = 1000;
+    char interface_name[32] = "";
+    int max_retry_count = 5;
+    int retry_interval_ms = 2000;
+    int decision_timeout_ms = 5000;
+    int scan_timeout_ms = 10000;
+    int min_rssi = -75;
+    int attempt;
     struct wifi_request request = {
         .ssid = ssid,
-        .password = NULL,
-        .router_ip = router_ip,
-        .ping_count = 4,
-        .timeout_ms = 5000,
-        .reuse_current_connection = false,
-        .ethernet_interface_name = "end0",
-        .wait_ethernet_unplug = true,
-        .unplug_timeout_ms = 10000,
+        .scan_timeout_ms = scan_timeout_ms,
     };
     struct wifi_result result;
     char data[1024];
+    int decision_passed = 0;
 
     snprintf(ssid, sizeof(ssid), "%s", config->wifi_ssid);
-    snprintf(router_ip, sizeof(router_ip), "%s", config->wifi_router_ip);
     param_string(test_start, test_end, "ssid", ssid, sizeof(ssid));
-    param_string(test_start, test_end, "password", request.password_buffer, sizeof(request.password_buffer));
-    if (request.password_buffer[0] != '\0') request.password = request.password_buffer;
-    param_string(test_start, test_end, "routerIp", router_ip, sizeof(router_ip));
-    request.ping_count = param_int(test_start, test_end, "pingCount", request.ping_count);
-    request.timeout_ms = param_int(test_start, test_end, "timeoutMs", request.timeout_ms);
-    param_string(test_start, test_end, "ethernetInterfaceName", request.ethernet_interface_name_buffer, sizeof(request.ethernet_interface_name_buffer));
-    if (request.ethernet_interface_name_buffer[0] != '\0') request.ethernet_interface_name = request.ethernet_interface_name_buffer;
-    request.wait_ethernet_unplug = param_bool(test_start, test_end, "waitEthernetUnplug", request.wait_ethernet_unplug);
-    request.unplug_timeout_ms = param_int(test_start, test_end, "unplugTimeoutMs", request.unplug_timeout_ms);
-    progress_report_interval_ms = param_int(test_start, test_end, "progressReportIntervalMs", progress_report_interval_ms);
-    if (progress_report_interval_ms <= 0) progress_report_interval_ms = 1000;
-    memset(&result, 0, sizeof(result));
-    snprintf(data, sizeof(data),
-             "{\"ssid\":\"%s\",\"routerIp\":\"%s\",\"interfaceName\":\"%s\",\"waitEthernetUnplug\":%s,\"unplugTimeoutMs\":%d}",
-             ssid, router_ip, request.ethernet_interface_name,
-             request.wait_ethernet_unplug ? "true" : "false",
-             request.unplug_timeout_ms);
-    send_report(fd, "wifi", "running", 0, "Running Wi-Fi test", data);
-    if (request.wait_ethernet_unplug && net_carrier_is_up(request.ethernet_interface_name)) {
-        while (elapsed_ms < request.unplug_timeout_ms && net_carrier_is_up(request.ethernet_interface_name)) {
-            snprintf(data, sizeof(data),
-                     "{\"ssid\":\"%s\",\"routerIp\":\"%s\",\"interfaceName\":\"%s\",\"phase\":\"wait_unplug\","
-                     "\"waitEthernetUnplug\":true,\"unplugTimeoutMs\":%d,\"elapsedMs\":%d,"
-                     "\"ethernetLinkUp\":true,\"requiresCableUnplug\":true}",
-                     ssid, router_ip, request.ethernet_interface_name,
-                     request.unplug_timeout_ms, elapsed_ms);
-            send_report(fd, "wifi", "running", 0, "Please unplug Ethernet cable before Wi-Fi test", data);
-            sleep_ms_local(progress_report_interval_ms);
-            elapsed_ms += progress_report_interval_ms;
-        }
+    param_string(test_start, test_end, "interfaceName", interface_name, sizeof(interface_name));
+    max_retry_count = param_int(test_start, test_end, "maxRetryCount", max_retry_count);
+    retry_interval_ms = param_int(test_start, test_end, "retryIntervalMs", retry_interval_ms);
+    decision_timeout_ms = param_int(test_start, test_end, "decisionTimeoutMs", decision_timeout_ms);
+    scan_timeout_ms = param_int(test_start, test_end, "scanTimeoutMs", scan_timeout_ms);
+    min_rssi = param_int(test_start, test_end, "minRssi", min_rssi);
+    if (max_retry_count <= 0) max_retry_count = 1;
+    if (retry_interval_ms < 0) retry_interval_ms = 0;
+    if (decision_timeout_ms <= 0) decision_timeout_ms = 5000;
+    if (scan_timeout_ms <= 0) scan_timeout_ms = 10000;
+    request.scan_timeout_ms = scan_timeout_ms;
 
-        if (net_carrier_is_up(request.ethernet_interface_name)) {
+    if (wifi_nmcli_open(&device, interface_name[0] != '\0' ? interface_name : NULL) != 0) {
+        send_report(fd, "wifi", "failed", 4103, "Unable to open Wi-Fi interface", "{}");
+        return -1;
+    }
+
+    for (attempt = 1; attempt <= max_retry_count; ++attempt) {
+        memset(&result, 0, sizeof(result));
+        result.rssi = -127;
+        if (wifi_nmcli_scan_signal(&device, &request, &result) != 0) {
             snprintf(data, sizeof(data),
-                     "{\"ssid\":\"%s\",\"routerIp\":\"%s\",\"interfaceName\":\"%s\",\"phase\":\"wait_unplug\","
-                     "\"waitEthernetUnplug\":true,\"unplugTimeoutMs\":%d,\"elapsedMs\":%d,"
-                     "\"ethernetLinkUp\":true,\"requiresCableUnplug\":true,\"failureReason\":\"ethernet_still_connected\"}",
-                     ssid, router_ip, request.ethernet_interface_name,
-                     request.unplug_timeout_ms, request.unplug_timeout_ms);
-            send_report(fd, "wifi", "failed", 4105, "Please unplug Ethernet cable before Wi-Fi test", data);
+                     "{\"ssid\":\"%s\",\"interfaceName\":\"%s\",\"attempt\":%d,\"maxRetryCount\":%d,"
+                     "\"scanTimeoutMs\":%d,\"wifiEnabled\":%s,\"found\":false,\"rssi\":%d,"
+                     "\"failureReason\":\"%s\"}",
+                     ssid, device.interface_name, attempt, max_retry_count,
+                     scan_timeout_ms, result.wifi_enabled ? "true" : "false", result.rssi,
+                     result.failure_reason);
+            wifi_nmcli_close(&device);
+            send_report(fd, "wifi", "failed",
+                        result.error_code == 0 ? 4101 : result.error_code,
+                        result.error_message[0] == '\0' ? "Wi-Fi scan failed" : result.error_message,
+                        data);
             return -1;
         }
 
-        snprintf(data, sizeof(data),
-                 "{\"ssid\":\"%s\",\"routerIp\":\"%s\",\"interfaceName\":\"%s\",\"phase\":\"unplugged\","
-                 "\"waitEthernetUnplug\":true,\"unplugTimeoutMs\":%d,\"elapsedMs\":%d,"
-                 "\"ethernetLinkUp\":false,\"requiresCableUnplug\":false}",
-                 ssid, router_ip, request.ethernet_interface_name,
-                 request.unplug_timeout_ms, elapsed_ms);
-        send_report(fd, "wifi", "running", 0, "Ethernet cable unplugged, starting Wi-Fi test", data);
+        if (result.failure_reason[0] != '\0') {
+            snprintf(data, sizeof(data),
+                     "{\"ssid\":\"%s\",\"interfaceName\":\"%s\",\"phase\":\"scan_completed\",\"attempt\":%d,"
+                     "\"maxRetryCount\":%d,\"scanTimeoutMs\":%d,\"readyForHostDecision\":true,"
+                     "\"wifiEnabled\":%s,\"found\":%s,\"rssi\":%d,\"minRssi\":%d,"
+                     "\"failureReason\":\"%s\"}",
+                     ssid, device.interface_name, attempt, max_retry_count, scan_timeout_ms,
+                     result.wifi_enabled ? "true" : "false",
+                     result.found ? "true" : "false",
+                     result.rssi, min_rssi, result.failure_reason);
+        } else {
+            snprintf(data, sizeof(data),
+                     "{\"ssid\":\"%s\",\"interfaceName\":\"%s\",\"phase\":\"scan_completed\",\"attempt\":%d,"
+                     "\"maxRetryCount\":%d,\"scanTimeoutMs\":%d,\"readyForHostDecision\":true,"
+                     "\"wifiEnabled\":%s,\"found\":%s,\"rssi\":%d,\"minRssi\":%d}",
+                     ssid, device.interface_name, attempt, max_retry_count, scan_timeout_ms,
+                     result.wifi_enabled ? "true" : "false",
+                     result.found ? "true" : "false",
+                     result.rssi, min_rssi);
+        }
+        send_report(fd, "wifi", "running", 0, "Wi-Fi scan completed, waiting for host decision", data);
+
+        switch (wait_test_decision(fd, "wifi", decision_timeout_ms, &decision_passed)) {
+        case 1:
+            if (decision_passed) {
+                snprintf(data, sizeof(data),
+                         "{\"ssid\":\"%s\",\"interfaceName\":\"%s\",\"phase\":\"completed\",\"attempt\":%d,"
+                         "\"maxRetryCount\":%d,\"found\":%s,\"rssi\":%d,\"minRssi\":%d}",
+                         ssid, device.interface_name, attempt, max_retry_count,
+                         result.found ? "true" : "false", result.rssi, min_rssi);
+                wifi_nmcli_close(&device);
+                return send_report(fd, "wifi", "passed", 0, "Host confirmed Wi-Fi RSSI pass", data);
+            }
+            if (attempt < max_retry_count) {
+                snprintf(data, sizeof(data),
+                         "{\"ssid\":\"%s\",\"interfaceName\":\"%s\",\"phase\":\"retry_wait\",\"attempt\":%d,"
+                         "\"maxRetryCount\":%d,\"retryIntervalMs\":%d,\"rssi\":%d,\"found\":%s}",
+                         ssid, device.interface_name, attempt, max_retry_count, retry_interval_ms,
+                         result.rssi, result.found ? "true" : "false");
+                send_report(fd, "wifi", "running", 0, "Host requested Wi-Fi rescan", data);
+                sleep_ms_local(retry_interval_ms);
+                continue;
+            }
+            snprintf(data, sizeof(data),
+                     "{\"ssid\":\"%s\",\"interfaceName\":\"%s\",\"phase\":\"completed\",\"attempt\":%d,"
+                     "\"maxRetryCount\":%d,\"found\":%s,\"rssi\":%d,\"minRssi\":%d,"
+                     "\"failureReason\":\"host_rejected\"}",
+                     ssid, device.interface_name, attempt, max_retry_count,
+                     result.found ? "true" : "false", result.rssi, min_rssi);
+            wifi_nmcli_close(&device);
+            send_report(fd, "wifi", "failed", 4106, "Host confirmed Wi-Fi RSSI fail", data);
+            return -1;
+        case 0:
+            snprintf(data, sizeof(data),
+                     "{\"ssid\":\"%s\",\"interfaceName\":\"%s\",\"phase\":\"decision_timeout\",\"attempt\":%d,"
+                     "\"maxRetryCount\":%d,\"found\":%s,\"rssi\":%d,\"minRssi\":%d,"
+                     "\"failureReason\":\"host_decision_timeout\"}",
+                     ssid, device.interface_name, attempt, max_retry_count,
+                     result.found ? "true" : "false", result.rssi, min_rssi);
+            wifi_nmcli_close(&device);
+            send_report(fd, "wifi", "failed", 4107, "Wi-Fi host decision timed out", data);
+            return -1;
+        default:
+            snprintf(data, sizeof(data),
+                     "{\"ssid\":\"%s\",\"interfaceName\":\"%s\",\"phase\":\"decision_failed\",\"attempt\":%d,"
+                     "\"maxRetryCount\":%d,\"found\":%s,\"rssi\":%d,\"minRssi\":%d,"
+                     "\"failureReason\":\"host_decision_read_failed\"}",
+                     ssid, device.interface_name, attempt, max_retry_count,
+                     result.found ? "true" : "false", result.rssi, min_rssi);
+            wifi_nmcli_close(&device);
+            send_report(fd, "wifi", "failed", 4108, "Unable to read Wi-Fi host decision", data);
+            return -1;
+        }
     }
-    if (wifi_nmcli_open(&device, NULL) != 0 ||
-        wifi_nmcli_run_test(&device, &request, &result) != 0) {
-        wifi_nmcli_close(&device);
-        snprintf(data, sizeof(data),
-                 "{\"ssid\":\"%s\",\"routerIp\":\"%s\",\"interfaceName\":\"%s\",\"phase\":\"failed\",\"wifiEnabled\":%s,\"connected\":%s,"
-                 "\"ipAcquired\":%s,\"pingOk\":%s,\"ip\":\"%s\",\"activeSsid\":\"%s\",\"ethernetLinkUp\":%s,"
-                 "\"requiresCableUnplug\":%s,\"failureReason\":\"%s\"}",
-                 ssid, router_ip, device.interface_name,
-                 result.wifi_enabled ? "true" : "false",
-                 result.connected ? "true" : "false",
-                 result.ip_acquired ? "true" : "false",
-                 result.ping_ok ? "true" : "false",
-                 result.ip, result.active_ssid,
-                 result.ethernet_link_up ? "true" : "false",
-                 result.requires_cable_unplug ? "true" : "false",
-                 result.failure_reason);
-        send_report(fd, "wifi", "failed",
-                    result.error_code == 0 ? 4100 : result.error_code,
-                    result.error_message[0] == '\0' ? "Wi-Fi test failed" : result.error_message, data);
-        return -1;
-    }
+
     wifi_nmcli_close(&device);
-    snprintf(data, sizeof(data),
-             "{\"ssid\":\"%s\",\"ip\":\"%s\",\"routerIp\":\"%s\",\"pingCount\":%d,\"avgDelayMs\":%d,"
-             "\"interfaceName\":\"%s\",\"phase\":\"completed\"}",
-             ssid, result.ip, router_ip,
-             result.completed_ping_count, result.avg_delay_ms, device.interface_name);
-    return send_report(fd, "wifi", "passed", 0, "Wi-Fi test passed", data);
+    send_report(fd, "wifi", "failed", 4109, "Wi-Fi retry limit reached", "{}");
+    return -1;
 }
 
 static int run_ethernet(int fd, const char *test_start, const char *test_end)
@@ -428,8 +461,6 @@ static int run_ethernet(int fd, const char *test_start, const char *test_end)
         .router_ip = router_ip,
         .ping_count = 4,
         .timeout_ms = 15000,
-        .wait_cable_unplug = true,
-        .unplug_timeout_ms = 10000,
     };
     struct ethernet_result result;
     char data[768];
@@ -438,14 +469,12 @@ static int run_ethernet(int fd, const char *test_start, const char *test_end)
     param_string(test_start, test_end, "routerIp", router_ip, sizeof(router_ip));
     request.ping_count = param_int(test_start, test_end, "pingCount", request.ping_count);
     request.timeout_ms = param_int(test_start, test_end, "timeoutMs", request.timeout_ms);
-    request.wait_cable_unplug = param_bool(test_start, test_end, "waitCableUnplug", request.wait_cable_unplug);
-    request.unplug_timeout_ms = param_int(test_start, test_end, "unplugTimeoutMs", request.unplug_timeout_ms);
     wait_cable_timeout_ms = param_int(test_start, test_end, "waitCableTimeoutMs", wait_cable_timeout_ms);
     progress_report_interval_ms = param_int(test_start, test_end, "progressReportIntervalMs", progress_report_interval_ms);
     if (progress_report_interval_ms <= 0) progress_report_interval_ms = 1000;
 
     snprintf(data, sizeof(data),
-             "{\"interfaceName\":\"%s\",\"routerIp\":\"%s\",\"phase\":\"wait_cable\",\"wifiDisabled\":true,"
+             "{\"interfaceName\":\"%s\",\"routerIp\":\"%s\",\"phase\":\"wait_cable\","
              "\"ethernetLinkUp\":false,\"requiresCableInsert\":true,\"waitCableTimeoutMs\":%d,\"elapsedMs\":0}",
              interface_name, router_ip, wait_cable_timeout_ms);
     send_report(fd, "ethernet", "running", 0, "Insert Ethernet cable", data);
@@ -456,7 +485,7 @@ static int run_ethernet(int fd, const char *test_start, const char *test_end)
             sleep_ms_local(progress_report_interval_ms);
             elapsed_ms += progress_report_interval_ms;
             snprintf(data, sizeof(data),
-                     "{\"interfaceName\":\"%s\",\"routerIp\":\"%s\",\"phase\":\"wait_cable\",\"wifiDisabled\":true,"
+                     "{\"interfaceName\":\"%s\",\"routerIp\":\"%s\",\"phase\":\"wait_cable\","
                      "\"ethernetLinkUp\":false,\"requiresCableInsert\":true,\"waitCableTimeoutMs\":%d,\"elapsedMs\":%d}",
                      interface_name, router_ip, wait_cable_timeout_ms, elapsed_ms);
             send_report(fd, "ethernet", "running", 0, "Waiting for Ethernet cable", data);
@@ -465,7 +494,7 @@ static int run_ethernet(int fd, const char *test_start, const char *test_end)
 
     if (!net_carrier_is_up(interface_name)) {
         snprintf(data, sizeof(data),
-                 "{\"interfaceName\":\"%s\",\"routerIp\":\"%s\",\"phase\":\"wait_cable\",\"wifiDisabled\":true,"
+                 "{\"interfaceName\":\"%s\",\"routerIp\":\"%s\",\"phase\":\"wait_cable\","
                  "\"ethernetLinkUp\":false,\"requiresCableInsert\":true,\"waitCableTimeoutMs\":%d,\"failureReason\":\"ethernet_insert_timeout\"}",
                  interface_name, router_ip, wait_cable_timeout_ms);
         send_report(fd, "ethernet", "failed", 4801, "Ethernet cable insert timeout", data);
@@ -473,17 +502,16 @@ static int run_ethernet(int fd, const char *test_start, const char *test_end)
     }
 
     snprintf(data, sizeof(data),
-             "{\"interfaceName\":\"%s\",\"routerIp\":\"%s\",\"phase\":\"link_up\",\"wifiDisabled\":true,"
+             "{\"interfaceName\":\"%s\",\"routerIp\":\"%s\",\"phase\":\"link_up\","
              "\"ethernetLinkUp\":true,\"requiresCableInsert\":false}",
              interface_name, router_ip);
     send_report(fd, "ethernet", "running", 0, "Ethernet cable detected", data);
 
     if (ethernet_nmcli_run_test(&request, &result) != 0) {
         snprintf(data, sizeof(data),
-                 "{\"interfaceName\":\"%s\",\"routerIp\":\"%s\",\"phase\":\"failed\",\"wifiDisabled\":%s,"
+                 "{\"interfaceName\":\"%s\",\"routerIp\":\"%s\",\"phase\":\"failed\","
                  "\"ethernetLinkUp\":%s,\"ipAcquired\":%s,\"pingOk\":%s,\"ip\":\"%s\",\"failureReason\":\"%s\"}",
                  result.interface_name, result.router_ip,
-                 result.wifi_disabled ? "true" : "false",
                  result.link_up ? "true" : "false",
                  result.ip_acquired ? "true" : "false",
                  result.ping_ok ? "true" : "false",
@@ -498,22 +526,9 @@ static int run_ethernet(int fd, const char *test_start, const char *test_end)
 
     snprintf(data, sizeof(data),
              "{\"interfaceName\":\"%s\",\"ip\":\"%s\",\"routerIp\":\"%s\",\"pingCount\":%d,\"avgDelayMs\":%d,"
-             "\"pingOk\":true,\"phase\":\"ping_ok\",\"ethernetLinkUp\":true}",
+             "\"pingOk\":true,\"phase\":\"completed\",\"ethernetLinkUp\":true}",
              result.interface_name, result.ip, result.router_ip,
              result.completed_ping_count, result.avg_delay_ms);
-    send_report(fd, "ethernet", "running", 0, "Remove Ethernet cable", data);
-    if (request.wait_cable_unplug) {
-        result.cable_unplugged = ethernet_nmcli_wait_cable_unplug(interface_name, request.unplug_timeout_ms) == 0;
-    }
-
-    snprintf(data, sizeof(data),
-             "{\"interfaceName\":\"%s\",\"ip\":\"%s\",\"routerIp\":\"%s\",\"pingCount\":%d,\"avgDelayMs\":%d,"
-             "\"wifiDisabled\":%s,\"cableUnplugged\":%s,\"phase\":\"completed\",\"ethernetLinkUp\":%s}",
-             result.interface_name, result.ip, result.router_ip,
-             result.completed_ping_count, result.avg_delay_ms,
-             result.wifi_disabled ? "true" : "false",
-             result.cable_unplugged ? "true" : "false",
-             result.link_up ? "true" : "false");
     return send_report(fd, "ethernet", "passed", 0, result.message, data);
 }
 
@@ -667,6 +682,9 @@ static int run_pcba_test_points(int fd, const char *test_start, const char *test
 static int run_bluetooth(int fd, const struct app_config *config, const char *test_start, const char *test_end)
 {
     char target_name[128];
+    int max_retry_count = 5;
+    int retry_interval_ms = 2000;
+    int attempt;
     struct bluetooth_request request = {
         .target_name = target_name,
         .timeout_ms = 8000,
@@ -685,19 +703,54 @@ static int run_bluetooth(int fd, const struct app_config *config, const char *te
     request.min_rssi = param_int(test_start, test_end, "minRssi", request.min_rssi);
     request.timeout_ms = param_int(test_start, test_end, "scanWindowMs", request.timeout_ms);
     request.timeout_ms = param_int(test_start, test_end, "timeoutMs", request.timeout_ms);
-    memset(&result, 0, sizeof(result));
-    snprintf(data, sizeof(data),
-             "{\"targetName\":\"%s\",\"minRssi\":%d,\"scanWindowMs\":%d}",
-             target_name, request.min_rssi, request.timeout_ms);
-    send_report(fd, "bluetooth", "running", 0, "Running Bluetooth scan", data);
-    if (bluetoothctl_scan_target(&request, &result) != 0) {
+    max_retry_count = param_int(test_start, test_end, "maxRetryCount", max_retry_count);
+    retry_interval_ms = param_int(test_start, test_end, "retryIntervalMs", retry_interval_ms);
+    if (max_retry_count <= 0) max_retry_count = 1;
+    if (retry_interval_ms < 0) retry_interval_ms = 0;
+
+    for (attempt = 1; attempt <= max_retry_count; ++attempt) {
+        memset(&result, 0, sizeof(result));
         snprintf(data, sizeof(data),
-                 "{\"targetName\":\"%s\",\"minRssi\":%d,\"scanWindowMs\":%d,\"found\":%s,"
+                 "{\"targetName\":\"%s\",\"minRssi\":%d,\"scanWindowMs\":%d,\"phase\":\"scan_started\","
+                 "\"attempt\":%d,\"maxRetryCount\":%d}",
+                 target_name, request.min_rssi, request.timeout_ms, attempt, max_retry_count);
+        send_report(fd, "bluetooth", "running", 0, "Running Bluetooth scan", data);
+
+        if (bluetoothctl_scan_target(&request, &result) == 0) {
+            snprintf(data, sizeof(data),
+                     "{\"targetName\":\"%s\",\"name\":\"%s\",\"mac\":\"%s\",\"rssi\":%d,\"minRssi\":%d,"
+                     "\"scanWindowMs\":%d,\"attempt\":%d,\"maxRetryCount\":%d,"
+                     "\"bestSeenName\":\"%s\",\"bestSeenMac\":\"%s\",\"bestSeenRssi\":%d}",
+                     target_name, result.name, result.mac, result.rssi, request.min_rssi,
+                     request.timeout_ms, attempt, max_retry_count,
+                     result.best_seen_name, result.best_seen_mac, result.best_seen_rssi);
+            return send_report(fd, "bluetooth", "passed", 0, "Bluetooth target found", data);
+        }
+
+        if (attempt < max_retry_count) {
+            snprintf(data, sizeof(data),
+                     "{\"targetName\":\"%s\",\"minRssi\":%d,\"scanWindowMs\":%d,\"phase\":\"retry_wait\","
+                     "\"attempt\":%d,\"maxRetryCount\":%d,\"retryIntervalMs\":%d,\"found\":%s,"
+                     "\"matchedName\":\"%s\",\"matchedMac\":\"%s\",\"matchedRssi\":%d,"
+                     "\"bestSeenName\":\"%s\",\"bestSeenMac\":\"%s\",\"bestSeenRssi\":%d,"
+                     "\"failureReason\":\"%s\"}",
+                     target_name, request.min_rssi, request.timeout_ms,
+                     attempt, max_retry_count, retry_interval_ms, result.found ? "true" : "false",
+                     result.name, result.mac, result.matched_rssi,
+                     result.best_seen_name, result.best_seen_mac, result.best_seen_rssi,
+                     result.failure_reason);
+            send_report(fd, "bluetooth", "running", 0, "Bluetooth scan failed, waiting to retry", data);
+            sleep_ms_local(retry_interval_ms);
+            continue;
+        }
+
+        snprintf(data, sizeof(data),
+                 "{\"targetName\":\"%s\",\"minRssi\":%d,\"scanWindowMs\":%d,\"attempt\":%d,\"maxRetryCount\":%d,\"found\":%s,"
                  "\"matchedName\":\"%s\",\"matchedMac\":\"%s\",\"matchedRssi\":%d,"
                  "\"bestSeenName\":\"%s\",\"bestSeenMac\":\"%s\",\"bestSeenRssi\":%d,"
                  "\"failureReason\":\"%s\"}",
                  target_name, request.min_rssi, request.timeout_ms,
-                 result.found ? "true" : "false",
+                 attempt, max_retry_count, result.found ? "true" : "false",
                  result.name, result.mac, result.matched_rssi,
                  result.best_seen_name, result.best_seen_mac, result.best_seen_rssi,
                  result.failure_reason);
@@ -707,12 +760,8 @@ static int run_bluetooth(int fd, const struct app_config *config, const char *te
                     data);
         return -1;
     }
-    snprintf(data, sizeof(data),
-             "{\"targetName\":\"%s\",\"name\":\"%s\",\"mac\":\"%s\",\"rssi\":%d,\"minRssi\":%d,"
-             "\"scanWindowMs\":%d,\"bestSeenName\":\"%s\",\"bestSeenMac\":\"%s\",\"bestSeenRssi\":%d}",
-             target_name, result.name, result.mac, result.rssi, request.min_rssi,
-             request.timeout_ms, result.best_seen_name, result.best_seen_mac, result.best_seen_rssi);
-    return send_report(fd, "bluetooth", "passed", 0, "Bluetooth target found", data);
+
+    return -1;
 }
 
 static int run_fast_charge(int fd, const struct app_config *config, const char *test_start, const char *test_end)

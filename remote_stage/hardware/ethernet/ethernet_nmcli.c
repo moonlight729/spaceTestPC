@@ -109,18 +109,6 @@ static int ping_router(const char *interface_name, const char *router_ip, int pi
     return run_command(command);
 }
 
-static int disconnect_wifi_connections(void)
-{
-    /*
-     * Keep the Wi-Fi hardware and driver nodes alive. For Ethernet testing we
-     * only need to stop the current wireless connection from competing for
-     * routing, so use a software-level disconnect instead of radio-off.
-     */
-    return run_command("nmcli device disconnect wlan0 >/dev/null 2>&1 || "
-                       "nmcli device disconnect wlan1 >/dev/null 2>&1 || "
-                       "nmcli connection down id \\\"preconfigured\\\" >/dev/null 2>&1 || true");
-}
-
 int ethernet_nmcli_run_test(const struct ethernet_request *request,
                             struct ethernet_result *result)
 {
@@ -136,14 +124,7 @@ int ethernet_nmcli_run_test(const struct ethernet_request *request,
     snprintf(result->router_ip, sizeof(result->router_ip), "%s", request->router_ip);
     result->avg_delay_ms = -1;
     result->failure_reason[0] = '\0';
-
-    if (disconnect_wifi_connections() != 0) {
-        result->error_code = 4805;
-        snprintf(result->message, sizeof(result->message), "Unable to disconnect Wi-Fi before Ethernet test");
-        snprintf(result->failure_reason, sizeof(result->failure_reason), "ethernet_disconnect_wifi_failed");
-        return -1;
-    }
-    result->wifi_disabled = true;
+    result->wifi_disabled = false;
 
     snprintf(command, sizeof(command), "ip link set dev %s up >/dev/null 2>&1", request->interface_name);
     run_command(command);
@@ -179,10 +160,4 @@ int ethernet_nmcli_run_test(const struct ethernet_request *request,
 
     snprintf(result->message, sizeof(result->message), "Ethernet test passed");
     return 0;
-}
-
-int ethernet_nmcli_wait_cable_unplug(const char *interface_name, int timeout_ms)
-{
-    if (!safe_token(interface_name)) return -1;
-    return wait_carrier(interface_name, 0, timeout_ms);
 }

@@ -10,6 +10,13 @@
     "fileEnabled": true,
     "filePath": "logs/space-test-pc.log"
   },
+  "upgrade": {
+    "enabled": true,
+    "localBinaryPath": "spacetest3576",
+    "remoteBinaryPath": "/vendor/originflow/bin/spacetest3576",
+    "serviceName": "pcba-test.service",
+    "autoUpgradeDelaySeconds": 5
+  },
   "testPlan": {
     // Debug only. true allows testing to continue when board SN differs from scanned SN.
     // Production must keep this false to prevent testing the wrong board.
@@ -46,9 +53,7 @@
         "pingCount": 4,
         "timeoutMs": 15000,
         "waitCableTimeoutMs": 30000,
-        "progressReportIntervalMs": 1000,
-        "waitCableUnplug": true,
-        "unplugTimeoutMs": 10000
+        "progressReportIntervalMs": 1000
       },
       "bluetooth": {
         "mode": "observer",

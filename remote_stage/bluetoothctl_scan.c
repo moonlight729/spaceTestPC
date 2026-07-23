@@ -185,6 +185,8 @@ static int capture_btmon_scan(const struct bluetooth_request *request,
     }
     commit_btmon_report(request, result, report_mac, report_name, has_rssi, report_rssi);
     status = pclose(stream);
+    /* Ensure BlueZ is idle before a caller starts a retry. */
+    (void)command_exit_status("bluetoothctl scan off >/dev/null 2>&1");
     if (snprintf(command, sizeof(command), "rm -f %s >/dev/null 2>&1", log_path) < (int)sizeof(command)) {
         int cleanup_status = system(command);
         if (cleanup_status == -1) {

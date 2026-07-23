@@ -6,10 +6,41 @@
 #include "../tests/test_runner.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int send_failure(int fd, const char *session_id, int code, const char *message);
 static int send_ok_response(int fd, const char *session_id, const char *message);
+
+static int send_application_md5(int fd, const char *session_id, const struct app_config *config)
+{
+    char command[512];
+    char line[256];
+    char md5[64] = "";
+    char data[1024];
+    char response[1400];
+    FILE *pipe;
+
+    if (config == NULL || config->application_path == NULL || config->application_service == NULL) {
+        return send_failure(fd, session_id, 2300, "Application upgrade configuration is unavailable");
+    }
+    snprintf(command, sizeof(command), "md5sum '%s' 2>/dev/null", config->application_path);
+    pipe = popen(command, "r");
+    if (pipe == NULL || fgets(line, sizeof(line), pipe) == NULL) {
+        if (pipe != NULL) pclose(pipe);
+        return send_failure(fd, session_id, 2301, "Unable to calculate application MD5");
+    }
+    pclose(pipe);
+    if (sscanf(line, "%63s", md5) != 1 || strlen(md5) != 32) {
+        return send_failure(fd, session_id, 2301, "Invalid application MD5");
+    }
+    snprintf(data, sizeof(data),
+             "{\"appName\":\"spacetest3576\",\"path\":\"%s\",\"md5\":\"%s\",\"service\":\"%s\"}",
+             config->application_path, md5, config->application_service);
+    protocol_build_response_envelope(response, sizeof(response), session_id, 0,
+                                     "Application MD5 loaded", data);
+    return protocol_write_line(fd, response);
+}
 
 static int json_get_string_value(const char *json, const char *key, char *buffer, size_t buffer_size)
 {
@@ -121,6 +152,9 @@ int session_manager_handle_client(int client_fd, const struct app_config *config
     }
     if (strcmp(request.command_group, "sys") == 0 && strcmp(request.command, "get_board_state") == 0) {
         return send_board_state(client_fd, request.session_id, config);
+    }
+    if (strcmp(request.command_group, "sys") == 0 && strcmp(request.command, "get_md5") == 0) {
+        return send_application_md5(client_fd, request.session_id, config);
     }
     if (strcmp(request.command_group, "sys") == 0 && strcmp(request.command, "write_sn") == 0) {
         return write_board_sn(client_fd, &request);

@@ -9,6 +9,31 @@ public sealed class AppConfiguration
     public JxTvmConfiguration JxTvm { get; set; } = new();
     public BluetoothBroadcasterConfiguration BluetoothBroadcaster { get; set; } = new();
     public LoggingConfiguration Logging { get; set; } = new();
+    public UpgradeConfiguration Upgrade { get; set; } = new();
+}
+
+public sealed class UpgradeConfiguration
+{
+    public bool Enabled { get; set; } = true;
+    public string LocalBinaryPath { get; set; } = "spacetest3576";
+    public string RemoteBinaryPath { get; set; } = "/vendor/originflow/bin/spacetest3576";
+    public string ServiceName { get; set; } = "pcba-test.service";
+    public int AutoUpgradeDelaySeconds { get; set; } = 5;
+}
+
+public sealed class ApplicationMd5Info
+{
+    public string AppName { get; init; } = string.Empty;
+    public string Path { get; init; } = string.Empty;
+    public string Md5 { get; init; } = string.Empty;
+    public string Service { get; init; } = string.Empty;
+}
+
+public sealed class ApplicationUpgradeResult
+{
+    public bool Success { get; init; }
+    public string Message { get; init; } = string.Empty;
+    public string FinalMd5 { get; init; } = string.Empty;
 }
 
 public sealed class LoggingConfiguration

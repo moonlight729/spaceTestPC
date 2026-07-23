@@ -8,8 +8,6 @@ struct ethernet_request {
     const char *router_ip;
     int ping_count;
     int timeout_ms;
-    bool wait_cable_unplug;
-    int unplug_timeout_ms;
 };
 
 struct ethernet_result {
@@ -23,13 +21,11 @@ struct ethernet_result {
     bool link_up;
     bool ip_acquired;
     bool ping_ok;
-    bool cable_unplugged;
     int error_code;
     char message[160];
 };
 
 int ethernet_nmcli_run_test(const struct ethernet_request *request,
                             struct ethernet_result *result);
-int ethernet_nmcli_wait_cable_unplug(const char *interface_name, int timeout_ms);
 
 #endif

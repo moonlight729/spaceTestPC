@@ -1,5 +1,7 @@
 ﻿using System.Collections.ObjectModel;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.IO;
 using System.Text.Json;
 using System.Windows.Threading;
 using SpaceTestPC.App.Models;
@@ -23,6 +25,7 @@ public sealed class MainViewModel : ObservableObject
     // Change this value during deployment; operators do not choose the transport mode.
     private const PcbaConnectionMode ConnectionMode = PcbaConnectionMode.AdbForward;
     private const string BoardStateItemName = "板状态";
+    private const string ApplicationUpgradeItemId = "application_upgrade";
     private const string BluetoothItemName = "蓝牙";
     private const string WifiItemName = "WiFi";
     private const string EthernetItemName = "网线";
@@ -46,6 +49,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly IReadOnlyDictionary<string, int> _testItemIndexes;
     private readonly bool _allowSnMismatchForDebug;
     private readonly int _keyTestTimeoutMs;
+    private readonly UpgradeConfiguration _upgradeConfiguration;
     private readonly BluetoothScanRequest _bluetoothRequest = new()
     {
         TargetName = "yctc_bt_test_01",
@@ -93,6 +97,17 @@ public sealed class MainViewModel : ObservableObject
     private bool _isSessionRunning;
     private DateTimeOffset? _keyDeadline;
     private TestSessionEvent? _latestKeyTestEvent;
+    private TaskCompletionSource<bool?>? _upgradeDecisionSource;
+    private readonly DispatcherTimer _upgradeCountdownTimer;
+    private readonly DispatcherTimer _adbUpgradeMonitorTimer;
+    private int _upgradeCountdownSeconds;
+    private bool _isUpgradePromptVisible;
+    private string _deviceApplicationMd5 = string.Empty;
+    private bool _applicationUpgradeCheckCompleted;
+    private bool _applicationUpgradeCheckInProgress;
+    private string _hostApplicationMd5 = string.Empty;
+    private string _localUpgradeBinaryPath = string.Empty;
+    private bool _upgradePackageReady;
 
     public MainViewModel(
         IScannerService scannerService,
@@ -120,6 +135,7 @@ public sealed class MainViewModel : ObservableObject
         var appConfiguration = configuration ?? new AppConfiguration();
         _allowSnMismatchForDebug = appConfiguration.TestPlan.AllowSnMismatchForDebug;
         _keyTestTimeoutMs = GetConfiguredKeyTimeoutMs(appConfiguration);
+        _upgradeConfiguration = appConfiguration.Upgrade;
         _keyCountdownTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _keyCountdownTimer.Tick += (_, _) =>
         {
@@ -131,17 +147,47 @@ public sealed class MainViewModel : ObservableObject
 
             OperatorInstruction = BuildKeyTestInstruction(_latestKeyTestEvent);
         };
+        _upgradeCountdownTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _upgradeCountdownTimer.Tick += (_, _) =>
+        {
+            _upgradeCountdownSeconds--;
+            RaisePropertyChanged(nameof(UpgradePromptText));
+            if (_upgradeCountdownSeconds <= 0)
+            {
+                _upgradeCountdownTimer.Stop();
+                _upgradeDecisionSource?.TrySetResult(true);
+            }
+        };
+        _adbUpgradeMonitorTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _adbUpgradeMonitorTimer.Tick += async (_, _) =>
+        {
+            if (_applicationUpgradeCheckCompleted || _applicationUpgradeCheckInProgress || !_upgradePackageReady)
+                return;
+
+            _applicationUpgradeCheckInProgress = true;
+            try
+            {
+                if (await EnsureApplicationUpgradeAsync(_pcbaCommandClientFactory.Create(ConnectionMode)))
+                    _adbUpgradeMonitorTimer.Stop();
+            }
+            finally
+            {
+                _applicationUpgradeCheckInProgress = false;
+            }
+        };
         _isContinuousTestEnabled = appConfiguration.TestPlan.Continuous.EnabledByDefault;
         _testPlan = BuildActiveTestPlan(appConfiguration);
         _testItemIndexes = _testPlan
-            .Select((item, index) => new { item.Id, index })
+            .Select((item, index) => new { item.Id, index = index + 1 })
             .ToDictionary(item => item.Id, item => item.index);
 
-        ScanCommand = new AsyncRelayCommand(() => HandleScanAsync(isMockSession: false), () => !string.IsNullOrWhiteSpace(ScannerInput));
+        ScanCommand = new AsyncRelayCommand(() => HandleScanAsync(isMockSession: false), () => !string.IsNullOrWhiteSpace(ScannerInput) && _upgradePackageReady);
         StartMockSessionCommand = new RelayCommand(StartMockSession);
         ToggleContinuousTestCommand = new RelayCommand(ToggleContinuousTest);
         ConfirmManualPassCommand = new RelayCommand(() => SubmitManualDecision(true), () => IsManualDecisionVisible);
         ConfirmManualFailCommand = new RelayCommand(() => SubmitManualDecision(false), () => IsManualDecisionVisible);
+        UpgradeNowCommand = new RelayCommand(() => _upgradeDecisionSource?.TrySetResult(true), () => IsUpgradePromptVisible);
+        SkipUpgradeCommand = new RelayCommand(() => _upgradeDecisionSource?.TrySetResult(false), () => IsUpgradePromptVisible);
         ReadBoardStateCommand = new AsyncRelayCommand(ReadBoardStateAsync, () => !string.IsNullOrWhiteSpace(CurrentSn));
         StartPhaseOneCommand = new AsyncRelayCommand(StartPhaseOneAsync, () => !string.IsNullOrWhiteSpace(CurrentSn));
         ShowTestPageCommand = new RelayCommand(() => IsQueryPage = false);
@@ -151,11 +197,15 @@ public sealed class MainViewModel : ObservableObject
         Logs = new ObservableCollection<string>();
         RecentSessions = new ObservableCollection<string>();
         QuerySessions = new ObservableCollection<TestSessionRecord>();
-        TestItems = new ObservableCollection<TestItemViewModel>(BuildTestItems(_testPlan));
+        TestItems = new ObservableCollection<TestItemViewModel>(new[]
+        {
+            new TestItemViewModel(ApplicationUpgradeItemId, GetTestDisplayName(ApplicationUpgradeItemId))
+        }.Concat(BuildTestItems(_testPlan)));
         CurrentTestItem = TestItems.FirstOrDefault();
-        TestResults = new ObservableCollection<TestResultViewModel>(
-            _testPlan
-                .Select(item => new TestResultViewModel(item.Id, GetTestDisplayName(item.Id))));
+        TestResults = new ObservableCollection<TestResultViewModel>(new[]
+        {
+            new TestResultViewModel(ApplicationUpgradeItemId, GetTestDisplayName(ApplicationUpgradeItemId))
+        }.Concat(_testPlan.Select(item => new TestResultViewModel(item.Id, GetTestDisplayName(item.Id)))));
         DirectionalKeys = new ObservableCollection<DirectionalKeyViewModel>
         {
             new("up", "上"), new("down", "下"), new("left", "左"), new("right", "右"), new("confirm", "确认")
@@ -253,6 +303,38 @@ public sealed class MainViewModel : ObservableObject
         private set => SetProperty(ref _debugOutput, value);
     }
 
+    public bool IsUpgradePromptVisible
+    {
+        get => _isUpgradePromptVisible;
+        private set
+        {
+            if (SetProperty(ref _isUpgradePromptVisible, value))
+            {
+                UpgradeNowCommand.NotifyCanExecuteChanged();
+                SkipUpgradeCommand.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    public string UpgradePromptText =>
+        $"检测到设备程序需要升级。\n设备 MD5：{_deviceApplicationMd5}\n本地 MD5：{_hostApplicationMd5}\n{Math.Max(0, _upgradeCountdownSeconds)} 秒后自动升级。";
+
+    public bool IsUpgradePackageReady => _upgradePackageReady;
+    public string UpgradePackageStatusText => _upgradePackageReady ? "升级软件：已准备" : "升级软件异常，禁止开始测试";
+    public string UpgradePackagePathText => string.IsNullOrWhiteSpace(_localUpgradeBinaryPath)
+        ? "路径：未配置"
+        : $"路径：{_localUpgradeBinaryPath}";
+    public string UpgradePackageMd5Text => string.IsNullOrWhiteSpace(_hostApplicationMd5)
+        ? "MD5：无法读取"
+        : $"MD5：{_hostApplicationMd5}";
+    public string UpgradePackageStatusForeground => _upgradePackageReady ? "#15803D" : "#B42318";
+    public string UpgradePackageStatusBackground => _upgradePackageReady ? "#ECFDF3" : "#FEF3F2";
+    public string ApplicationUpgradeStatusText => _applicationUpgradeCheckCompleted ? "设备程序：已确认" : "设备程序：待检查";
+    public string ApplicationUpgradeDetailText => _applicationUpgradeCheckCompleted
+        ? $"升级校验完成\n路径：{_upgradeConfiguration.RemoteBinaryPath}\nMD5：{_deviceApplicationMd5}"
+        : "ADB 连接后自动检查设备程序 MD5";
+    public string ApplicationUpgradeStatusForeground => _applicationUpgradeCheckCompleted ? "#15803D" : "#667085";
+
     public string LogsText => string.Join(Environment.NewLine, Logs.Reverse());
 
     public string AppVersion { get; } = GetAppVersion();
@@ -314,6 +396,8 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand ToggleContinuousTestCommand { get; }
     public RelayCommand ConfirmManualPassCommand { get; }
     public RelayCommand ConfirmManualFailCommand { get; }
+    public RelayCommand UpgradeNowCommand { get; }
+    public RelayCommand SkipUpgradeCommand { get; }
     public AsyncRelayCommand ReadBoardStateCommand { get; }
     public AsyncRelayCommand StartPhaseOneCommand { get; }
     public RelayCommand ShowTestPageCommand { get; }
@@ -525,6 +609,14 @@ public sealed class MainViewModel : ObservableObject
             SessionId = Guid.NewGuid().ToString("N");
         }
 
+        var upgradeClient = _pcbaCommandClientFactory.Create(ConnectionMode);
+        if (!await EnsureApplicationUpgradeAsync(upgradeClient))
+        {
+            LastResult = "Application upgrade failed";
+            OperatorInstruction = "设备程序升级失败，测试未启动。";
+            return;
+        }
+
         if (UseUnifiedSessionProtocol)
         {
             await RunUnifiedSessionAsync();
@@ -538,6 +630,125 @@ public sealed class MainViewModel : ObservableObject
         PrepareForNextBoard();
         RaisePropertyChanged(nameof(ContinuousTestStatusText));
         UpdateDebugOutput();
+    }
+
+    private async Task<bool> EnsureApplicationUpgradeAsync(IPcbaCommandClient client)
+    {
+        if (!_upgradeConfiguration.Enabled || ConnectionMode == PcbaConnectionMode.Mock) return true;
+        if (_applicationUpgradeCheckCompleted) return true;
+        var upgradeResult = TestResults.FirstOrDefault(item => item.TestId == ApplicationUpgradeItemId);
+        upgradeResult?.ApplyLocalResult(TestItemState.Running, "正在检查设备程序 MD5。", new Dictionary<string, object?>
+        {
+            ["remotePath"] = _upgradeConfiguration.RemoteBinaryPath,
+            ["localPath"] = _localUpgradeBinaryPath
+        });
+        SetTestItemState(ApplicationUpgradeItemId, TestItemState.Running);
+
+        var localPath = Path.IsPathRooted(_upgradeConfiguration.LocalBinaryPath)
+            ? _upgradeConfiguration.LocalBinaryPath
+            : Path.Combine(AppContext.BaseDirectory, _upgradeConfiguration.LocalBinaryPath);
+        if (!File.Exists(localPath))
+        {
+            AppendLog($"Application upgrade package missing: {localPath}");
+            OperatorInstruction = $"升级软件不存在，测试未启动：{localPath}";
+            return false;
+        }
+
+        try
+        {
+            await using var stream = File.OpenRead(localPath);
+            _hostApplicationMd5 = Convert.ToHexString(await MD5.HashDataAsync(stream)).ToLowerInvariant();
+            ApplicationMd5Info? deviceInfo = null;
+            Exception? lastError = null;
+            for (var attempt = 1; attempt <= 5; attempt++)
+            {
+                try
+                {
+                    deviceInfo = await client.GetApplicationMd5Async(_upgradeConfiguration.RemoteBinaryPath);
+                    break;
+                }
+                catch (Exception ex) when (attempt < 5)
+                {
+                    lastError = ex;
+                    AppendLog($"Waiting for ADB device ({attempt}/5): {ex.Message}");
+                    await Task.Delay(TimeSpan.FromSeconds(1));
+                }
+            }
+
+            if (deviceInfo is null)
+                throw new InvalidOperationException("ADB device is not ready.", lastError);
+            _deviceApplicationMd5 = deviceInfo.Md5;
+            AppendLog($"Application MD5: host={_hostApplicationMd5}, device={_deviceApplicationMd5}");
+            if (string.Equals(_hostApplicationMd5, _deviceApplicationMd5, StringComparison.OrdinalIgnoreCase))
+            {
+                _applicationUpgradeCheckCompleted = true;
+                upgradeResult?.ApplyLocalResult(TestItemState.Passed, "设备程序已是最新，无需升级。", new Dictionary<string, object?>
+                {
+                    ["localPath"] = localPath, ["remotePath"] = _upgradeConfiguration.RemoteBinaryPath,
+                    ["localMd5"] = _hostApplicationMd5, ["deviceMd5"] = _deviceApplicationMd5
+                });
+                SetTestItemState(ApplicationUpgradeItemId, TestItemState.Passed);
+                SelectedTestResult = upgradeResult;
+                RaiseApplicationUpgradeStatusChanged();
+                return true;
+            }
+
+            _upgradeCountdownSeconds = Math.Max(1, _upgradeConfiguration.AutoUpgradeDelaySeconds);
+            _upgradeDecisionSource = new TaskCompletionSource<bool?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            IsUpgradePromptVisible = true;
+            RaisePropertyChanged(nameof(UpgradePromptText));
+            _upgradeCountdownTimer.Start();
+            var shouldUpgrade = await _upgradeDecisionSource.Task;
+            _upgradeCountdownTimer.Stop();
+            IsUpgradePromptVisible = false;
+            if (shouldUpgrade != true)
+            {
+                AppendLog("Application upgrade skipped by operator.");
+                _applicationUpgradeCheckCompleted = true;
+                upgradeResult?.ApplyLocalResult(TestItemState.Skipped, "操作员跳过升级。", new Dictionary<string, object?>
+                {
+                    ["localMd5"] = _hostApplicationMd5, ["deviceMd5"] = _deviceApplicationMd5
+                });
+                SetTestItemState(ApplicationUpgradeItemId, TestItemState.Skipped);
+                SelectedTestResult = upgradeResult;
+                RaiseApplicationUpgradeStatusChanged();
+                return true;
+            }
+
+            OperatorInstruction = "正在升级 PCBA 程序，请勿断开设备连接。";
+            var result = await client.UpgradeApplicationAsync(localPath, _hostApplicationMd5,
+                _upgradeConfiguration.ServiceName, _upgradeConfiguration.RemoteBinaryPath);
+            AppendLog($"Application upgrade result: success={result.Success}, message={result.Message}, finalMd5={result.FinalMd5}");
+            _applicationUpgradeCheckCompleted = result.Success;
+            if (result.Success)
+            {
+                _deviceApplicationMd5 = result.FinalMd5;
+                OperatorInstruction = $"PCBA 程序已升级成功。\n路径：{_upgradeConfiguration.RemoteBinaryPath}\nMD5：{result.FinalMd5}";
+                RaiseApplicationUpgradeStatusChanged();
+                upgradeResult?.ApplyLocalResult(TestItemState.Passed, "PCBA 程序升级成功。", new Dictionary<string, object?>
+                {
+                    ["localPath"] = localPath, ["remotePath"] = _upgradeConfiguration.RemoteBinaryPath,
+                    ["localMd5"] = _hostApplicationMd5, ["deviceMd5Before"] = _deviceApplicationMd5,
+                    ["deviceMd5After"] = result.FinalMd5, ["service"] = _upgradeConfiguration.ServiceName
+                });
+                SetTestItemState(ApplicationUpgradeItemId, TestItemState.Passed);
+                SelectedTestResult = upgradeResult;
+            }
+            return result.Success;
+        }
+        catch (Exception ex)
+        {
+            _upgradeCountdownTimer.Stop();
+            IsUpgradePromptVisible = false;
+            AppendLog($"Application upgrade check failed: {ex.Message}");
+            upgradeResult?.ApplyLocalResult(TestItemState.Failed, $"设备程序检查/升级失败：{ex.Message}", new Dictionary<string, object?>
+            {
+                ["localPath"] = localPath, ["remotePath"] = _upgradeConfiguration.RemoteBinaryPath
+            });
+            SetTestItemState(ApplicationUpgradeItemId, TestItemState.Failed);
+            SelectedTestResult = upgradeResult;
+            return false;
+        }
     }
 
     private async Task RunLegacyPhaseOneAsync()
@@ -1092,10 +1303,8 @@ public sealed class MainViewModel : ObservableObject
             ? "请确保测试前已经使用 2.0 U盘和 3.0 U盘插入过需要测试的 USB 口，并已经生成 USB 汇总文件。"
             : testEvent.TestId == "pcba_test_points" && testEvent.Status == "running"
             ? "正在读取 PCBA 32 通道测试点电压，系统将自动判断是否在阈值范围内。"
-            : testEvent.TestId == "ethernet" && testEvent.Status == "running" && testEvent.Message.Contains("Remove", StringComparison.OrdinalIgnoreCase)
-            ? "网口测试完成，请拔掉网线，准备进行 Wi-Fi 测试。"
             : testEvent.TestId == "ethernet" && testEvent.Status == "running"
-            ? "请插入网线，系统将关闭 Wi-Fi 并检测有线网络。"
+            ? "请插入网线，系统将检测有线网络。"
             : testEvent.TestId == "typec_fast_charge" && testEvent.Status == "running" &&
               GetDataString(testEvent.Data, "phase", string.Empty) is "wait_ready" or "ready" or "wait_manual_charger_insert" or "wait_charger"
             ? BuildFastChargeWaitingInstruction(testEvent.Data)
@@ -1450,7 +1659,7 @@ public sealed class MainViewModel : ObservableObject
                 "link_up" => "已检测到网线，正在开始网口检测。",
                 "dhcp" => "网口已连通，正在获取 IP。",
                 "ping" => $"网口已获取 IP，正在连通路由器 {routerIp}。",
-                "ping_ok" => "网口连通正常，请拔掉网线。",
+                "ping_ok" => "网口连通正常。",
                 _ => "正在检测：网口。"
             };
         }
@@ -1473,6 +1682,7 @@ public sealed class MainViewModel : ObservableObject
 
     private static string GetTestDisplayName(string testId) => testId switch
     {
+        ApplicationUpgradeItemId => "设备程序升级",
         "board_state" => "板状态",
         "hdmi" => "HDMI",
         "keys" => "按键",
@@ -2019,12 +2229,73 @@ public sealed class MainViewModel : ObservableObject
 
     public async Task InitializeAsync()
     {
+        await ValidateUpgradePackageAsync();
+        if (_upgradePackageReady && ConnectionMode == PcbaConnectionMode.AdbForward)
+        {
+            OperatorInstruction = "升级软件已准备，正在通过 ADB 检查设备程序。";
+            var upgradeClient = _pcbaCommandClientFactory.Create(ConnectionMode);
+            if (!await EnsureApplicationUpgradeAsync(upgradeClient))
+            {
+                OperatorInstruction = "设备程序升级失败或无法确认，测试暂不可开始。";
+            }
+            else
+            {
+                _adbUpgradeMonitorTimer.Stop();
+            }
+
+            _adbUpgradeMonitorTimer.Start();
+        }
         if (_bluetoothBroadcasterService is not null)
         {
             try { await _bluetoothBroadcasterService.ConfigureAsync(); AppendLog("Bluetooth broadcaster configured."); }
             catch (Exception ex) { AppendLog($"Bluetooth broadcaster setup failed: {ex.Message}"); }
         }
         await LoadRecentSessionsAsync();
+    }
+
+    private async Task ValidateUpgradePackageAsync()
+    {
+        if (!_upgradeConfiguration.Enabled)
+        {
+            _upgradePackageReady = true;
+            _localUpgradeBinaryPath = "升级检查已关闭";
+        }
+        else
+        {
+            _localUpgradeBinaryPath = Path.IsPathRooted(_upgradeConfiguration.LocalBinaryPath)
+                ? _upgradeConfiguration.LocalBinaryPath
+                : Path.Combine(AppContext.BaseDirectory, _upgradeConfiguration.LocalBinaryPath);
+            try
+            {
+                if (!File.Exists(_localUpgradeBinaryPath))
+                    throw new FileNotFoundException("未找到升级软件");
+                await using var stream = File.OpenRead(_localUpgradeBinaryPath);
+                _hostApplicationMd5 = Convert.ToHexString(await MD5.HashDataAsync(stream)).ToLowerInvariant();
+                _upgradePackageReady = !string.IsNullOrWhiteSpace(_hostApplicationMd5);
+                AppendLog($"Upgrade package ready: path={_localUpgradeBinaryPath}, md5={_hostApplicationMd5}");
+            }
+            catch (Exception ex)
+            {
+                _upgradePackageReady = false;
+                AppendLog($"Upgrade package validation failed: path={_localUpgradeBinaryPath}, error={ex.Message}");
+            }
+        }
+
+        RaisePropertyChanged(nameof(IsUpgradePackageReady));
+        RaisePropertyChanged(nameof(UpgradePackageStatusText));
+        RaisePropertyChanged(nameof(UpgradePackagePathText));
+        RaisePropertyChanged(nameof(UpgradePackageMd5Text));
+        RaisePropertyChanged(nameof(UpgradePackageStatusForeground));
+        RaisePropertyChanged(nameof(UpgradePackageStatusBackground));
+        ScanCommand.NotifyCanExecuteChanged();
+    }
+
+    private void RaiseApplicationUpgradeStatusChanged()
+    {
+        RaisePropertyChanged(nameof(ApplicationUpgradeStatusText));
+        RaisePropertyChanged(nameof(ApplicationUpgradeDetailText));
+        RaisePropertyChanged(nameof(ApplicationUpgradeStatusForeground));
+        UpdateDebugOutput();
     }
 
     private async Task LoadRecentSessionsAsync()
@@ -2132,6 +2403,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     private IReadOnlyList<TestResultRecord> BuildTestResultRecords() => TestResults
+        .Where(result => result.TestId != ApplicationUpgradeItemId)
         .Select(result => new TestResultRecord
         {
             TestId = result.TestId,
@@ -2263,7 +2535,7 @@ public sealed class MainViewModel : ObservableObject
 
     private void SetTestItemState(string name, TestItemState state)
     {
-        var item = TestItems.FirstOrDefault(x => x.Name == name);
+        var item = TestItems.FirstOrDefault(x => x.TestId == name || x.Name == name);
         if (item is not null)
         {
             item.State = state;
@@ -2401,6 +2673,8 @@ public sealed class MainViewModel : ObservableObject
             $"TestMode: {TestMode}\n" +
             $"ContinuousTest: {IsContinuousTestEnabled}\n" +
             $"SessionRunning: {_isSessionRunning}\n" +
+            $"ApplicationUpgrade: {ApplicationUpgradeStatusText}\n" +
+            $"ApplicationMd5: {_deviceApplicationMd5}\n" +
             $"VoltageStatus: {VoltageStatus}\n" +
             $"BatteryStatus: {BatteryStatus}\n" +
             $"LastResult: {LastResult}";

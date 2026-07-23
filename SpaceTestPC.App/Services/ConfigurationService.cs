@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using SpaceTestPC.App.Models;
 
 namespace SpaceTestPC.App.Services;
@@ -20,14 +21,29 @@ public sealed class ConfigurationService
             return new AppConfiguration();
         }
 
+        var json = File.ReadAllText(resolvedPath);
         try
         {
-            var json = File.ReadAllText(resolvedPath);
             return JsonSerializer.Deserialize<AppConfiguration>(json, JsonOptions) ?? new AppConfiguration();
         }
         catch
         {
-            return new AppConfiguration();
+            // Keep the upgrade gate usable even when an unrelated legacy config entry is malformed.
+            var fallback = new AppConfiguration();
+            var upgradeMatch = Regex.Match(json, "\\\"upgrade\\\"\\s*:\\s*(\\{[^{}]*\\})", RegexOptions.Singleline);
+            if (upgradeMatch.Success)
+            {
+                try
+                {
+                    fallback.Upgrade = JsonSerializer.Deserialize<UpgradeConfiguration>(upgradeMatch.Groups[1].Value, JsonOptions)
+                        ?? new UpgradeConfiguration();
+                }
+                catch
+                {
+                    // Use the safe defaults when even the isolated upgrade block is invalid.
+                }
+            }
+            return fallback;
         }
     }
 

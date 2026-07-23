@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using SpaceTestPC.App.Models;
@@ -25,6 +26,129 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         _remotePort = remotePort;
         _deviceSerial = deviceSerial;
     }
+
+    public async Task<ApplicationMd5Info> GetApplicationMd5Async(string remoteBinaryPath, CancellationToken cancellationToken = default)
+    {
+        string md5;
+        try
+        {
+            var output = await RunAdbAsync($"shell md5sum {Quote(remoteBinaryPath)}", cancellationToken);
+            md5 = ParseMd5(output);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("No such file or directory", StringComparison.OrdinalIgnoreCase))
+        {
+            md5 = string.Empty;
+        }
+
+        return new ApplicationMd5Info
+        {
+            AppName = "spacetest3576",
+            Path = remoteBinaryPath,
+            Md5 = md5,
+            Service = "pcba-test.service"
+        };
+    }
+
+    public async Task<ApplicationUpgradeResult> UpgradeApplicationAsync(
+        string localBinaryPath, string expectedMd5, string serviceName, string remoteBinaryPath,
+        CancellationToken cancellationToken = default)
+    {
+        var remoteNewPath = remoteBinaryPath + ".new";
+        var remoteBackupPath = remoteBinaryPath + ".bak";
+        var hasBackup = false;
+        try
+        {
+            var localMd5 = await CalculateMd5Async(localBinaryPath, cancellationToken);
+            if (!string.Equals(localMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
+                return new ApplicationUpgradeResult { Message = "Local application MD5 changed before upload." };
+
+            await RunAdbAsync($"push {Quote(localBinaryPath)} {Quote(remoteNewPath)}", cancellationToken);
+            await RunAdbAsync($"shell chmod 755 {Quote(remoteNewPath)}", cancellationToken);
+            var uploadedMd5 = ParseMd5(await RunAdbAsync($"shell md5sum {Quote(remoteNewPath)}", cancellationToken));
+            if (!string.Equals(uploadedMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
+                return new ApplicationUpgradeResult { Message = "Uploaded application MD5 verification failed." };
+
+            await RunAdbAsync($"shell systemctl stop {Quote(serviceName)}", cancellationToken);
+            hasBackup = await RemoteFileExistsAsync(remoteBinaryPath, cancellationToken);
+            if (hasBackup)
+                await RunAdbAsync($"shell cp -p {Quote(remoteBinaryPath)} {Quote(remoteBackupPath)}", cancellationToken);
+            await RunAdbAsync($"shell chmod 755 {Quote(remoteNewPath)}", cancellationToken);
+            await RunAdbAsync($"shell mv -f {Quote(remoteNewPath)} {Quote(remoteBinaryPath)}", cancellationToken);
+            await RunAdbAsync($"shell systemctl start {Quote(serviceName)}", cancellationToken);
+            await RunAdbAsync($"shell systemctl is-active --quiet {Quote(serviceName)}", cancellationToken);
+
+            var finalMd5 = ParseMd5(await RunAdbAsync($"shell md5sum {Quote(remoteBinaryPath)}", cancellationToken));
+            if (!string.Equals(finalMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Final application MD5 verification failed.");
+
+            return new ApplicationUpgradeResult { Success = true, FinalMd5 = finalMd5, Message = "Application upgrade completed." };
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                await RunAdbAsync($"shell systemctl stop {Quote(serviceName)}", cancellationToken);
+                if (hasBackup)
+                    await RunAdbAsync($"shell mv -f {Quote(remoteBackupPath)} {Quote(remoteBinaryPath)}", cancellationToken);
+                await RunAdbAsync($"shell chmod 755 {Quote(remoteBinaryPath)}", cancellationToken);
+                await RunAdbAsync($"shell systemctl start {Quote(serviceName)}", cancellationToken);
+            }
+            catch (Exception rollbackError)
+            {
+                return new ApplicationUpgradeResult { Message = $"Upgrade failed: {ex.Message}; rollback failed: {rollbackError.Message}" };
+            }
+            return new ApplicationUpgradeResult { Message = $"Upgrade failed and was rolled back: {ex.Message}" };
+        }
+    }
+
+    private async Task<string> RunAdbAsync(string arguments, CancellationToken cancellationToken)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = _adbPath, Arguments = BuildAdbArguments(arguments),
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, CreateNoWindow = true
+        };
+        using var process = new Process { StartInfo = startInfo };
+        process.Start();
+        var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stderr = await process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+        if (process.ExitCode != 0) throw new InvalidOperationException($"ADB command failed: {stderr.Trim()} {stdout.Trim()}".Trim());
+        return stdout;
+    }
+
+    private async Task<bool> RemoteFileExistsAsync(string path, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await RunAdbAsync($"shell test -f {Quote(path)}", cancellationToken);
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private static async Task<string> CalculateMd5Async(string path, CancellationToken cancellationToken)
+    {
+        await using var stream = File.OpenRead(path);
+        var hash = await MD5.HashDataAsync(stream, cancellationToken);
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static string ParseMd5(string output)
+    {
+        var value = output
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault(token => token.Length == 32 && token.All(Uri.IsHexDigit));
+        if (value is null)
+            throw new InvalidOperationException($"Unable to parse application MD5 from ADB output: {output.Trim()}");
+        return value.ToLowerInvariant();
+    }
+
+    private static string Quote(string value) => $"\"{value.Replace("\"", "\\\"")}\"";
 
     public async IAsyncEnumerable<TestSessionEvent> RunSessionAsync(
         string sessionId,

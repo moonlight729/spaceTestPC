@@ -9,6 +9,18 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
     private readonly ManualTestInteractionService? _manualTestInteractionService;
     private string _boardSn = string.Empty;
 
+    public Task<ApplicationMd5Info> GetApplicationMd5Async(string remoteBinaryPath, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new ApplicationMd5Info
+        {
+            AppName = "spacetest3576",
+            Path = remoteBinaryPath,
+            Md5 = "mock-application-md5",
+            Service = "pcba-test.service"
+        });
+
+    public Task<ApplicationUpgradeResult> UpgradeApplicationAsync(string localBinaryPath, string expectedMd5, string serviceName, string remoteBinaryPath, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new ApplicationUpgradeResult { Success = true, FinalMd5 = expectedMd5, Message = "Mock application upgrade completed." });
+
     public MockPcbaCommandClient(
         string? failingTestId = null,
         MockConfiguration? mockConfiguration = null,
@@ -310,19 +322,6 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                         ["ethernetLinkUp"] = true
                     }
                 };
-                await Task.Delay(GetMockRunningDelay(test.Id), cancellationToken);
-                yield return new TestSessionEvent
-                {
-                    Event = "test.report", TestId = test.Id, Status = "running", Message = "Remove Ethernet cable",
-                    Data = new Dictionary<string, object?>
-                    {
-                        ["interfaceName"] = GetParameterString(test.Parameters, "interfaceName", "end0"),
-                        ["routerIp"] = GetParameterString(test.Parameters, "routerIp", "192.168.110.1"),
-                        ["phase"] = "ping_ok",
-                        ["pingOk"] = true,
-                        ["ethernetLinkUp"] = true
-                    }
-                };
             }
             else if (test.Id == "bluetooth")
             {
@@ -588,7 +587,6 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 data["pingCount"] = GetParameterInt(test.Parameters, "pingCount", 4);
                 data["ip"] = "192.168.110.220";
                 data["pingOk"] = true;
-                data["cableUnplugged"] = true;
                 data["avgDelayMs"] = 3;
                 break;
             case "bluetooth":

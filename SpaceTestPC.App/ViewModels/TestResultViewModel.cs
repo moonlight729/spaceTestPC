@@ -121,6 +121,16 @@ public sealed class TestResultViewModel : ObservableObject
         Data = new Dictionary<string, object?>();
     }
 
+    public void ApplyLocalResult(TestItemState state, string message, IReadOnlyDictionary<string, object?> data)
+    {
+        State = state;
+        Message = message;
+        Data = data;
+        DataText = string.Join(Environment.NewLine, data.Select(pair => $"{pair.Key}: {pair.Value}"));
+        StartedAt ??= DateTimeOffset.Now;
+        Duration = DateTimeOffset.Now - StartedAt;
+    }
+
     private static string FormatDataText(TestSessionEvent testEvent)
     {
         if (testEvent.Data.Count == 0)
