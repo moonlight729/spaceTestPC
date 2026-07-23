@@ -30,7 +30,7 @@ struct board_state {
 void board_state_load_defaults(struct board_state *state);
 int board_state_load_from_file(const char *path, struct board_state *state);
 int board_state_save_to_file(const char *path, const struct board_state *state);
-int board_state_write_sn_if_empty(const char *sn);
+int board_state_write_sn(const char *sn);
 int board_state_to_json(const struct board_state *state, char *buffer, size_t buffer_size);
 int board_state_record_session_result(const char *path, const char *session_id,
                                       const char *start_time, const char *end_time,

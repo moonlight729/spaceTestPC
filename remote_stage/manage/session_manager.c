@@ -133,9 +133,8 @@ static int send_ok_response(int fd, const char *session_id, const char *message)
 
 static int write_board_sn(int fd, const struct protocol_request *request)
 {
-    int rc = board_state_write_sn_if_empty(request->sn);
+    int rc = board_state_write_sn(request->sn);
     if (rc == 0) return send_ok_response(fd, request->session_id, "Board SN written");
-    if (rc == -2) return send_failure(fd, request->session_id, 2101, "Board SN already exists and differs from scanned SN");
     return send_failure(fd, request->session_id, 2100, "Unable to write board SN");
 }
 

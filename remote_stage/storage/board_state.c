@@ -315,13 +315,12 @@ int board_state_save_to_file(const char *path, const struct board_state *state)
     return 0;
 }
 
-int board_state_write_sn_if_empty(const char *sn)
+int board_state_write_sn(const char *sn)
 {
     struct board_state state;
     char verify_sn[80];
     if (!is_valid_sn(sn)) return -1;
     board_state_load_defaults(&state);
-    if (state.board_sn[0] != '\0' && strcmp(state.board_sn, sn) != 0) return -2;
     if (write_sn_to_vendor_storage(sn) != 0) return -1;
     if (read_sn_from_vendor_storage(verify_sn, sizeof(verify_sn)) != 0) return -1;
     if (strcmp(verify_sn, sn) != 0) return -1;

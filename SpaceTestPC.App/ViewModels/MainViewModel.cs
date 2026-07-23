@@ -1010,19 +1010,8 @@ public sealed class MainViewModel : ObservableObject
             return state;
         }
 
-        if (!string.IsNullOrWhiteSpace(state.BoardSn))
-        {
-            if (_allowSnMismatchForDebug)
-            {
-                AppendLog($"DEBUG SN mismatch allowed: boardSn={state.BoardSn}, scannedSn={CurrentSn}. Board SN will not be overwritten.");
-                OperatorInstruction = $"调试模式：板端 SN({state.BoardSn}) 与扫码 SN({CurrentSn}) 不一致，已允许继续测试。";
-                return state;
-            }
-
-            throw new InvalidOperationException($"Board already has a different SN ({state.BoardSn}); scanned SN is {CurrentSn}.");
-        }
-
-        AppendLog($"Writing scanned SN to board: {CurrentSn}");
+        AppendLog($"Board SN differs; writing scanned SN to board: old={state.BoardSn}, new={CurrentSn}");
+        OperatorInstruction = $"正在将板端 SN 更新为扫码 SN：{CurrentSn}";
         var response = await client.WriteSnAsync(SessionId, CurrentSn, state.BoardId);
         if (response.ResultCode != 0)
         {
