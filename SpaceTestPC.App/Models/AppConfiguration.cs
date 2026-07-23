@@ -4,12 +4,23 @@ namespace SpaceTestPC.App.Models;
 
 public sealed class AppConfiguration
 {
+    public string TestMode { get; set; } = "pcba";
+    public Dictionary<string, TestModeConfiguration> TestModes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public TestPlanConfiguration TestPlan { get; set; } = new();
     public Jk5506Configuration Jk5506 { get; set; } = new();
     public JxTvmConfiguration JxTvm { get; set; } = new();
     public BluetoothBroadcasterConfiguration BluetoothBroadcaster { get; set; } = new();
     public LoggingConfiguration Logging { get; set; } = new();
     public UpgradeConfiguration Upgrade { get; set; } = new();
+}
+
+public sealed class TestModeConfiguration
+{
+    public string DisplayName { get; set; } = string.Empty;
+    public string DatabaseName { get; set; } = string.Empty;
+    public string[] EnabledTests { get; set; } = [];
+    public string[] DisabledTests { get; set; } = [];
+    public Dictionary<string, string> SkippedTests { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class UpgradeConfiguration

@@ -50,6 +50,8 @@ public sealed class MainViewModel : ObservableObject
     private readonly bool _allowSnMismatchForDebug;
     private readonly int _keyTestTimeoutMs;
     private readonly UpgradeConfiguration _upgradeConfiguration;
+    private readonly TestModeConfiguration _testModeConfiguration;
+    private readonly string _testProfileMode;
     private readonly BluetoothScanRequest _bluetoothRequest = new()
     {
         TargetName = "yctc_bt_test_01",
@@ -136,6 +138,10 @@ public sealed class MainViewModel : ObservableObject
         _allowSnMismatchForDebug = appConfiguration.TestPlan.AllowSnMismatchForDebug;
         _keyTestTimeoutMs = GetConfiguredKeyTimeoutMs(appConfiguration);
         _upgradeConfiguration = appConfiguration.Upgrade;
+        _testProfileMode = string.IsNullOrWhiteSpace(appConfiguration.TestMode) ? "pcba" : appConfiguration.TestMode.Trim().ToLowerInvariant();
+        _testModeConfiguration = appConfiguration.TestModes.TryGetValue(_testProfileMode, out var modeConfiguration)
+            ? modeConfiguration
+            : new TestModeConfiguration();
         _keyCountdownTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _keyCountdownTimer.Tick += (_, _) =>
         {
@@ -329,6 +335,12 @@ public sealed class MainViewModel : ObservableObject
         : $"MD5：{_hostApplicationMd5}";
     public string UpgradePackageStatusForeground => _upgradePackageReady ? "#15803D" : "#B42318";
     public string UpgradePackageStatusBackground => _upgradePackageReady ? "#ECFDF3" : "#FEF3F2";
+    public string TestModeDisplayName => _testProfileMode == "finished_product" ? "整机测试" : "PCBA测试";
+    public string TestModeBannerText => _testProfileMode == "finished_product" ? "整机测试" : "PCBA测试";
+    public string TestModeBannerBackground => _testProfileMode == "finished_product" ? "#9A3412" : "#0B4A8B";
+    public string TestModeDatabaseName => string.IsNullOrWhiteSpace(_testModeConfiguration.DatabaseName)
+        ? (_testProfileMode == "finished_product" ? "space-test-finished-product.db" : "space-test-pcba.db")
+        : _testModeConfiguration.DatabaseName;
     public string ApplicationUpgradeStatusText => _applicationUpgradeCheckCompleted ? "设备程序：已确认" : "设备程序：待检查";
     public string ApplicationUpgradeDetailText => _applicationUpgradeCheckCompleted
         ? $"升级校验完成\n路径：{_upgradeConfiguration.RemoteBinaryPath}\nMD5：{_deviceApplicationMd5}"
@@ -338,7 +350,7 @@ public sealed class MainViewModel : ObservableObject
     public string LogsText => string.Join(Environment.NewLine, Logs.Reverse());
 
     public string AppVersion { get; } = GetAppVersion();
-    public string WindowTitle => $"妫€娴嬪伐浣滃彴 {AppVersion}";
+    public string WindowTitle => $"SpaceTest PC - v{AppVersion}";
     public int TestOverviewColumns { get; }
     public string SnPolicyModeName => _allowSnMismatchForDebug ? "开发模式" : "生产模式";
     public string SnPolicyModeDescription => _allowSnMismatchForDebug
@@ -2416,11 +2428,16 @@ public sealed class MainViewModel : ObservableObject
 
     private static IReadOnlyList<TestPlanItem> BuildActiveTestPlan(AppConfiguration configuration)
     {
-        var enabled = configuration.TestPlan.EnabledTests
+        var mode = string.IsNullOrWhiteSpace(configuration.TestMode) ? "pcba" : configuration.TestMode.Trim();
+        var modeConfiguration = configuration.TestModes.TryGetValue(mode, out var configuredMode) ? configuredMode : null;
+        var enabledSource = modeConfiguration?.EnabledTests is { Length: > 0 } ? modeConfiguration.EnabledTests : configuration.TestPlan.EnabledTests;
+        var disabledSource = modeConfiguration?.DisabledTests is { Length: > 0 } ? modeConfiguration.DisabledTests : configuration.TestPlan.DisabledTests;
+        var skippedSource = modeConfiguration?.SkippedTests is { Count: > 0 } ? modeConfiguration.SkippedTests : configuration.TestPlan.SkippedTests;
+        var enabled = enabledSource
             .Where(id => !string.IsNullOrWhiteSpace(id))
             .Select(id => id.Trim())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var disabled = configuration.TestPlan.DisabledTests
+        var disabled = disabledSource
             .Where(id => !string.IsNullOrWhiteSpace(id))
             .Select(id => id.Trim())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -2438,8 +2455,8 @@ public sealed class MainViewModel : ObservableObject
             .Select(item => new TestPlanItem
             {
                 Id = item.Id,
-                Skip = configuration.TestPlan.SkippedTests.ContainsKey(item.Id),
-                SkipReason = configuration.TestPlan.SkippedTests.TryGetValue(item.Id, out var reason) ? reason : null,
+                Skip = skippedSource.ContainsKey(item.Id),
+                SkipReason = skippedSource.TryGetValue(item.Id, out var reason) ? reason : null,
                 Parameters = GetTestParameters(configuration, item.Id)
             })
             .ToArray();

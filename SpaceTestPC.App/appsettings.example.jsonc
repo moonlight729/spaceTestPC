@@ -1,4 +1,23 @@
 {
+  "testMode": "pcba",
+  "testModes": {
+    "pcba": {
+      "displayName": "PCBA 测试",
+      "databaseName": "space-test-pcba.db",
+      "enabledTests": [],
+      "disabledTests": [],
+      "skippedTests": {}
+    },
+    "finished_product": {
+      "displayName": "整机测试",
+      "databaseName": "space-test-finished-product.db",
+      "enabledTests": [],
+      "disabledTests": [],
+      "skippedTests": {
+        "indicator_led": "整机模式使用人工判定"
+      }
+    }
+  },
   "bluetoothBroadcaster": {
     // Upper-PC BLE broadcaster. 3576 scans for this same name.
     "enabled": true,

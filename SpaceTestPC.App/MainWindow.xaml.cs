@@ -20,7 +20,14 @@ public partial class MainWindow : Window
         var configuration = new ConfigurationService().Load(Path.Combine(AppContext.BaseDirectory, "appsettings.json"));
         var manualTestInteractionService = new ManualTestInteractionService();
         var dataDir = Path.Combine(AppContext.BaseDirectory, "data");
-        var repository = new SqliteDatabaseRepository(Path.Combine(dataDir, "box-test-records.db"));
+        var mode = string.IsNullOrWhiteSpace(configuration.TestMode) ? "pcba" : configuration.TestMode.Trim().ToLowerInvariant();
+        var modeConfiguration = configuration.TestModes.TryGetValue(mode, out var configuredMode)
+            ? configuredMode
+            : new Models.TestModeConfiguration();
+        var databaseName = string.IsNullOrWhiteSpace(modeConfiguration.DatabaseName)
+            ? mode == "finished_product" ? "space-test-finished-product.db" : "space-test-pcba.db"
+            : modeConfiguration.DatabaseName;
+        var repository = new SqliteDatabaseRepository(Path.Combine(dataDir, databaseName));
         var pcbaClientFactory = new PcbaCommandClientFactory(
             new MockPcbaCommandClient(mockConfiguration: configuration.TestPlan.Mock, manualTestInteractionService: manualTestInteractionService),
             new AdbPcbaCommandClient());
