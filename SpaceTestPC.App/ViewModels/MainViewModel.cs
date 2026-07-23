@@ -19,7 +19,7 @@ public sealed class MainViewModel : ObservableObject
         new() { Id = "board_state" }, new() { Id = "hdmi" }, new() { Id = "keys" }, new() { Id = "lcd" },
         new() { Id = "ethernet" }, new() { Id = "wifi" }, new() { Id = "bluetooth" }, new() { Id = "fingerprint" },
         new() { Id = "battery_management" }, new() { Id = "typec_fast_charge" }, new() { Id = "typec_camera" }, new() { Id = "tf" }, new() { Id = "usb2_3" },
-        new() { Id = "pcba_test_points" }, new() { Id = "indicator_led" }, new() { Id = "fan" }, new() { Id = "otg" }
+        new() { Id = "pcba_test_points" }, new() { Id = "indicator_led" }, new() { Id = "fan" }, new() { Id = "otg" }, new() { Id = "reset_button" }
     ];
 
     // Change this value during deployment; operators do not choose the transport mode.
@@ -467,6 +467,8 @@ public sealed class MainViewModel : ObservableObject
         "hdmi" => "请观察 HDMI 输出是否正常，然后手动选择通过或失败。",
         "keys" => "请依次按下 PCBA 的上、下、左、右方向键和确认键；五键均识别后将自动通过。",
         "lcd" => "请观察 LCD：背光正常、RGB 测试图案完整且稳定，无花屏、缺线、闪烁或明显亮暗异常后再判定。",
+        "indicator_led" => "请观察蓝灯和绿灯是否正常，并确认两灯以 2 秒周期交替显示后选择 PASS 或 FAIL。",
+        "reset_button" => "请按下设备复位键，确认 LCD 屏幕已经息屏后选择 PASS 或 FAIL。",
         _ => string.Empty
     };
     public string ManualPassButtonText => _manualDecisionTestId switch
@@ -1186,12 +1188,15 @@ public sealed class MainViewModel : ObservableObject
             HandleWifiReport(testEvent);
         }
 
-        if (testEvent.TestId is "indicator_led" or "fan" && testEvent.Status == "running")
+        if (testEvent.TestId is "indicator_led" or "fan" && testEvent.Status == "running" &&
+            !(testEvent.TestId == "indicator_led" && _testProfileMode == "finished_product"))
         {
             HandleVoltageMeasurementReport(testEvent);
         }
 
-        _manualDecisionTestId = testEvent.Status == "running" && testEvent.TestId is "hdmi" or "lcd"
+        _manualDecisionTestId = testEvent.Status == "running" &&
+            (testEvent.TestId is "hdmi" or "lcd" or "reset_button" ||
+             testEvent.TestId == "indicator_led" && _testProfileMode == "finished_product")
             ? testEvent.TestId
             : testEvent.Status is "passed" or "failed" && testEvent.TestId == _manualDecisionTestId
                     ? null
@@ -1688,6 +1693,7 @@ public sealed class MainViewModel : ObservableObject
         "hdmi" => "HDMI",
         "keys" => "按键",
         "lcd" => "LCD",
+        "reset_button" => "复位按键",
         "ethernet" => "网口",
         "wifi" => "WiFi",
         "bluetooth" => "蓝牙",
@@ -2260,6 +2266,12 @@ public sealed class MainViewModel : ObservableObject
         {
             _upgradePackageReady = true;
             _localUpgradeBinaryPath = "升级检查已关闭";
+            var disabledResult = TestResults.FirstOrDefault(item => item.TestId == ApplicationUpgradeItemId);
+            disabledResult?.ApplyLocalResult(TestItemState.Skipped, "升级检查已关闭。", new Dictionary<string, object?>
+            {
+                ["status"] = "disabled"
+            });
+            SetTestItemState(ApplicationUpgradeItemId, TestItemState.Skipped);
         }
         else
         {
@@ -2279,6 +2291,15 @@ public sealed class MainViewModel : ObservableObject
             {
                 _upgradePackageReady = false;
                 AppendLog($"Upgrade package validation failed: path={_localUpgradeBinaryPath}, error={ex.Message}");
+                var failedResult = TestResults.FirstOrDefault(item => item.TestId == ApplicationUpgradeItemId);
+                failedResult?.ApplyLocalResult(TestItemState.Failed, $"升级软件校验失败：{ex.Message}", new Dictionary<string, object?>
+                {
+                    ["path"] = _localUpgradeBinaryPath,
+                    ["error"] = ex.Message,
+                    ["reason"] = "upgrade_package_validation_failed"
+                });
+                SetTestItemState(ApplicationUpgradeItemId, TestItemState.Failed);
+                SelectedTestResult = failedResult;
             }
         }
 
@@ -2419,9 +2440,15 @@ public sealed class MainViewModel : ObservableObject
     {
         var mode = string.IsNullOrWhiteSpace(configuration.TestMode) ? "pcba" : configuration.TestMode.Trim();
         var modeConfiguration = configuration.TestModes.TryGetValue(mode, out var configuredMode) ? configuredMode : null;
-        var enabledSource = modeConfiguration?.EnabledTests is { Length: > 0 } ? modeConfiguration.EnabledTests : configuration.TestPlan.EnabledTests;
-        var disabledSource = modeConfiguration?.DisabledTests is { Length: > 0 } ? modeConfiguration.DisabledTests : configuration.TestPlan.DisabledTests;
-        var skippedSource = modeConfiguration?.SkippedTests is { Count: > 0 } ? modeConfiguration.SkippedTests : configuration.TestPlan.SkippedTests;
+        var enabledSource = modeConfiguration is not null && modeConfiguration.EnabledTests.Length > 0
+            ? modeConfiguration.EnabledTests
+            : configuration.TestPlan.EnabledTests;
+        var disabledSource = modeConfiguration is not null && modeConfiguration.DisabledTests.Length > 0
+            ? modeConfiguration.DisabledTests
+            : configuration.TestPlan.DisabledTests;
+        var skippedSource = modeConfiguration is not null
+            ? modeConfiguration.SkippedTests
+            : configuration.TestPlan.SkippedTests;
         var enabled = enabledSource
             .Where(id => !string.IsNullOrWhiteSpace(id))
             .Select(id => id.Trim())
@@ -2446,19 +2473,20 @@ public sealed class MainViewModel : ObservableObject
                 Id = item.Id,
                 Skip = skippedSource.ContainsKey(item.Id),
                 SkipReason = skippedSource.TryGetValue(item.Id, out var reason) ? reason : null,
-                Parameters = GetTestParameters(configuration, item.Id)
+                Parameters = GetTestParameters(configuration, item.Id, mode)
             })
             .ToArray();
     }
 
-    private static IReadOnlyDictionary<string, object?> GetTestParameters(AppConfiguration configuration, string testId)
+    private static IReadOnlyDictionary<string, object?> GetTestParameters(AppConfiguration configuration, string testId, string mode)
     {
         if (!configuration.TestPlan.TestParameters.TryGetValue(testId, out var parameters))
         {
-            return new Dictionary<string, object?>();
+            return new Dictionary<string, object?> { ["mode"] = mode };
         }
 
         var result = parameters.ToDictionary(pair => pair.Key, pair => (object?)pair.Value, StringComparer.OrdinalIgnoreCase);
+        result["mode"] = mode;
         if (testId == "bluetooth" && !string.IsNullOrWhiteSpace(configuration.BluetoothBroadcaster.BroadcastName))
         {
             // The upper PC configures the BLE broadcaster name and the 3576
