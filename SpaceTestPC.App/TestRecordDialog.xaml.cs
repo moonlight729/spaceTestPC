@@ -24,7 +24,7 @@ public partial class TestRecordDialog : Window
     {
         "board_state" => "板状态",
         "hdmi" => "HDMI 输出",
-        "keys" => "方向按键",
+        "keys" => "六键测试",
         "lcd" => "LCD 显示屏",
         "wifi" => "Wi-Fi",
         "bluetooth" => "蓝牙",

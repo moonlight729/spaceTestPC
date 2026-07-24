@@ -30,6 +30,7 @@ public sealed class UpgradeConfiguration
     public string RemoteBinaryPath { get; set; } = "/vendor/originflow/bin/spacetest3576";
     public string ServiceName { get; set; } = "pcba-test.service";
     public int AutoUpgradeDelaySeconds { get; set; } = 5;
+    public string ApplicationVersion { get; set; } = string.Empty;
 }
 
 public sealed class ApplicationMd5Info
@@ -38,6 +39,8 @@ public sealed class ApplicationMd5Info
     public string Path { get; init; } = string.Empty;
     public string Md5 { get; init; } = string.Empty;
     public string Service { get; init; } = string.Empty;
+    public string DeviceVersion { get; init; } = string.Empty;
+    public bool VersionAvailable { get; init; }
 }
 
 public sealed class ApplicationUpgradeResult
@@ -45,6 +48,14 @@ public sealed class ApplicationUpgradeResult
     public bool Success { get; init; }
     public string Message { get; init; } = string.Empty;
     public string FinalMd5 { get; init; } = string.Empty;
+}
+
+public sealed class ApplicationVersionInfo
+{
+    public string AppName { get; init; } = string.Empty;
+    public string Version { get; init; } = string.Empty;
+    public bool VersionAvailable { get; init; }
+    public string Path { get; init; } = string.Empty;
 }
 
 public sealed class LoggingConfiguration

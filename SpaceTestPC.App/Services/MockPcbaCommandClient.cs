@@ -18,6 +18,9 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
             Service = "pcba-test.service"
         });
 
+    public Task<ApplicationVersionInfo> GetApplicationVersionAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(new ApplicationVersionInfo { AppName = "spacetest3576", VersionAvailable = false });
+
     public Task<ApplicationUpgradeResult> UpgradeApplicationAsync(string localBinaryPath, string expectedMd5, string serviceName, string remoteBinaryPath, CancellationToken cancellationToken = default) =>
         Task.FromResult(new ApplicationUpgradeResult { Success = true, FinalMd5 = expectedMd5, Message = "Mock application upgrade completed." });
 

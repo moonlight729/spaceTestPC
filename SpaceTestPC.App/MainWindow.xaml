@@ -70,9 +70,8 @@
                     <Border MinWidth="148" Padding="18,8" Background="{Binding TestModeBannerBackground}" CornerRadius="7">
                         <TextBlock HorizontalAlignment="Center" FontSize="24" FontWeight="Bold" Foreground="White" Text="{Binding TestModeBannerText}" />
                     </Border>
-                    <TextBlock Margin="0,4,0,0" Foreground="#B8C7D9" Text="{Binding TestModeDisplayName, StringFormat=当前模式：{0}}" />
                 </StackPanel>
-                <TextBlock Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="20" FontWeight="SemiBold" Foreground="White" Text="SpaceTest 测试工作台" />
+                <TextBlock Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="30" FontWeight="Bold" Foreground="White" Text="SpaceTest 测试工作台" />
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Width="82" Height="34" Margin="0,0,10,0" Padding="0" HorizontalContentAlignment="Center" Background="#175CD3" Command="{Binding ShowTestPageCommand}" Content="TEST" />
                     <Button Width="142" Height="34" Margin="0,0,22,0" Padding="0" HorizontalContentAlignment="Center" Background="#344054" Command="{Binding ShowQueryPageCommand}" Content="QUERY RECORDS" />
@@ -84,8 +83,8 @@
                         <TextBlock HorizontalAlignment="Center" Foreground="#B8C7D9" Text="CONNECTION" />
                         <TextBlock HorizontalAlignment="Center" FontSize="16" FontWeight="SemiBold" Foreground="White" Text="{Binding BoardState}" TextTrimming="CharacterEllipsis" />
                     </StackPanel>
-                    <StackPanel Width="104" HorizontalAlignment="Center">
-                        <TextBlock HorizontalAlignment="Center" Foreground="#B8C7D9" Text="MODE" />
+                    <StackPanel Width="112" HorizontalAlignment="Center">
+                        <TextBlock HorizontalAlignment="Center" FontSize="14" Foreground="#B8C7D9" Text="MODE" />
                         <Border Margin="0,4,0,0" Padding="10,4" Background="{Binding SnPolicyModeBackground}" CornerRadius="12" HorizontalAlignment="Center">
                             <TextBlock HorizontalAlignment="Center" FontSize="14" FontWeight="SemiBold" Foreground="{Binding SnPolicyModeForeground}" Text="{Binding SnPolicyModeName}" />
                         </Border>
@@ -239,7 +238,7 @@
                             <TextBlock Margin="0,28,0,8" Style="{StaticResource SectionTitle}" Text="MEASUREMENT / DEVICE DATA" />
                             <TextBox MinHeight="150" Padding="14" Background="#101828" BorderThickness="0" Foreground="#D0D5DD" FontFamily="Consolas" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Text="{Binding SelectedTestResult.DataText, Mode=OneWay}" />
                             <ItemsControl Margin="0,22,0,0" ItemsSource="{Binding DirectionalKeys}" Visibility="{Binding IsKeyTestDetailVisible, Converter={StaticResource BoolToVisibilityConverter}}">
-                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="5" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="6" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate><DataTemplate><Border Margin="0,0,10,0" Padding="12" Background="{Binding Background}" CornerRadius="6"><StackPanel><TextBlock HorizontalAlignment="Center" FontWeight="Bold" Foreground="White" Text="{Binding Label}" /><TextBlock HorizontalAlignment="Center" Margin="0,4,0,0" Foreground="White" Text="{Binding StatusText}" /></StackPanel></Border></DataTemplate></ItemsControl.ItemTemplate>
                             </ItemsControl>
                         </StackPanel>

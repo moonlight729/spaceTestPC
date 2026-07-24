@@ -105,6 +105,8 @@ public sealed class MainViewModel : ObservableObject
     private int _upgradeCountdownSeconds;
     private bool _isUpgradePromptVisible;
     private string _deviceApplicationMd5 = string.Empty;
+    private string _deviceApplicationVersion = string.Empty;
+    private bool _deviceApplicationVersionAvailable;
     private bool _applicationUpgradeCheckCompleted;
     private bool _applicationUpgradeCheckInProgress;
     private string _hostApplicationMd5 = string.Empty;
@@ -214,7 +216,7 @@ public sealed class MainViewModel : ObservableObject
         }.Concat(_testPlan.Select(item => new TestResultViewModel(item.Id, GetTestDisplayName(item.Id)))));
         DirectionalKeys = new ObservableCollection<DirectionalKeyViewModel>
         {
-            new("up", "上"), new("down", "下"), new("left", "左"), new("right", "右"), new("confirm", "确认")
+            new("up", "上"), new("down", "下"), new("left", "左"), new("right", "右"), new("confirm", "确认"), new("recovery", "Recovery")
         };
         SelectedTestResult = TestResults.FirstOrDefault();
         TestOverviewColumns = Math.Max(1, TestItems.Count);
@@ -335,7 +337,6 @@ public sealed class MainViewModel : ObservableObject
         : $"MD5：{_hostApplicationMd5}";
     public string UpgradePackageStatusForeground => _upgradePackageReady ? "#15803D" : "#B42318";
     public string UpgradePackageStatusBackground => _upgradePackageReady ? "#ECFDF3" : "#FEF3F2";
-    public string TestModeDisplayName => _testProfileMode == "finished_product" ? "整机测试" : "PCBA测试";
     public string TestModeBannerText => _testProfileMode == "finished_product" ? "整机测试" : "PCBA测试";
     public string TestModeBannerBackground => _testProfileMode == "finished_product" ? "#9A3412" : "#0B4A8B";
     public string TestModeDatabaseName => string.IsNullOrWhiteSpace(_testModeConfiguration.DatabaseName)
@@ -465,9 +466,9 @@ public sealed class MainViewModel : ObservableObject
     public string ManualDecisionPrompt => _manualDecisionTestId switch
     {
         "hdmi" => "请观察 HDMI 输出是否正常，然后手动选择通过或失败。",
-        "keys" => "请依次按下 PCBA 的上、下、左、右方向键和确认键；五键均识别后将自动通过。",
+        "keys" => "请依次按下上、下、左、右方向键和确认键，再按下 Recovery 实体键；六键全部识别后自动通过。",
         "lcd" => "请观察 LCD：背光正常、RGB 测试图案完整且稳定，无花屏、缺线、闪烁或明显亮暗异常后再判定。",
-        "indicator_led" => "请观察蓝灯和绿灯是否正常，并确认两灯以 2 秒周期交替显示后选择 PASS 或 FAIL。",
+        "indicator_led" => "请观察蓝灯和红灯是否正常，并确认两灯以 2 秒周期交替显示后选择 PASS 或 FAIL。",
         "reset_button" => "请按下设备复位键，确认 LCD 屏幕已经息屏后选择 PASS 或 FAIL。",
         _ => string.Empty
     };
@@ -692,8 +693,23 @@ public sealed class MainViewModel : ObservableObject
             if (deviceInfo is null)
                 throw new InvalidOperationException("ADB device is not ready.", lastError);
             _deviceApplicationMd5 = deviceInfo.Md5;
-            AppendLog($"Application MD5: host={_hostApplicationMd5}, device={_deviceApplicationMd5}");
-            if (string.Equals(_hostApplicationMd5, _deviceApplicationMd5, StringComparison.OrdinalIgnoreCase))
+            try
+            {
+                var versionInfo = await client.GetApplicationVersionAsync();
+                _deviceApplicationVersion = versionInfo.Version;
+                _deviceApplicationVersionAvailable = versionInfo.VersionAvailable && !string.IsNullOrWhiteSpace(versionInfo.Version);
+            }
+            catch (Exception ex)
+            {
+                _deviceApplicationVersion = string.Empty;
+                _deviceApplicationVersionAvailable = false;
+                AppendLog($"Application version unavailable; fallback to MD5: {ex.Message}");
+            }
+            var versionCheckEnabled = !string.IsNullOrWhiteSpace(_upgradeConfiguration.ApplicationVersion) && _deviceApplicationVersionAvailable;
+            var md5Matches = string.Equals(_hostApplicationMd5, _deviceApplicationMd5, StringComparison.OrdinalIgnoreCase);
+            var versionMatches = !versionCheckEnabled || string.Equals(_upgradeConfiguration.ApplicationVersion, _deviceApplicationVersion, StringComparison.OrdinalIgnoreCase);
+            AppendLog($"Application identity: hostVersion={_upgradeConfiguration.ApplicationVersion}, deviceVersion={_deviceApplicationVersion}, versionAvailable={_deviceApplicationVersionAvailable}, hostMd5={_hostApplicationMd5}, deviceMd5={_deviceApplicationMd5}, md5Match={md5Matches}, versionMatch={versionMatches}");
+            if (md5Matches && versionMatches)
             {
                 _applicationUpgradeCheckCompleted = true;
                 upgradeResult?.ApplyLocalResult(TestItemState.Passed, "设备程序已是最新，无需升级。", new Dictionary<string, object?>
@@ -1171,6 +1187,11 @@ public sealed class MainViewModel : ObservableObject
                 ResetDirectionalKeys();
             }
             ApplyDetectedKeys(testEvent.Data);
+            UpdateRecoveryKeyState(testEvent);
+        }
+        else if (testEvent.TestId == "keys" && (testEvent.Status is "passed" or "failed"))
+        {
+            UpdateRecoveryKeyState(testEvent);
         }
 
         if (testEvent.TestId == "typec_fast_charge" && testEvent.Status == "running")
@@ -1493,10 +1514,24 @@ public sealed class MainViewModel : ObservableObject
 
     private string BuildKeyTestInstruction(TestSessionEvent testEvent)
     {
+        var phase = GetDataString(testEvent.Data, "phase", string.Empty);
+        if (string.Equals(phase, "recovery", StringComparison.OrdinalIgnoreCase))
+        {
+            var rawValue = GetDataInt(testEvent.Data, "rawValue");
+            var stableCount = GetDataInt(testEvent.Data, "stableCount");
+            var stableRequired = Math.Max(1, GetDataInt(testEvent.Data, "stableRequired"));
+            var threshold = GetDataInt(testEvent.Data, "pressThreshold");
+            if (testEvent.Status == "passed")
+                return $"Recovery 按键通过：ADC={rawValue}，连续 {stableRequired} 次小于 {threshold}。";
+            if (testEvent.Status == "failed")
+                return $"Recovery 按键失败：超时未检测到 ADC 小于 {threshold}。";
+            return $"请按下 Recovery 按键；当前 ADC={rawValue}，判定阈值 <{threshold}，稳定采样 {stableCount}/{stableRequired}。";
+        }
+
         var remainingSeconds = GetRemainingKeySeconds(testEvent);
         if (testEvent.Status == "passed")
         {
-            return "按键测试通过，五个按键均已识别。";
+            return "六键测试通过：上、下、左、右、确认和 Recovery 均已识别。";
         }
 
         if (testEvent.Status == "failed")
@@ -1504,7 +1539,7 @@ public sealed class MainViewModel : ObservableObject
             return testEvent.ResultCode switch
             {
                 4000 => "按键测试失败：3576 无法打开按键输入设备，请检查 gpio-keys 与 pwrkey 节点。",
-                4001 => $"按键测试失败：{FormatKeyTimeoutSeconds()} 秒内未完成上、下、左、右、确认五个按键输入。",
+                4001 => $"按键测试失败：{FormatKeyTimeoutSeconds()} 秒内未完成上、下、左、右、确认五个输入按键。",
                 4002 => "按键测试失败：3576 读取按键输入事件异常，请检查 evdev 驱动和输入节点。",
                 _ => $"按键测试失败：resultCode={testEvent.ResultCode}，message={testEvent.Message}"
             };
@@ -1514,7 +1549,7 @@ public sealed class MainViewModel : ObservableObject
         var missing = DirectionalKeys.Where(key => !key.IsDetected).Select(key => key.Label).ToArray();
         var detectedText = detected.Length == 0 ? "无" : string.Join("、", detected);
         var missingText = missing.Length == 0 ? "无" : string.Join("、", missing);
-        return $"按键测试：请在 {FormatKeyTimeoutSeconds()} 秒内依次按上、下、左、右、确认键。已识别：{detectedText}；剩余：{missingText}；倒计时：{remainingSeconds} 秒。";
+        return $"六键测试第一阶段：请在 {FormatKeyTimeoutSeconds()} 秒内依次按上、下、左、右、确认键。五键完成后再按 Recovery，底层将通过 ADC 判定。已识别：{detectedText}；剩余：{missingText}；倒计时：{remainingSeconds} 秒。";
     }
 
     private int GetRemainingKeySeconds(TestSessionEvent testEvent)
@@ -1691,7 +1726,7 @@ public sealed class MainViewModel : ObservableObject
         ApplicationUpgradeItemId => "设备程序升级",
         "board_state" => "板状态",
         "hdmi" => "HDMI",
-        "keys" => "按键",
+        "keys" => "六键测试",
         "lcd" => "LCD",
         "reset_button" => "复位按键",
         "ethernet" => "网口",
@@ -1738,11 +1773,42 @@ public sealed class MainViewModel : ObservableObject
         foreach (var key in DirectionalKeys)
         {
             key.IsDetected = false;
+            key.IsChecking = false;
+            key.IsFailed = false;
+        }
+    }
+
+    private void UpdateRecoveryKeyState(TestSessionEvent testEvent)
+    {
+        var recovery = DirectionalKeys.FirstOrDefault(item => item.Id == "recovery");
+        if (recovery is null) return;
+        var phase = GetDataString(testEvent.Data, "phase", string.Empty);
+        if (testEvent.Status == "passed" && string.Equals(phase, "recovery", StringComparison.OrdinalIgnoreCase))
+        {
+            recovery.IsChecking = false;
+            recovery.IsFailed = false;
+            recovery.IsDetected = true;
+        }
+        else if (testEvent.Status == "failed" && (string.Equals(phase, "recovery", StringComparison.OrdinalIgnoreCase) || testEvent.ResultCode == 4003))
+        {
+            recovery.IsChecking = false;
+            recovery.IsDetected = false;
+            recovery.IsFailed = true;
+        }
+        else if (testEvent.Status == "running" && string.Equals(phase, "recovery", StringComparison.OrdinalIgnoreCase))
+        {
+            recovery.IsDetected = false;
+            recovery.IsFailed = false;
+            recovery.IsChecking = true;
         }
     }
 
     private static bool IsInitialKeyTestReport(IReadOnlyDictionary<string, object?> data)
     {
+        if (string.Equals(GetDataString(data, "phase", string.Empty), "recovery", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
         var detectedKeys = GetStringValues(data, "detectedKeys").ToArray();
         var currentKey = GetDataString(data, "key", string.Empty);
         var detectedMask = GetDataInt(data, "detectedMask");

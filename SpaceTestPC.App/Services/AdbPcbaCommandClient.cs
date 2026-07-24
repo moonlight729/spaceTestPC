@@ -49,6 +49,16 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         };
     }
 
+    public async Task<ApplicationVersionInfo> GetApplicationVersionAsync(CancellationToken cancellationToken = default)
+    {
+        var command = new HostCommand { SessionId = "version-check", CommandGroup = "sys", Command = "get_version" };
+        var payload = await SendCommandAsync(command, cancellationToken);
+        var response = DeserializeEnvelope<ApplicationVersionInfo>(payload);
+        if (response.ResultCode != 0)
+            return new ApplicationVersionInfo { VersionAvailable = false };
+        return response.Data ?? new ApplicationVersionInfo { VersionAvailable = false };
+    }
+
     public async Task<ApplicationUpgradeResult> UpgradeApplicationAsync(
         string localBinaryPath, string expectedMd5, string serviceName, string remoteBinaryPath,
         CancellationToken cancellationToken = default)
