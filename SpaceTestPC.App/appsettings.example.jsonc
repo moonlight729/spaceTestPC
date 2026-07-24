@@ -6,7 +6,10 @@
       "databaseName": "space-test-pcba.db",
       "enabledTests": [],
       "disabledTests": [],
-      "skippedTests": {}
+      "skippedTests": {
+        "fingerprint": "指纹模组暂不测试",
+        "reset_button": "复位按键暂不测试"
+      }
     },
     "finished_product": {
       "displayName": "整机测试",
@@ -14,6 +17,8 @@
       "enabledTests": [],
       "disabledTests": [],
       "skippedTests": {
+        "fingerprint": "指纹模组暂不测试",
+        "reset_button": "复位按键暂不测试",
         "indicator_led": "整机模式使用人工判定"
       }
     }
