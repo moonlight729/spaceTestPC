@@ -42,6 +42,23 @@ static int send_application_md5(int fd, const char *session_id, const struct app
     return protocol_write_line(fd, response);
 }
 
+static int send_application_version(int fd, const char *session_id, const struct app_config *config)
+{
+    char data[512];
+    char response[900];
+    const char *version = config != NULL && config->application_version != NULL
+        ? config->application_version : "";
+    if (version[0] == '\0') {
+        return send_failure(fd, session_id, 2404, "Application version unavailable");
+    }
+    snprintf(data, sizeof(data),
+             "{\"appName\":\"spacetest3576\",\"version\":\"%s\",\"versionAvailable\":true,\"path\":\"%s\"}",
+             version, config->application_path);
+    protocol_build_response_envelope(response, sizeof(response), session_id, 0,
+                                     "Application version loaded", data);
+    return protocol_write_line(fd, response);
+}
+
 static int json_get_string_value(const char *json, const char *key, char *buffer, size_t buffer_size)
 {
     char pattern[64];
@@ -154,6 +171,9 @@ int session_manager_handle_client(int client_fd, const struct app_config *config
     }
     if (strcmp(request.command_group, "sys") == 0 && strcmp(request.command, "get_md5") == 0) {
         return send_application_md5(client_fd, request.session_id, config);
+    }
+    if (strcmp(request.command_group, "sys") == 0 && strcmp(request.command, "get_version") == 0) {
+        return send_application_version(client_fd, request.session_id, config);
     }
     if (strcmp(request.command_group, "sys") == 0 && strcmp(request.command, "write_sn") == 0) {
         return write_board_sn(client_fd, &request);

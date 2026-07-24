@@ -27,6 +27,7 @@ struct app_config {
     int camera_pwm_min_pulse_delta;
     const char *application_path;
     const char *application_service;
+    const char *application_version;
 };
 
 void app_config_load_defaults(struct app_config *config);

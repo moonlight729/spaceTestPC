@@ -226,9 +226,7 @@ int board_state_load_from_file(const char *path, struct board_state *state)
             if ((equals + 1)[0] != '\0') copy_text(state->board_id, sizeof(state->board_id), equals + 1);
         }
         else if (strcmp(line, "board_sn") == 0) {
-            /* Keep the vendor-storage SN authoritative. An empty summary file
-             * must not erase a valid SN that was already read from vendor storage.
-             */
+            /* The vendor-storage value is reloaded after the summary file. */
             if ((equals + 1)[0] != '\0') copy_text(state->board_sn, sizeof(state->board_sn), equals + 1);
         }
         else if (strcmp(line, "test_mode") == 0) {
@@ -266,6 +264,12 @@ int board_state_load_from_file(const char *path, struct board_state *state)
     }
 
     fclose(file);
+    /* The summary file contains historical state and may have an older SN.
+     * VENDOR_SN_ID is the authoritative current board identity.
+     */
+    if (read_sn_from_vendor_storage(state->board_sn, sizeof(state->board_sn)) != 0) {
+        state->board_sn[0] = '\0';
+    }
     return 0;
 }
 

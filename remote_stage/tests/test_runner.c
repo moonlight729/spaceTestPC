@@ -2,6 +2,7 @@
 #include "test_runner.h"
 
 #include "../hardware/fingerprint/fingerprint.h"
+#include "../hardware/indicator_led/indicator_led.h"
 #include "../hardware/bluetooth/bluetoothctl_scan.h"
 #include "../hardware/camera/camera_stream.h"
 #include "../hardware/ethernet/ethernet_nmcli.h"
@@ -1278,6 +1279,131 @@ static int run_manual_observation(int fd, const char *test_id, const char *displ
     }
 }
 
+static int run_finished_product_indicator_led(int fd, const char *test_start, const char *test_end)
+{
+#define INDICATOR_LED_ON_BRIGHTNESS 255
+    struct indicator_led_device device;
+    struct indicator_led_result result;
+    int timeout_ms = param_int(test_start, test_end, "timeoutMs", 60000);
+    int elapsed_ms = 0;
+    int blue_on = 1;
+    char data[512];
+
+    if (timeout_ms < 30000) timeout_ms = 30000;
+    if (indicator_led_open(&device) != 0) {
+        send_report(fd, "indicator_led", "failed", 4600, "Unable to open indicator LED controls", "{}");
+        return -1;
+    }
+
+    indicator_led_set(&device, INDICATOR_LED_GREEN, 0, &result);
+    if (indicator_led_set(&device, INDICATOR_LED_GREEN, 0, &result) != 0 ||
+        indicator_led_set(&device, INDICATOR_LED_BLUE, INDICATOR_LED_ON_BRIGHTNESS, &result) != 0) {
+        indicator_led_close(&device);
+        send_report(fd, "indicator_led", "failed", 4601, "Unable to set initial indicator LED state", "{}");
+        return -1;
+    }
+    snprintf(data, sizeof(data),
+             "{\"manualObserved\":true,\"requiresOperatorDecision\":true,\"displayMode\":\"alternating\","
+             "\"cycleMs\":2000,\"currentLed\":\"blue\",\"timeoutMs\":%d}", timeout_ms);
+    send_report(fd, "indicator_led", "running", 0, "Waiting for operator to observe alternating LEDs", data);
+
+    while (elapsed_ms < timeout_ms) {
+        fd_set read_fds;
+        struct timeval tv;
+        char line[PROTOCOL_MAX_LINE];
+        int ready;
+
+        FD_ZERO(&read_fds);
+        FD_SET(fd, &read_fds);
+        tv.tv_sec = 2;
+        tv.tv_usec = 0;
+        ready = select(fd + 1, &read_fds, NULL, NULL, &tv);
+        if (ready < 0) break;
+        if (ready > 0 && protocol_read_line(fd, line, sizeof(line)) > 0 &&
+            strstr(line, "\"event\":\"test.decision\"") != NULL &&
+            strstr(line, "indicator_led") != NULL) {
+            int passed = strstr(line, "\"passed\":true") != NULL;
+            indicator_led_set(&device, INDICATOR_LED_BLUE, 0, &result);
+            indicator_led_set(&device, INDICATOR_LED_GREEN, 0, &result);
+            indicator_led_close(&device);
+            snprintf(data, sizeof(data),
+                     "{\"manualObserved\":true,\"operatorConfirmed\":%s,\"displayMode\":\"alternating\",\"cycleMs\":2000}",
+                     passed ? "true" : "false");
+            return send_report(fd, "indicator_led", passed ? "passed" : "failed",
+                               passed ? 0 : 3910,
+                               passed ? "Operator confirmed pass" : "Operator confirmed fail", data) == 0 && passed ? 0 : -1;
+        }
+
+        blue_on = !blue_on;
+        if (indicator_led_set(&device, INDICATOR_LED_BLUE, blue_on ? INDICATOR_LED_ON_BRIGHTNESS : 0, &result) != 0 ||
+            indicator_led_set(&device, INDICATOR_LED_GREEN, blue_on ? 0 : INDICATOR_LED_ON_BRIGHTNESS, &result) != 0) {
+            indicator_led_set(&device, INDICATOR_LED_BLUE, 0, &result);
+            indicator_led_set(&device, INDICATOR_LED_GREEN, 0, &result);
+            indicator_led_close(&device);
+            send_report(fd, "indicator_led", "failed", 4601, "Unable to switch indicator LED state", "{}");
+            return -1;
+        }
+        elapsed_ms += 2000;
+        snprintf(data, sizeof(data),
+                 "{\"manualObserved\":true,\"requiresOperatorDecision\":true,\"displayMode\":\"alternating\","
+                 "\"cycleMs\":2000,\"currentLed\":\"%s\",\"elapsedMs\":%d,\"timeoutMs\":%d}",
+                 blue_on ? "blue" : "green", elapsed_ms, timeout_ms);
+        send_report(fd, "indicator_led", "running", 0, "Alternating LEDs for operator observation", data);
+    }
+
+    indicator_led_set(&device, INDICATOR_LED_BLUE, 0, &result);
+    indicator_led_set(&device, INDICATOR_LED_GREEN, 0, &result);
+    indicator_led_close(&device);
+    send_report(fd, "indicator_led", "failed", 3911, "Operator decision timed out", "{\"displayMode\":\"alternating\",\"cycleMs\":2000}");
+    return -1;
+#undef INDICATOR_LED_ON_BRIGHTNESS
+}
+
+static int run_recovery_adc(int fd, const char *test_start, const char *test_end)
+{
+    const char *adc_path = "/sys/devices/platform/2ae00000.adc/iio:device0/in_voltage1_raw";
+    int threshold = param_int(test_start, test_end, "recoveryPressThreshold", 100);
+    int max_raw = param_int(test_start, test_end, "recoveryMaxRaw", 5000);
+    int stable_required = param_int(test_start, test_end, "recoveryStableSampleCount", 3);
+    int sample_interval_ms = param_int(test_start, test_end, "recoverySampleIntervalMs", 100);
+    int timeout_ms = param_int(test_start, test_end, "recoveryTimeoutMs", 10000);
+    int stable_count = 0;
+    int elapsed_ms = 0;
+    char data[512];
+
+    if (stable_required <= 0) stable_required = 3;
+    if (sample_interval_ms <= 0) sample_interval_ms = 100;
+    if (timeout_ms <= 0) timeout_ms = 10000;
+    snprintf(data, sizeof(data),
+             "{\"phase\":\"recovery\",\"adcPath\":\"%s\",\"rawValue\":-1,\"pressThreshold\":%d,\"maxRaw\":%d,\"stableCount\":0,\"stableRequired\":%d,\"timeoutMs\":%d}",
+             adc_path, threshold, max_raw, stable_required, timeout_ms);
+    send_report(fd, "keys", "running", 0, "Please press Recovery key", data);
+
+    while (elapsed_ms <= timeout_ms) {
+        FILE *file = fopen(adc_path, "r");
+        int raw_value = -1;
+        if (file != NULL) {
+            if (fscanf(file, "%d", &raw_value) != 1) raw_value = -1;
+            fclose(file);
+        }
+
+        if (raw_value >= 0 && raw_value <= max_raw && raw_value < threshold) stable_count++;
+        else stable_count = 0;
+        snprintf(data, sizeof(data),
+                 "{\"phase\":\"recovery\",\"adcPath\":\"%s\",\"rawValue\":%d,\"pressThreshold\":%d,\"maxRaw\":%d,\"stableCount\":%d,\"stableRequired\":%d,\"elapsedMs\":%d,\"timeoutMs\":%d}",
+                 adc_path, raw_value, threshold, max_raw, stable_count, stable_required, elapsed_ms, timeout_ms);
+        if (stable_count >= stable_required) {
+            return send_report(fd, "keys", "passed", 0, "Recovery key detected", data);
+        }
+        send_report(fd, "keys", "running", 0, "Waiting for Recovery key ADC threshold", data);
+        sleep_ms_local(sample_interval_ms);
+        elapsed_ms += sample_interval_ms;
+    }
+
+    send_report(fd, "keys", "failed", 4003, "Recovery key was not detected", data);
+    return -1;
+}
+
 static int run_keys(int fd, const struct app_config *config, const char *test_start, const char *test_end)
 {
     const uint32_t expected = (1U << (KEY_INPUT_CONFIRM + 1)) - 1U;
@@ -1286,14 +1412,16 @@ static int run_keys(int fd, const struct app_config *config, const char *test_st
     struct timespec deadline_start, now;
     uint32_t detected = 0;
     int timeout_ms = param_int(test_start, test_end, "timeoutMs", config->keys_timeout_ms);
+    char test_mode[32] = "pcba";
     char data[256];
+    param_string(test_start, test_end, "mode", test_mode, sizeof(test_mode));
 
     if (timeout_ms < 45000) timeout_ms = 45000;
     snprintf(data, sizeof(data),
              "{\"expectedKeys\":[\"up\",\"down\",\"left\",\"right\",\"confirm\"],\"detectedMask\":0,\"expectedMask\":%u,\"timeoutMs\":%d,\"remainingMs\":%d}",
              expected, timeout_ms, timeout_ms);
     send_report(fd, "keys", "running", 0,
-                "Press Up, Down, Left, Right and Confirm within 45 seconds",
+                "Press Up, Down, Left, Right, Confirm, then Recovery key",
                 data);
     if (key_input_open(&input) != 0) {
         send_report(fd, "keys", "failed", 4000, "Unable to open key input devices", "{}");
@@ -1334,6 +1462,9 @@ static int run_keys(int fd, const struct app_config *config, const char *test_st
     key_input_close(&input);
     snprintf(data, sizeof(data), "{\"detectedMask\":%u,\"expectedMask\":%u}",
              detected, expected);
+    if (strcmp(test_mode, "finished_product") == 0) {
+        return run_recovery_adc(fd, test_start, test_end);
+    }
     return send_report(fd, "keys", "passed", 0, "Five-key test passed", data);
 }
 
@@ -1490,9 +1621,15 @@ static int run_skipped_test(int fd, const char *test_id, const char *test_start,
 static int run_one_test(int fd, const char *test_id, const struct app_config *config,
                         const char *test_start, const char *test_end)
 {
+    char test_mode[32] = "pcba";
+    param_string(test_start, test_end, "mode", test_mode, sizeof(test_mode));
     if (strcmp(test_id, "board_state") == 0) return run_board_state(fd);
     if (strcmp(test_id, "hdmi") == 0) return run_manual_observation(fd, "hdmi", "HDMI", test_start, test_end);
     if (strcmp(test_id, "lcd") == 0) return run_manual_observation(fd, "lcd", "LCD", test_start, test_end);
+    if (strcmp(test_id, "reset_button") == 0) return run_manual_observation(fd, "reset_button", "Reset button and LCD off state", test_start, test_end);
+    if (strcmp(test_id, "indicator_led") == 0 && strcmp(test_mode, "finished_product") == 0) {
+        return run_finished_product_indicator_led(fd, test_start, test_end);
+    }
     if (strcmp(test_id, "fingerprint") == 0) return run_fingerprint(fd);
     if (strcmp(test_id, "ethernet") == 0) return run_ethernet(fd, test_start, test_end);
     if (strcmp(test_id, "wifi") == 0) return run_wifi(fd, config, test_start, test_end);

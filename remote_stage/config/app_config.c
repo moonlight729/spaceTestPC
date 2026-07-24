@@ -30,6 +30,7 @@ void app_config_load_defaults(struct app_config *config)
     config->camera_pwm_min_pulse_delta = 1;
     config->application_path = "/vendor/originflow/bin/spacetest3576";
     config->application_service = "pcba-test.service";
+    config->application_version = "1.0.0";
     keys_timeout_ms = getenv("SPACETEST_KEYS_TIMEOUT_MS");
     if (keys_timeout_ms != NULL && keys_timeout_ms[0] != '\0') {
         int value = atoi(keys_timeout_ms);

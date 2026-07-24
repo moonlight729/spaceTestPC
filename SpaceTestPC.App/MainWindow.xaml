@@ -71,7 +71,7 @@
                         <TextBlock HorizontalAlignment="Center" FontSize="24" FontWeight="Bold" Foreground="White" Text="{Binding TestModeBannerText}" />
                     </Border>
                 </StackPanel>
-                <TextBlock Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="30" FontWeight="Bold" Foreground="White" Text="SpaceTest 测试工作台" />
+                <TextBlock Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="30" FontWeight="Bold" Foreground="White" Text="Space 测试工作台" />
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Width="82" Height="34" Margin="0,0,10,0" Padding="0" HorizontalContentAlignment="Center" Background="#175CD3" Command="{Binding ShowTestPageCommand}" Content="TEST" />
                     <Button Width="142" Height="34" Margin="0,0,22,0" Padding="0" HorizontalContentAlignment="Center" Background="#344054" Command="{Binding ShowQueryPageCommand}" Content="QUERY RECORDS" />
