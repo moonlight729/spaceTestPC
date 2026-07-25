@@ -24,7 +24,9 @@ public sealed class ConfigurationService
         var json = File.ReadAllText(resolvedPath);
         try
         {
-            return JsonSerializer.Deserialize<AppConfiguration>(json, JsonOptions) ?? new AppConfiguration();
+            var configuration = JsonSerializer.Deserialize<AppConfiguration>(json, JsonOptions) ?? new AppConfiguration();
+            ApplyModeConfiguration(configuration, resolvedPath);
+            return configuration;
         }
         catch
         {
@@ -44,6 +46,22 @@ public sealed class ConfigurationService
                 }
             }
             return fallback;
+        }
+    }
+
+    private static void ApplyModeConfiguration(AppConfiguration configuration, string basePath)
+    {
+        var mode = configuration.TestMode?.Trim();
+        if (string.IsNullOrWhiteSpace(mode)) return;
+
+        var directory = Path.GetDirectoryName(basePath) ?? string.Empty;
+        var modePath = Path.Combine(directory, $"appsettings.{mode}.json");
+        if (!File.Exists(modePath)) return;
+
+        var modeConfiguration = JsonSerializer.Deserialize<AppConfiguration>(File.ReadAllText(modePath), JsonOptions);
+        if (modeConfiguration?.TestModes.TryGetValue(mode, out var selectedMode) == true)
+        {
+            configuration.TestModes[mode] = selectedMode;
         }
     }
 

@@ -66,32 +66,52 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         var remoteNewPath = remoteBinaryPath + ".new";
         var remoteBackupPath = remoteBinaryPath + ".bak";
         var hasBackup = false;
+        var totalTimer = Stopwatch.StartNew();
+        var timing = new List<string>();
         try
         {
             var localMd5 = await CalculateMd5Async(localBinaryPath, cancellationToken);
             if (!string.Equals(localMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
                 return new ApplicationUpgradeResult { Message = "Local application MD5 changed before upload." };
 
+            var timer = Stopwatch.StartNew();
             await RunAdbAsync($"push {Quote(localBinaryPath)} {Quote(remoteNewPath)}", cancellationToken);
+            timing.Add($"push={timer.ElapsedMilliseconds}ms");
+
+            timer.Restart();
             await RunAdbAsync($"shell chmod 755 {Quote(remoteNewPath)}", cancellationToken);
             var uploadedMd5 = ParseMd5(await RunAdbAsync($"shell md5sum {Quote(remoteNewPath)}", cancellationToken));
+            timing.Add($"remoteValidate={timer.ElapsedMilliseconds}ms");
             if (!string.Equals(uploadedMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
                 return new ApplicationUpgradeResult { Message = "Uploaded application MD5 verification failed." };
 
+            timer.Restart();
             await RunAdbAsync($"shell systemctl stop {Quote(serviceName)}", cancellationToken);
             hasBackup = await RemoteFileExistsAsync(remoteBinaryPath, cancellationToken);
             if (hasBackup)
                 await RunAdbAsync($"shell cp -p {Quote(remoteBinaryPath)} {Quote(remoteBackupPath)}", cancellationToken);
             await RunAdbAsync($"shell chmod 755 {Quote(remoteNewPath)}", cancellationToken);
             await RunAdbAsync($"shell mv -f {Quote(remoteNewPath)} {Quote(remoteBinaryPath)}", cancellationToken);
+            timing.Add($"stopReplace={timer.ElapsedMilliseconds}ms");
+
+            timer.Restart();
             await RunAdbAsync($"shell systemctl start {Quote(serviceName)}", cancellationToken);
             await RunAdbAsync($"shell systemctl is-active --quiet {Quote(serviceName)}", cancellationToken);
+            timing.Add($"startService={timer.ElapsedMilliseconds}ms");
 
+            timer.Restart();
             var finalMd5 = ParseMd5(await RunAdbAsync($"shell md5sum {Quote(remoteBinaryPath)}", cancellationToken));
+            timing.Add($"finalValidate={timer.ElapsedMilliseconds}ms");
             if (!string.Equals(finalMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Final application MD5 verification failed.");
 
-            return new ApplicationUpgradeResult { Success = true, FinalMd5 = finalMd5, Message = "Application upgrade completed." };
+            timing.Add($"total={totalTimer.ElapsedMilliseconds}ms");
+            return new ApplicationUpgradeResult
+            {
+                Success = true,
+                FinalMd5 = finalMd5,
+                Message = $"Application upgrade completed. Timing: {string.Join(", ", timing)}"
+            };
         }
         catch (Exception ex)
         {
@@ -105,9 +125,9 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
             }
             catch (Exception rollbackError)
             {
-                return new ApplicationUpgradeResult { Message = $"Upgrade failed: {ex.Message}; rollback failed: {rollbackError.Message}" };
+                return new ApplicationUpgradeResult { Message = $"Upgrade failed: {ex.Message}; rollback failed: {rollbackError.Message}; Timing: {string.Join(", ", timing)}, total={totalTimer.ElapsedMilliseconds}ms" };
             }
-            return new ApplicationUpgradeResult { Message = $"Upgrade failed and was rolled back: {ex.Message}" };
+            return new ApplicationUpgradeResult { Message = $"Upgrade failed and was rolled back: {ex.Message}; Timing: {string.Join(", ", timing)}, total={totalTimer.ElapsedMilliseconds}ms" };
         }
     }
 

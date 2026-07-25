@@ -1,4 +1,5 @@
 ﻿using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.IO;
@@ -25,6 +26,7 @@ public sealed class MainViewModel : ObservableObject
     // Change this value during deployment; operators do not choose the transport mode.
     private const PcbaConnectionMode ConnectionMode = PcbaConnectionMode.AdbForward;
     private const string BoardStateItemName = "板状态";
+    private const int BoardStateTimeoutSeconds = 10;
     private const string ApplicationUpgradeItemId = "application_upgrade";
     private const string BluetoothItemName = "蓝牙";
     private const string WifiItemName = "WiFi";
@@ -102,6 +104,7 @@ public sealed class MainViewModel : ObservableObject
     private TaskCompletionSource<bool?>? _upgradeDecisionSource;
     private readonly DispatcherTimer _upgradeCountdownTimer;
     private readonly DispatcherTimer _adbUpgradeMonitorTimer;
+    private readonly SemaphoreSlim _upgradeCheckGate = new(1, 1);
     private int _upgradeCountdownSeconds;
     private bool _isUpgradePromptVisible;
     private string _deviceApplicationMd5 = string.Empty;
@@ -186,7 +189,7 @@ public sealed class MainViewModel : ObservableObject
         _isContinuousTestEnabled = appConfiguration.TestPlan.Continuous.EnabledByDefault;
         _testPlan = BuildActiveTestPlan(appConfiguration);
         _testItemIndexes = _testPlan
-            .Select((item, index) => new { item.Id, index = index + 1 })
+            .Select((item, index) => new { item.Id, index })
             .ToDictionary(item => item.Id, item => item.index);
 
         ScanCommand = new AsyncRelayCommand(() => HandleScanAsync(isMockSession: false), () => !string.IsNullOrWhiteSpace(ScannerInput) && _upgradePackageReady);
@@ -470,6 +473,7 @@ public sealed class MainViewModel : ObservableObject
         "lcd" => "请观察 LCD：背光正常、RGB 测试图案完整且稳定，无花屏、缺线、闪烁或明显亮暗异常后再判定。",
         "indicator_led" => "请观察蓝灯和红灯是否正常，并确认两灯以 2 秒周期交替显示后选择 PASS 或 FAIL。",
         "reset_button" => "请按下设备复位键，确认 LCD 屏幕已经息屏后选择 PASS 或 FAIL。",
+        "fan" => "风扇正在自动检测，请等待下位机读取 tach_rpm 并返回结果。",
         _ => string.Empty
     };
     public string ManualPassButtonText => _manualDecisionTestId switch
@@ -590,7 +594,7 @@ public sealed class MainViewModel : ObservableObject
             var client = _pcbaCommandClientFactory.Create(ConnectionMode);
             AppendLog("Reading board state...");
             SetTestItemState(BoardStateItemName, TestItemState.Running);
-            var state = await client.GetBoardStateAsync(SessionId, CurrentSn);
+            var state = await GetBoardStateWithTimeoutAsync(client);
             ApplyBoardState(state);
             await EnsureBoardSnAsync(client, state);
             LastResult = "Board state loaded";
@@ -649,6 +653,20 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task<bool> EnsureApplicationUpgradeAsync(IPcbaCommandClient client)
     {
+        await _upgradeCheckGate.WaitAsync();
+        try
+        {
+            return await EnsureApplicationUpgradeCoreAsync(client);
+        }
+        finally
+        {
+            _upgradeCheckGate.Release();
+        }
+    }
+
+    private async Task<bool> EnsureApplicationUpgradeCoreAsync(IPcbaCommandClient client)
+    {
+        var upgradeCheckTimer = Stopwatch.StartNew();
         if (!_upgradeConfiguration.Enabled || ConnectionMode == PcbaConnectionMode.Mock) return true;
         if (_applicationUpgradeCheckCompleted) return true;
         var upgradeResult = TestResults.FirstOrDefault(item => item.TestId == ApplicationUpgradeItemId);
@@ -671,21 +689,25 @@ public sealed class MainViewModel : ObservableObject
 
         try
         {
+            var localMd5Timer = Stopwatch.StartNew();
             await using var stream = File.OpenRead(localPath);
             _hostApplicationMd5 = Convert.ToHexString(await MD5.HashDataAsync(stream)).ToLowerInvariant();
+            AppendLog($"Upgrade timing: local MD5={localMd5Timer.ElapsedMilliseconds}ms");
             ApplicationMd5Info? deviceInfo = null;
             Exception? lastError = null;
             for (var attempt = 1; attempt <= 5; attempt++)
             {
                 try
                 {
+                    var deviceMd5Timer = Stopwatch.StartNew();
                     deviceInfo = await client.GetApplicationMd5Async(_upgradeConfiguration.RemoteBinaryPath);
+                    AppendLog($"Upgrade timing: device MD5 attempt={attempt}, elapsed={deviceMd5Timer.ElapsedMilliseconds}ms");
                     break;
                 }
                 catch (Exception ex) when (attempt < 5)
                 {
                     lastError = ex;
-                    AppendLog($"Waiting for ADB device ({attempt}/5): {ex.Message}");
+                    AppendLog($"Upgrade timing: device MD5 attempt={attempt}, failed={ex.Message}");
                     await Task.Delay(TimeSpan.FromSeconds(1));
                 }
             }
@@ -695,7 +717,9 @@ public sealed class MainViewModel : ObservableObject
             _deviceApplicationMd5 = deviceInfo.Md5;
             try
             {
+                var versionTimer = Stopwatch.StartNew();
                 var versionInfo = await client.GetApplicationVersionAsync();
+                AppendLog($"Upgrade timing: device version elapsed={versionTimer.ElapsedMilliseconds}ms");
                 _deviceApplicationVersion = versionInfo.Version;
                 _deviceApplicationVersionAvailable = versionInfo.VersionAvailable && !string.IsNullOrWhiteSpace(versionInfo.Version);
             }
@@ -703,12 +727,13 @@ public sealed class MainViewModel : ObservableObject
             {
                 _deviceApplicationVersion = string.Empty;
                 _deviceApplicationVersionAvailable = false;
-                AppendLog($"Application version unavailable; fallback to MD5: {ex.Message}");
+                AppendLog($"Upgrade timing: device version failed={ex.Message}");
             }
             var versionCheckEnabled = !string.IsNullOrWhiteSpace(_upgradeConfiguration.ApplicationVersion) && _deviceApplicationVersionAvailable;
             var md5Matches = string.Equals(_hostApplicationMd5, _deviceApplicationMd5, StringComparison.OrdinalIgnoreCase);
             var versionMatches = !versionCheckEnabled || string.Equals(_upgradeConfiguration.ApplicationVersion, _deviceApplicationVersion, StringComparison.OrdinalIgnoreCase);
             AppendLog($"Application identity: hostVersion={_upgradeConfiguration.ApplicationVersion}, deviceVersion={_deviceApplicationVersion}, versionAvailable={_deviceApplicationVersionAvailable}, hostMd5={_hostApplicationMd5}, deviceMd5={_deviceApplicationMd5}, md5Match={md5Matches}, versionMatch={versionMatches}");
+            AppendLog($"Upgrade timing: check total before decision={upgradeCheckTimer.ElapsedMilliseconds}ms");
             if (md5Matches && versionMatches)
             {
                 _applicationUpgradeCheckCompleted = true;
@@ -718,7 +743,7 @@ public sealed class MainViewModel : ObservableObject
                     ["localMd5"] = _hostApplicationMd5, ["deviceMd5"] = _deviceApplicationMd5
                 });
                 SetTestItemState(ApplicationUpgradeItemId, TestItemState.Passed);
-                SelectedTestResult = upgradeResult;
+                PrepareBoardStateForScan();
                 RaiseApplicationUpgradeStatusChanged();
                 return true;
             }
@@ -740,7 +765,7 @@ public sealed class MainViewModel : ObservableObject
                     ["localMd5"] = _hostApplicationMd5, ["deviceMd5"] = _deviceApplicationMd5
                 });
                 SetTestItemState(ApplicationUpgradeItemId, TestItemState.Skipped);
-                SelectedTestResult = upgradeResult;
+                PrepareBoardStateForScan();
                 RaiseApplicationUpgradeStatusChanged();
                 return true;
             }
@@ -762,7 +787,7 @@ public sealed class MainViewModel : ObservableObject
                     ["deviceMd5After"] = result.FinalMd5, ["service"] = _upgradeConfiguration.ServiceName
                 });
                 SetTestItemState(ApplicationUpgradeItemId, TestItemState.Passed);
-                SelectedTestResult = upgradeResult;
+                PrepareBoardStateForScan();
             }
             return result.Success;
         }
@@ -779,6 +804,18 @@ public sealed class MainViewModel : ObservableObject
             SelectedTestResult = upgradeResult;
             return false;
         }
+    }
+
+    private void PrepareBoardStateForScan()
+    {
+        var boardStateResult = TestResults.FirstOrDefault(item => item.TestId == BoardStateItemName);
+        if (boardStateResult is not null)
+        {
+            SelectedTestResult = boardStateResult;
+        }
+
+        OperatorInstruction = "请扫描二维码。";
+        AppendLog("Upgrade check completed; waiting for QR code scan before reading board state.");
     }
 
     private async Task RunLegacyPhaseOneAsync()
@@ -799,7 +836,7 @@ public sealed class MainViewModel : ObservableObject
         try
         {
             SetTestItemState(BoardStateItemName, TestItemState.Running);
-            state = await client.GetBoardStateAsync(SessionId, CurrentSn);
+            state = await GetBoardStateWithTimeoutAsync(client);
             ApplyBoardState(state);
             state = await EnsureBoardSnAsync(client, state);
             AppendLog($"Board state ok: {BoardId} / {BoardState} / {TestMode}");
@@ -911,7 +948,7 @@ public sealed class MainViewModel : ObservableObject
         {
             SetTestItemState(BoardStateItemName, TestItemState.Running);
             AppendLog("ADB/sys.get_board_state request sent.");
-            state = await client.GetBoardStateAsync(SessionId, CurrentSn);
+            state = await GetBoardStateWithTimeoutAsync(client);
             AppendLog($"ADB/sys.get_board_state response: boardId={state.BoardId}, boardSn={state.BoardSn}, mode={state.TestMode}, state={state.CurrentState}");
             ApplyBoardState(state);
             state = await EnsureBoardSnAsync(client, state);
@@ -1017,6 +1054,19 @@ public sealed class MainViewModel : ObservableObject
             OperatorInstruction = "上一块记录已保存。请插入下一块并扫描 SN。";
             AppendLog("Ready for next board scan.");
             UpdateDebugOutput();
+        }
+    }
+
+    private async Task<BoardState> GetBoardStateWithTimeoutAsync(IPcbaCommandClient client)
+    {
+        try
+        {
+            return await client.GetBoardStateAsync(SessionId, CurrentSn)
+                .WaitAsync(TimeSpan.FromSeconds(BoardStateTimeoutSeconds));
+        }
+        catch (TimeoutException)
+        {
+            throw new TimeoutException($"板状态读取超时（{BoardStateTimeoutSeconds} 秒）。");
         }
     }
 
@@ -1229,18 +1279,20 @@ public sealed class MainViewModel : ObservableObject
         ConfirmManualPassCommand.NotifyCanExecuteChanged();
         ConfirmManualFailCommand.NotifyCanExecuteChanged();
 
-        if (_testItemIndexes.TryGetValue(testEvent.TestId, out var index) && index < TestItems.Count)
+        var testItem = TestItems.FirstOrDefault(item =>
+            string.Equals(item.TestId, testEvent.TestId, StringComparison.OrdinalIgnoreCase));
+        if (testItem is not null)
         {
-            TestItems[index].State = testEvent.Status switch
+            testItem.State = testEvent.Status switch
             {
                 "running" => TestItemState.Running,
                 "passed" => TestItemState.Passed,
                 "skipped" => TestItemState.Skipped,
                 _ => TestItemState.Failed
             };
-            if (testEvent.Status == "running" && !ReferenceEquals(CurrentTestItem, TestItems[index]))
+            if (testEvent.Status == "running" && !ReferenceEquals(CurrentTestItem, testItem))
             {
-                CurrentTestItem = TestItems[index];
+                CurrentTestItem = testItem;
                 SequenceAdvanceRequested?.Invoke(this, CurrentTestItem);
             }
         }
@@ -1256,7 +1308,15 @@ public sealed class MainViewModel : ObservableObject
             _latestKeyTestEvent = testEvent;
             if (testEvent.Status == "running")
             {
+                var phase = GetDataString(testEvent.Data, "phase", string.Empty);
                 var remainingMs = GetDataInt(testEvent.Data, "remainingMs");
+                if (string.Equals(phase, "recovery", StringComparison.OrdinalIgnoreCase))
+                {
+                    var timeoutMs = GetDataInt(testEvent.Data, "timeoutMs");
+                    var elapsedMs = GetDataInt(testEvent.Data, "elapsedMs");
+                    if (timeoutMs > 0 && elapsedMs >= 0)
+                        remainingMs = Math.Max(0, timeoutMs - elapsedMs);
+                }
                 if (remainingMs <= 0) remainingMs = GetDataInt(testEvent.Data, "timeoutMs");
                 if (remainingMs <= 0) remainingMs = _keyTestTimeoutMs;
                 _keyDeadline = DateTimeOffset.Now.AddMilliseconds(remainingMs);
@@ -1327,7 +1387,7 @@ public sealed class MainViewModel : ObservableObject
         }
 
         return testEvent.TestId == "usb2_3" && testEvent.Status == "running"
-            ? "请确保测试前已经使用 2.0 U盘和 3.0 U盘插入过需要测试的 USB 口，并已经生成 USB 汇总文件。"
+            ? "请先通过 HDMI 网页完成 USB2.0 和 USB3.0 联通性预检（两个端口分别正插、反插，共 8 次），再接入 ADB。当前测试将读取对应模式的预检结果文件。"
             : testEvent.TestId == "pcba_test_points" && testEvent.Status == "running"
             ? "正在读取 PCBA 32 通道测试点电压，系统将自动判断是否在阈值范围内。"
             : testEvent.TestId == "ethernet" && testEvent.Status == "running"
@@ -1378,6 +1438,7 @@ public sealed class MainViewModel : ObservableObject
 
         return result.TestId switch
         {
+            "board_state" => "请扫描二维码。",
             "keys" => BuildKeyTestInstruction(testEvent),
             "bluetooth" => BuildBluetoothInstruction(testEvent),
             "wifi" => BuildWifiInstruction(testEvent),
@@ -1521,11 +1582,12 @@ public sealed class MainViewModel : ObservableObject
             var stableCount = GetDataInt(testEvent.Data, "stableCount");
             var stableRequired = Math.Max(1, GetDataInt(testEvent.Data, "stableRequired"));
             var threshold = GetDataInt(testEvent.Data, "pressThreshold");
+            var recoveryRemainingSeconds = GetRemainingKeySeconds(testEvent);
             if (testEvent.Status == "passed")
                 return $"Recovery 按键通过：ADC={rawValue}，连续 {stableRequired} 次小于 {threshold}。";
             if (testEvent.Status == "failed")
-                return $"Recovery 按键失败：超时未检测到 ADC 小于 {threshold}。";
-            return $"请按下 Recovery 按键；当前 ADC={rawValue}，判定阈值 <{threshold}，稳定采样 {stableCount}/{stableRequired}。";
+                return $"Recovery 按键失败：10 秒倒计时结束，未检测到 ADC 小于 {threshold}。";
+            return $"请按下 Recovery 按键；倒计时：{recoveryRemainingSeconds} 秒，当前 ADC={rawValue}，判定阈值 <{threshold}，稳定采样 {stableCount}/{stableRequired}。";
         }
 
         var remainingSeconds = GetRemainingKeySeconds(testEvent);
@@ -2527,6 +2589,16 @@ public sealed class MainViewModel : ObservableObject
         var plan = enabled.Count > 0
             ? AllTestPlan.Where(item => enabled.Contains(item.Id)).ToList()
             : AllTestPlan.Where(item => !disabled.Contains(item.Id)).ToList();
+
+        if (modeConfiguration?.TestOrder is { Length: > 0 } order)
+        {
+            var orderIndex = order
+                .Select((id, index) => new { id, index })
+                .ToDictionary(item => item.id, item => item.index, StringComparer.OrdinalIgnoreCase);
+            plan = plan
+                .OrderBy(item => orderIndex.TryGetValue(item.Id, out var index) ? index : int.MaxValue)
+                .ToList();
+        }
 
         if (plan.All(item => item.Id != "board_state"))
         {

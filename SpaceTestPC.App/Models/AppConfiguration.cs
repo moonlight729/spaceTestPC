@@ -20,6 +20,7 @@ public sealed class TestModeConfiguration
     public string DatabaseName { get; set; } = string.Empty;
     public string[] EnabledTests { get; set; } = [];
     public string[] DisabledTests { get; set; } = [];
+    public string[] TestOrder { get; set; } = [];
     public Dictionary<string, string> SkippedTests { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
