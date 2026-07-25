@@ -13,12 +13,14 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
     private const int SaveRetryCount = 5;
     private static readonly TimeSpan SaveRetryDelay = TimeSpan.FromMilliseconds(300);
     private readonly string _databasePath;
+    private readonly string _testMode;
     private readonly string _connectionString;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public SqliteDatabaseRepository(string databasePath)
+    public SqliteDatabaseRepository(string databasePath, string testMode = "pcba")
     {
         _databasePath = databasePath;
+        _testMode = NormalizeTestMode(testMode);
         Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
         _connectionString = new SqliteConnectionStringBuilder
         {
@@ -228,7 +230,8 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
     {
         var directory = Path.Combine(Path.GetDirectoryName(_databasePath)!, "records");
         Directory.CreateDirectory(directory);
-        var path = Path.Combine(directory, $"{Regex.Replace(rows[0].Sn, "[^A-Za-z0-9_.-]", "_")}.csv");
+        var safeSn = Regex.Replace(rows[0].Sn, "[^A-Za-z0-9_.-]", "_");
+        var path = Path.Combine(directory, $"{safeSn}_{_testMode}.csv");
         var writeHeader = !File.Exists(path);
         await using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
         await using var writer = new StreamWriter(stream, new UTF8Encoding(writeHeader));
@@ -241,6 +244,11 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
             await writer.WriteLineAsync(string.Join(',', Escape(row.SessionId), Escape(row.Sn), Escape(row.StartTime), Escape(row.EndTime), Escape(row.FinalVerdict), Escape(displayTestId), Escape(row.Status), row.ResultCode, Escape(displayMessage), Escape(row.DataJson)));
         }
     }
+
+    private static string NormalizeTestMode(string testMode) =>
+        string.Equals(testMode?.Trim(), "finished_product", StringComparison.OrdinalIgnoreCase)
+            ? "finished_product"
+            : "pcba";
 
     private static string Escape(string value) => $"\"{value.Replace("\"", "\"\"")}\"";
 

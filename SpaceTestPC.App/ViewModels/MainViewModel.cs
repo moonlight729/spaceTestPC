@@ -192,7 +192,7 @@ public sealed class MainViewModel : ObservableObject
             .Select((item, index) => new { item.Id, index })
             .ToDictionary(item => item.Id, item => item.index);
 
-        ScanCommand = new AsyncRelayCommand(() => HandleScanAsync(isMockSession: false), () => !string.IsNullOrWhiteSpace(ScannerInput) && _upgradePackageReady);
+        ScanCommand = new AsyncRelayCommand(() => HandleScanAsync(isMockSession: false), () => !string.IsNullOrWhiteSpace(ScannerInput) && _upgradePackageReady && !_isSessionRunning);
         StartMockSessionCommand = new RelayCommand(StartMockSession);
         ToggleContinuousTestCommand = new RelayCommand(ToggleContinuousTest);
         ConfirmManualPassCommand = new RelayCommand(() => SubmitManualDecision(true), () => IsManualDecisionVisible);
@@ -522,6 +522,15 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
+        if (_isSessionRunning)
+        {
+            AppendLog($"Duplicate scan ignored while session is running: {sn}");
+            ScannerInput = string.Empty;
+            OperatorInstruction = "当前测试仍在进行中，请等待本次测试完成后再扫描下一块。";
+            UpdateDebugOutput();
+            return;
+        }
+
         CurrentSn = sn;
         _isMockSession = isMockSession;
         SessionId = Guid.NewGuid().ToString("N");
@@ -532,6 +541,7 @@ public sealed class MainViewModel : ObservableObject
         IsHistoryLoaded = false;
         HistorySummary = string.Empty;
         _isSessionRunning = true;
+        ScanCommand.NotifyCanExecuteChanged();
         RaisePropertyChanged(nameof(ContinuousTestStatusText));
         AppendLog($"Scan received: {CurrentSn}");
         AppendLog($"Session created: {SessionId}");
@@ -646,6 +656,7 @@ public sealed class MainViewModel : ObservableObject
         }
 
         _isSessionRunning = false;
+        ScanCommand.NotifyCanExecuteChanged();
         PrepareForNextBoard();
         RaisePropertyChanged(nameof(ContinuousTestStatusText));
         UpdateDebugOutput();
@@ -715,19 +726,28 @@ public sealed class MainViewModel : ObservableObject
             if (deviceInfo is null)
                 throw new InvalidOperationException("ADB device is not ready.", lastError);
             _deviceApplicationMd5 = deviceInfo.Md5;
-            try
+            if (!string.IsNullOrWhiteSpace(_upgradeConfiguration.ApplicationVersion))
             {
-                var versionTimer = Stopwatch.StartNew();
-                var versionInfo = await client.GetApplicationVersionAsync();
-                AppendLog($"Upgrade timing: device version elapsed={versionTimer.ElapsedMilliseconds}ms");
-                _deviceApplicationVersion = versionInfo.Version;
-                _deviceApplicationVersionAvailable = versionInfo.VersionAvailable && !string.IsNullOrWhiteSpace(versionInfo.Version);
+                try
+                {
+                    var versionTimer = Stopwatch.StartNew();
+                    var versionInfo = await client.GetApplicationVersionAsync();
+                    AppendLog($"Upgrade timing: device version elapsed={versionTimer.ElapsedMilliseconds}ms");
+                    _deviceApplicationVersion = versionInfo.Version;
+                    _deviceApplicationVersionAvailable = versionInfo.VersionAvailable && !string.IsNullOrWhiteSpace(versionInfo.Version);
+                }
+                catch (Exception ex)
+                {
+                    _deviceApplicationVersion = string.Empty;
+                    _deviceApplicationVersionAvailable = false;
+                    AppendLog($"Upgrade timing: device version failed={ex.Message}");
+                }
             }
-            catch (Exception ex)
+            else
             {
                 _deviceApplicationVersion = string.Empty;
                 _deviceApplicationVersionAvailable = false;
-                AppendLog($"Upgrade timing: device version failed={ex.Message}");
+                AppendLog("Upgrade timing: version check skipped because applicationVersion is empty.");
             }
             var versionCheckEnabled = !string.IsNullOrWhiteSpace(_upgradeConfiguration.ApplicationVersion) && _deviceApplicationVersionAvailable;
             var md5Matches = string.Equals(_hostApplicationMd5, _deviceApplicationMd5, StringComparison.OrdinalIgnoreCase);
@@ -2637,8 +2657,12 @@ public sealed class MainViewModel : ObservableObject
 
     private static IReadOnlyList<TestItemViewModel> BuildTestItems(IReadOnlyList<TestPlanItem> testPlan)
     {
-        return testPlan
-            .Select((item, index) => new TestItemViewModel(item.Id, GetTestDisplayName(item.Id), index < testPlan.Count - 1))
+        var visibleItems = testPlan
+            .Where(item => !item.Skip)
+            .ToArray();
+
+        return visibleItems
+            .Select((item, index) => new TestItemViewModel(item.Id, GetTestDisplayName(item.Id), index < visibleItems.Length - 1))
             .ToArray();
     }
 

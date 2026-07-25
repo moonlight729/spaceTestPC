@@ -79,29 +79,27 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
             timing.Add($"push={timer.ElapsedMilliseconds}ms");
 
             timer.Restart();
-            await RunAdbAsync($"shell chmod 755 {Quote(remoteNewPath)}", cancellationToken);
-            var uploadedMd5 = ParseMd5(await RunAdbAsync($"shell md5sum {Quote(remoteNewPath)}", cancellationToken));
-            timing.Add($"remoteValidate={timer.ElapsedMilliseconds}ms");
+            var upgradeScript = string.Join("; ",
+                "set -e",
+                $"chmod 755 {Quote(remoteNewPath)}",
+                $"uploaded_md5=$(md5sum {Quote(remoteNewPath)} | awk '{{print $1}}')",
+                $"[ \"$uploaded_md5\" = \"{expectedMd5}\" ]",
+                $"systemctl stop {Quote(serviceName)}",
+                $"if [ -f {Quote(remoteBinaryPath)} ]; then cp -p {Quote(remoteBinaryPath)} {Quote(remoteBackupPath)}; fi",
+                $"mv -f {Quote(remoteNewPath)} {Quote(remoteBinaryPath)}",
+                $"chmod 755 {Quote(remoteBinaryPath)}",
+                $"systemctl start {Quote(serviceName)}",
+                $"for i in $(seq 1 20); do systemctl is-active --quiet {Quote(serviceName)} && break; sleep 0.1; done",
+                $"systemctl is-active --quiet {Quote(serviceName)}",
+                $"final_md5=$(md5sum {Quote(remoteBinaryPath)} | awk '{{print $1}}')",
+                "printf 'UPLOADED_MD5=%s\\nFINAL_MD5=%s\\n' \"$uploaded_md5\" \"$final_md5\"");
+            var upgradeOutput = await RunAdbAsync($"shell sh -c {Quote(upgradeScript)}", cancellationToken);
+            timing.Add($"remoteUpgrade={timer.ElapsedMilliseconds}ms");
+            var uploadedMd5 = ParseTaggedMd5(upgradeOutput, "UPLOADED_MD5");
+            var finalMd5 = ParseTaggedMd5(upgradeOutput, "FINAL_MD5");
             if (!string.Equals(uploadedMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
                 return new ApplicationUpgradeResult { Message = "Uploaded application MD5 verification failed." };
-
-            timer.Restart();
-            await RunAdbAsync($"shell systemctl stop {Quote(serviceName)}", cancellationToken);
-            hasBackup = await RemoteFileExistsAsync(remoteBinaryPath, cancellationToken);
-            if (hasBackup)
-                await RunAdbAsync($"shell cp -p {Quote(remoteBinaryPath)} {Quote(remoteBackupPath)}", cancellationToken);
-            await RunAdbAsync($"shell chmod 755 {Quote(remoteNewPath)}", cancellationToken);
-            await RunAdbAsync($"shell mv -f {Quote(remoteNewPath)} {Quote(remoteBinaryPath)}", cancellationToken);
-            timing.Add($"stopReplace={timer.ElapsedMilliseconds}ms");
-
-            timer.Restart();
-            await RunAdbAsync($"shell systemctl start {Quote(serviceName)}", cancellationToken);
-            await RunAdbAsync($"shell systemctl is-active --quiet {Quote(serviceName)}", cancellationToken);
-            timing.Add($"startService={timer.ElapsedMilliseconds}ms");
-
-            timer.Restart();
-            var finalMd5 = ParseMd5(await RunAdbAsync($"shell md5sum {Quote(remoteBinaryPath)}", cancellationToken));
-            timing.Add($"finalValidate={timer.ElapsedMilliseconds}ms");
+            hasBackup = true;
             if (!string.Equals(finalMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Final application MD5 verification failed.");
 
@@ -161,6 +159,27 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         }
     }
 
+    private async Task WaitForServiceActiveAsync(string serviceName, CancellationToken cancellationToken)
+    {
+        var deadline = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * 2.0);
+        Exception? lastError = null;
+        while (Stopwatch.GetTimestamp() < deadline)
+        {
+            try
+            {
+                await RunAdbAsync($"shell systemctl is-active --quiet {Quote(serviceName)}", cancellationToken);
+                return;
+            }
+            catch (InvalidOperationException ex)
+            {
+                lastError = ex;
+                await Task.Delay(100, cancellationToken);
+            }
+        }
+
+        throw new TimeoutException($"Service did not become active within 2 seconds: {serviceName}", lastError);
+    }
+
     private static async Task<string> CalculateMd5Async(string path, CancellationToken cancellationToken)
     {
         await using var stream = File.OpenRead(path);
@@ -176,6 +195,16 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         if (value is null)
             throw new InvalidOperationException($"Unable to parse application MD5 from ADB output: {output.Trim()}");
         return value.ToLowerInvariant();
+    }
+
+    private static string ParseTaggedMd5(string output, string tag)
+    {
+        var line = output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault(item => item.TrimStart().StartsWith(tag + "=", StringComparison.OrdinalIgnoreCase));
+        if (line is null)
+            throw new InvalidOperationException($"Unable to parse {tag} from ADB output: {output.Trim()}");
+
+        return ParseMd5(line[(line.IndexOf('=') + 1)..]);
     }
 
     private static string Quote(string value) => $"\"{value.Replace("\"", "\\\"")}\"";

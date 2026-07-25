@@ -27,7 +27,7 @@ public partial class MainWindow : Window
         var databaseName = string.IsNullOrWhiteSpace(modeConfiguration.DatabaseName)
             ? mode == "finished_product" ? "space-test-finished-product.db" : "space-test-pcba.db"
             : modeConfiguration.DatabaseName;
-        var repository = new SqliteDatabaseRepository(Path.Combine(dataDir, databaseName));
+        var repository = new SqliteDatabaseRepository(Path.Combine(dataDir, databaseName), mode);
         var pcbaClientFactory = new PcbaCommandClientFactory(
             new MockPcbaCommandClient(mockConfiguration: configuration.TestPlan.Mock, manualTestInteractionService: manualTestInteractionService),
             new AdbPcbaCommandClient());
