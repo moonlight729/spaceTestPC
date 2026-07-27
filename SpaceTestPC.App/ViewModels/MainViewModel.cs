@@ -97,6 +97,7 @@ public sealed class MainViewModel : ObservableObject
     private string? _manualDecisionTestId;
     private IPcbaCommandClient? _activeSessionClient;
     private readonly HashSet<string> _automaticDecisionTests = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _submittedManualDecisionTests = new(StringComparer.OrdinalIgnoreCase);
     private bool _isContinuousTestEnabled;
     private bool _isSessionRunning;
     private DateTimeOffset? _keyDeadline;
@@ -1285,7 +1286,13 @@ public sealed class MainViewModel : ObservableObject
             HandleVoltageMeasurementReport(testEvent);
         }
 
+        if (testEvent.Status is "passed" or "failed")
+        {
+            _submittedManualDecisionTests.Remove(testEvent.TestId);
+        }
+
         _manualDecisionTestId = testEvent.Status == "running" &&
+            !_submittedManualDecisionTests.Contains(testEvent.TestId) &&
             (testEvent.TestId is "hdmi" or "lcd" or "reset_button" ||
              testEvent.TestId == "indicator_led" && _testProfileMode == "finished_product")
             ? testEvent.TestId
@@ -2670,6 +2677,7 @@ public sealed class MainViewModel : ObservableObject
     {
         _manualDecisionTestId = null;
         _automaticDecisionTests.Clear();
+        _submittedManualDecisionTests.Clear();
         _hostDecisionData.Clear();
         _voltagePhaseResults.Clear();
         _voltageControlCommands.Clear();
@@ -2707,6 +2715,7 @@ public sealed class MainViewModel : ObservableObject
 
         var testId = _manualDecisionTestId!;
         _manualDecisionTestId = null;
+        _submittedManualDecisionTests.Add(testId);
         var displayName = GetTestDisplayName(testId);
         OperatorInstruction = passed ? $"{displayName} 已确认通过，继续后续测试。" : $"{displayName} 已确认失败，记录失败并继续后续测试。";
         AppendLog($"{testId} manual decision: {(passed ? "PASS" : "FAIL")}");
