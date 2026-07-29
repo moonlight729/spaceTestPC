@@ -17,6 +17,7 @@ struct wifi_result {
     bool found;
     int rssi;
     int error_code;
+    int scan_retry_count;
     char failure_reason[64];
     char error_message[256];
 };

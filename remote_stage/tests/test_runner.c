@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
 #include <sys/select.h>
 #include <time.h>
 #include <unistd.h>
@@ -358,11 +359,11 @@ static int run_wifi(int fd, const struct app_config *config, const char *test_st
         if (wifi_nmcli_scan_signal(&device, &request, &result) != 0) {
             snprintf(data, sizeof(data),
                      "{\"ssid\":\"%s\",\"interfaceName\":\"%s\",\"attempt\":%d,\"maxRetryCount\":%d,"
-                     "\"scanTimeoutMs\":%d,\"wifiEnabled\":%s,\"found\":false,\"rssi\":%d,"
+                     "\"scanTimeoutMs\":%d,\"wifiEnabled\":%s,\"found\":false,\"rssi\":%d,\"scanRetryCount\":%d,"
                      "\"failureReason\":\"%s\"}",
                      ssid, device.interface_name, attempt, max_retry_count,
                      scan_timeout_ms, result.wifi_enabled ? "true" : "false", result.rssi,
-                     result.failure_reason);
+                     result.scan_retry_count, result.failure_reason);
             wifi_nmcli_close(&device);
             send_report(fd, "wifi", "failed",
                         result.error_code == 0 ? 4101 : result.error_code,
@@ -1279,6 +1280,110 @@ static int run_manual_observation(int fd, const char *test_id, const char *displ
     }
 }
 
+static int write_fan_pwm(const char *path, int value)
+{
+    char text[32];
+    int length;
+    int fd;
+    if (path == NULL || path[0] == '\0') return -1;
+    fd = open(path, O_WRONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    length = snprintf(text, sizeof(text), "%d\n", value);
+    if (write(fd, text, (size_t)length) != length) {
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    return 0;
+}
+
+static int read_fan_tach(const char *path, int *value)
+{
+    FILE *file = fopen(path, "r");
+    int scanned;
+    if (file == NULL) return -1;
+    scanned = fscanf(file, "%d", value);
+    fclose(file);
+    return scanned == 1 ? 0 : -1;
+}
+
+static int read_fan_tach_stable(const char *path, int sample_count, int interval_ms,
+                                int *last_value, int *running_seen, int *samples_read)
+{
+    int index;
+    int value = 0;
+    if (last_value == NULL || running_seen == NULL || samples_read == NULL) return -1;
+    *last_value = 0;
+    *running_seen = 0;
+    *samples_read = 0;
+    if (sample_count <= 0) sample_count = 1;
+    if (interval_ms < 0) interval_ms = 0;
+    for (index = 0; index < sample_count; ++index) {
+        if (read_fan_tach(path, &value) != 0) return -1;
+        *last_value = value;
+        *samples_read = index + 1;
+        if (value == 1) {
+            *running_seen = 1;
+            return 0;
+        }
+        if (index + 1 < sample_count) sleep_ms_local(interval_ms);
+    }
+    return 0;
+}
+
+static int run_finished_product_fan(int fd, const char *test_start, const char *test_end)
+{
+    char pwm_path[192] = "/sys/class/hwmon/hwmon12/pwm1";
+    char tach_path[192] = "/sys/class/hwmon/hwmon12/tach_rpm";
+    char data[1024];
+    int start_value = param_int(test_start, test_end, "startValue", 100);
+    int stop_value = param_int(test_start, test_end, "stopValue", 0);
+    int settle_ms = param_int(test_start, test_end, "tachSettleMs", 1000);
+    int tach_sample_count = param_int(test_start, test_end, "tachSampleCount", 3);
+    int tach_sample_interval_ms = param_int(test_start, test_end, "tachSampleIntervalMs", 300);
+    int tach_value = 0;
+    int tach_running_seen = 0;
+    int tach_samples_read = 0;
+
+    param_string(test_start, test_end, "pwmPath", pwm_path, sizeof(pwm_path));
+    param_string(test_start, test_end, "tachPath", tach_path, sizeof(tach_path));
+    if (settle_ms < 0) settle_ms = 0;
+    if (write_fan_pwm(pwm_path, start_value) != 0) {
+        send_report(fd, "fan", "failed", 3920, "Unable to start fan PWM", "{}");
+        return -1;
+    }
+    snprintf(data, sizeof(data),
+             "{\"automatic\":true,\"pwmPath\":\"%s\",\"tachPath\":\"%s\",\"startValue\":%d,\"stopValue\":%d,\"tachSettleMs\":%d}",
+             pwm_path, tach_path, start_value, stop_value, settle_ms);
+    send_report(fd, "fan", "running", 0, "Fan started; checking tach_rpm automatically", data);
+    if (settle_ms > 0) {
+        struct timespec settle_time = {
+            .tv_sec = settle_ms / 1000,
+            .tv_nsec = (long)(settle_ms % 1000) * 1000000L
+        };
+        nanosleep(&settle_time, NULL);
+    }
+    if (read_fan_tach_stable(tach_path, tach_sample_count, tach_sample_interval_ms,
+                             &tach_value, &tach_running_seen, &tach_samples_read) != 0) {
+        write_fan_pwm(pwm_path, stop_value);
+        snprintf(data, sizeof(data), "{\"automatic\":true,\"tachPath\":\"%s\",\"tachRead\":false}", tach_path);
+        send_report(fd, "fan", "failed", 3922, "Unable to read fan tach_rpm", data);
+        return -1;
+    }
+    if (write_fan_pwm(pwm_path, stop_value) != 0) {
+        snprintf(data, sizeof(data), "{\"automatic\":true,\"tachRpm\":%d,\"pwmStopped\":false}", tach_value);
+        send_report(fd, "fan", "failed", 3921, "Unable to stop fan PWM", data);
+        return -1;
+    }
+    snprintf(data, sizeof(data),
+             "{\"automatic\":true,\"tachPath\":\"%s\",\"tachRpm\":%d,\"fanRunning\":%s,"
+             "\"tachSampleCount\":%d,\"tachSamplesRead\":%d,\"tachSampleIntervalMs\":%d,\"pwmStopped\":true}",
+             tach_path, tach_value, tach_running_seen ? "true" : "false",
+             tach_sample_count, tach_samples_read, tach_sample_interval_ms);
+    return send_report(fd, "fan", tach_running_seen ? "passed" : "failed", tach_running_seen ? 0 : 3910,
+                       tach_running_seen ? "Fan tach_rpm indicates running" : "Fan tach_rpm indicates stopped", data) == 0 && tach_running_seen ? 0 : -1;
+}
+
 static int run_finished_product_indicator_led(int fd, const char *test_start, const char *test_end)
 {
 #define INDICATOR_LED_ON_BRIGHTNESS 255
@@ -1627,6 +1732,8 @@ static int run_one_test(int fd, const char *test_id, const struct app_config *co
     if (strcmp(test_id, "hdmi") == 0) return run_manual_observation(fd, "hdmi", "HDMI", test_start, test_end);
     if (strcmp(test_id, "lcd") == 0) return run_manual_observation(fd, "lcd", "LCD", test_start, test_end);
     if (strcmp(test_id, "reset_button") == 0) return run_manual_observation(fd, "reset_button", "Reset button and LCD off state", test_start, test_end);
+    if (strcmp(test_id, "fan") == 0 && strcmp(test_mode, "finished_product") == 0) return run_finished_product_fan(fd, test_start, test_end);
+    if (strcmp(test_id, "fan") == 0) return run_skipped_test(fd, "fan", test_start, test_end);
     if (strcmp(test_id, "indicator_led") == 0 && strcmp(test_mode, "finished_product") == 0) {
         return run_finished_product_indicator_led(fd, test_start, test_end);
     }

@@ -9,6 +9,8 @@
 #include <unistd.h>
 
 #define WIFI_CMD_OUTPUT 32768
+#define WIFI_SCAN_BUSY_RETRY_COUNT 10
+#define WIFI_SCAN_BUSY_RETRY_INTERVAL_MS 1000
 
 static int run_command(char *const argv[], char *output, size_t output_size)
 {
@@ -60,6 +62,21 @@ static void set_error(struct wifi_result *result, int code, const char *message,
     reason_length = strnlen(reason, sizeof(result->failure_reason) - 1);
     memcpy(result->failure_reason, reason, reason_length);
     result->failure_reason[reason_length] = '\0';
+}
+
+static int output_contains_scan_busy(const char *output)
+{
+    if (output == NULL) return 0;
+    return strstr(output, "Device or resource busy") != NULL ||
+           strstr(output, "resource busy") != NULL ||
+           strstr(output, "(-16)") != NULL ||
+           strstr(output, "EBUSY") != NULL;
+}
+
+static void sleep_ms_wifi(int ms)
+{
+    if (ms <= 0) return;
+    usleep((useconds_t)ms * 1000U);
 }
 
 static char *trim_left(char *text)
@@ -214,9 +231,22 @@ int wifi_nmcli_scan_signal(struct wifi_device *device, const struct wifi_request
         return -1;
     }
 
-    if (run_command(scan_argv, output, sizeof(output)) != 0) {
-        set_error(result, 4101, output[0] ? output : "iw scan command failed", "scan_command_failed");
-        return -1;
+    {
+        int scan_attempt;
+        int scan_rc = -1;
+        for (scan_attempt = 1; scan_attempt <= WIFI_SCAN_BUSY_RETRY_COUNT; ++scan_attempt) {
+            output[0] = '\0';
+            scan_rc = run_command(scan_argv, output, sizeof(output));
+            if (scan_rc == 0) break;
+            if (!output_contains_scan_busy(output) || scan_attempt == WIFI_SCAN_BUSY_RETRY_COUNT) break;
+            result->scan_retry_count = scan_attempt;
+            sleep_ms_wifi(WIFI_SCAN_BUSY_RETRY_INTERVAL_MS * scan_attempt);
+        }
+        if (scan_rc != 0) {
+            result->scan_retry_count = scan_attempt > 1 ? scan_attempt - 1 : 0;
+            set_error(result, 4101, output[0] ? output : "iw scan command failed", "scan_command_failed");
+            return -1;
+        }
     }
 
     return parse_scan_output(output, request->ssid, result);
