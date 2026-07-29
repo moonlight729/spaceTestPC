@@ -28,9 +28,29 @@ public partial class MainWindow : Window
             ? mode == "finished_product" ? "space-test-finished-product.db" : "space-test-pcba.db"
             : modeConfiguration.DatabaseName;
         var repository = new SqliteDatabaseRepository(Path.Combine(dataDir, databaseName), mode);
+        var pcbaConnection = configuration.PcbaConnection;
+        var adbDeviceSerial = string.IsNullOrWhiteSpace(pcbaConnection.AdbDeviceSerial)
+            ? null
+            : pcbaConnection.AdbDeviceSerial.Trim();
+        var discoveryService = new PcbaDiscoveryService(pcbaConnection);
         var pcbaClientFactory = new PcbaCommandClientFactory(
             new MockPcbaCommandClient(mockConfiguration: configuration.TestPlan.Mock, manualTestInteractionService: manualTestInteractionService),
-            new AdbPcbaCommandClient());
+            new AdbPcbaCommandClient(
+                adbPath: pcbaConnection.AdbPath,
+                localPort: pcbaConnection.Port,
+                remotePort: pcbaConnection.Port,
+                deviceSerial: adbDeviceSerial,
+                upgradeConfiguration: configuration.Upgrade),
+            new AdbPcbaCommandClient(
+                adbPath: pcbaConnection.AdbPath,
+                localPort: pcbaConnection.Port,
+                remotePort: pcbaConnection.Port,
+                deviceSerial: adbDeviceSerial,
+                useAdbForward: false,
+                tcpHost: pcbaConnection.Host,
+                tcpPort: pcbaConnection.Port,
+                discoveryService: discoveryService,
+                upgradeConfiguration: configuration.Upgrade));
 
         _viewModel = new MainViewModel(
             new ScannerService(),

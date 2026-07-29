@@ -12,6 +12,28 @@ public sealed class AppConfiguration
     public BluetoothBroadcasterConfiguration BluetoothBroadcaster { get; set; } = new();
     public LoggingConfiguration Logging { get; set; } = new();
     public UpgradeConfiguration Upgrade { get; set; } = new();
+    public PcbaConnectionConfiguration PcbaConnection { get; set; } = new();
+}
+
+public sealed class PcbaConnectionConfiguration
+{
+    public string Mode { get; set; } = "adbForward";
+    public string Host { get; set; } = "auto";
+    public int Port { get; set; } = 19001;
+    public string AdbPath { get; set; } = "adb";
+    public string AdbDeviceSerial { get; set; } = string.Empty;
+    public PcbaDiscoveryConfiguration Discovery { get; set; } = new();
+}
+
+public sealed class PcbaDiscoveryConfiguration
+{
+    public bool Enabled { get; set; } = true;
+    public string Subnet { get; set; } = "auto";
+    public string StartIp { get; set; } = string.Empty;
+    public string EndIp { get; set; } = string.Empty;
+    public int PingTimeoutMs { get; set; } = 300;
+    public int ConnectTimeoutMs { get; set; } = 500;
+    public int MaxParallel { get; set; } = 32;
 }
 
 public sealed class TestModeConfiguration
@@ -27,11 +49,16 @@ public sealed class TestModeConfiguration
 public sealed class UpgradeConfiguration
 {
     public bool Enabled { get; set; } = true;
+    public string Transport { get; set; } = "auto";
     public string LocalBinaryPath { get; set; } = "spacetest3576";
     public string RemoteBinaryPath { get; set; } = "/vendor/originflow/bin/spacetest3576";
     public string ServiceName { get; set; } = "pcba-test.service";
     public int AutoUpgradeDelaySeconds { get; set; } = 5;
     public string ApplicationVersion { get; set; } = string.Empty;
+    public string SshUser { get; set; } = "originflow";
+    public int SshPort { get; set; } = 22;
+    public string SshPath { get; set; } = "ssh";
+    public string ScpPath { get; set; } = "scp";
 }
 
 public sealed class ApplicationMd5Info

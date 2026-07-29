@@ -23,8 +23,6 @@ public sealed class MainViewModel : ObservableObject
         new() { Id = "pcba_test_points" }, new() { Id = "indicator_led" }, new() { Id = "fan" }, new() { Id = "otg" }, new() { Id = "reset_button" }
     ];
 
-    // Change this value during deployment; operators do not choose the transport mode.
-    private const PcbaConnectionMode ConnectionMode = PcbaConnectionMode.AdbForward;
     private const string BoardStateItemName = "板状态";
     private const int BoardStateTimeoutSeconds = 10;
     private const string ApplicationUpgradeItemId = "application_upgrade";
@@ -54,6 +52,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly UpgradeConfiguration _upgradeConfiguration;
     private readonly TestModeConfiguration _testModeConfiguration;
     private readonly string _testProfileMode;
+    private readonly PcbaConnectionMode _connectionMode;
     private readonly BluetoothScanRequest _bluetoothRequest = new()
     {
         TargetName = "yctc_bt_test_01",
@@ -144,6 +143,7 @@ public sealed class MainViewModel : ObservableObject
         _allowSnMismatchForDebug = appConfiguration.TestPlan.AllowSnMismatchForDebug;
         _keyTestTimeoutMs = GetConfiguredKeyTimeoutMs(appConfiguration);
         _upgradeConfiguration = appConfiguration.Upgrade;
+        _connectionMode = ParseConnectionMode(appConfiguration.PcbaConnection.Mode);
         _testProfileMode = string.IsNullOrWhiteSpace(appConfiguration.TestMode) ? "pcba" : appConfiguration.TestMode.Trim().ToLowerInvariant();
         _testModeConfiguration = appConfiguration.TestModes.TryGetValue(_testProfileMode, out var modeConfiguration)
             ? modeConfiguration
@@ -179,7 +179,7 @@ public sealed class MainViewModel : ObservableObject
             _applicationUpgradeCheckInProgress = true;
             try
             {
-                if (await EnsureApplicationUpgradeAsync(_pcbaCommandClientFactory.Create(ConnectionMode)))
+                if (await EnsureApplicationUpgradeAsync(_pcbaCommandClientFactory.Create(_connectionMode)))
                     _adbUpgradeMonitorTimer.Stop();
             }
             finally
@@ -472,7 +472,7 @@ public sealed class MainViewModel : ObservableObject
         "hdmi" => "请观察 HDMI 输出是否正常，然后手动选择通过或失败。",
         "keys" => "请依次按下上、下、左、右方向键和确认键，再按下 Recovery 实体键；六键全部识别后自动通过。",
         "lcd" => "请观察 LCD：背光正常、RGB 测试图案完整且稳定，无花屏、缺线、闪烁或明显亮暗异常后再判定。",
-        "indicator_led" => "请观察蓝灯和红灯是否正常，并确认两灯以 2 秒周期交替显示后选择 PASS 或 FAIL。",
+        "indicator_led" => "请依次观察红灯、绿灯、蓝灯各亮 2 秒，最后确认绿灯正常后选择 PASS 或 FAIL。",
         "reset_button" => "请按下设备复位键，确认 LCD 屏幕已经息屏后选择 PASS 或 FAIL。",
         "fan" => "风扇正在自动检测，请等待下位机读取 tach_rpm 并返回结果。",
         _ => string.Empty
@@ -549,7 +549,7 @@ public sealed class MainViewModel : ObservableObject
         UpdateDebugOutput();
 
         var history = await _databaseRepository.GetLatestSessionBySnAsync(CurrentSn);
-        if (history is not null && ConnectionMode == PcbaConnectionMode.Mock)
+        if (history is not null && _connectionMode == PcbaConnectionMode.Mock)
         {
             HistoryRecordFound?.Invoke(this, history);
             return;
@@ -602,7 +602,7 @@ public sealed class MainViewModel : ObservableObject
     {
         try
         {
-            var client = _pcbaCommandClientFactory.Create(ConnectionMode);
+            var client = _pcbaCommandClientFactory.Create(_connectionMode);
             AppendLog("Reading board state...");
             SetTestItemState(BoardStateItemName, TestItemState.Running);
             var state = await GetBoardStateWithTimeoutAsync(client);
@@ -639,7 +639,7 @@ public sealed class MainViewModel : ObservableObject
             SessionId = Guid.NewGuid().ToString("N");
         }
 
-        var upgradeClient = _pcbaCommandClientFactory.Create(ConnectionMode);
+        var upgradeClient = _pcbaCommandClientFactory.Create(_connectionMode);
         if (!await EnsureApplicationUpgradeAsync(upgradeClient))
         {
             LastResult = "Application upgrade failed";
@@ -679,7 +679,7 @@ public sealed class MainViewModel : ObservableObject
     private async Task<bool> EnsureApplicationUpgradeCoreAsync(IPcbaCommandClient client)
     {
         var upgradeCheckTimer = Stopwatch.StartNew();
-        if (!_upgradeConfiguration.Enabled || ConnectionMode == PcbaConnectionMode.Mock) return true;
+        if (!_upgradeConfiguration.Enabled || _connectionMode == PcbaConnectionMode.Mock) return true;
         if (_applicationUpgradeCheckCompleted) return true;
         var upgradeResult = TestResults.FirstOrDefault(item => item.TestId == ApplicationUpgradeItemId);
         upgradeResult?.ApplyLocalResult(TestItemState.Running, "正在检查设备程序 MD5。", new Dictionary<string, object?>
@@ -850,7 +850,7 @@ public sealed class MainViewModel : ObservableObject
         LastResult = "Stage 1 running";
         UpdateDebugOutput();
 
-        var client = _pcbaCommandClientFactory.Create(ConnectionMode);
+        var client = _pcbaCommandClientFactory.Create(_connectionMode);
         var finalVerdict = "Fail";
         BoardState? state = null;
 
@@ -887,7 +887,7 @@ public sealed class MainViewModel : ObservableObject
             var wifiPassed = await RunWifiAsync(client);
             var ethernetPassed = await RunEthernetAsync(client);
 
-            if (ConnectionMode == PcbaConnectionMode.Mock)
+            if (_connectionMode == PcbaConnectionMode.Mock)
             {
                 await RunMockOnlyTestsAsync();
             }
@@ -956,11 +956,11 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task RunUnifiedSessionAsync()
     {
-        AppendLog($"Session start requested: mode={ConnectionMode}, session={SessionId}, sn={CurrentSn}, tests={string.Join(",", _testPlan.Select(item => item.Id))}");
+        AppendLog($"Session start requested: mode={_connectionMode}, session={SessionId}, sn={CurrentSn}, tests={string.Join(",", _testPlan.Select(item => item.Id))}");
         LastResult = "Stage 1 running";
         OperatorInstruction = "正在接收底层测试结果，请勿断开产品连接。";
 
-        var client = _pcbaCommandClientFactory.Create(ConnectionMode);
+        var client = _pcbaCommandClientFactory.Create(_connectionMode);
         _activeSessionClient = client;
         var finalVerdict = "Fail";
         BoardState? state = null;
@@ -2137,7 +2137,7 @@ public sealed class MainViewModel : ObservableObject
         try
         {
             var expected = GetParameterInt(parameters, phase == "high" ? "highCommandExpectedVoltageMv" : "lowCommandExpectedVoltageMv", 0);
-            var voltage = ConnectionMode == PcbaConnectionMode.AdbForward && _jxTvmService?.IsEnabled == true
+            var voltage = _connectionMode == PcbaConnectionMode.AdbForward && _jxTvmService?.IsEnabled == true
                 ? await _jxTvmService.ReadChannelVoltageMvAsync(GetParameterInt(parameters, "channel", 1))
                 : expected;
             var passed = Math.Abs(voltage - expected) <= GetParameterInt(parameters, "toleranceMv", 150);
@@ -2389,13 +2389,31 @@ public sealed class MainViewModel : ObservableObject
     private static int GetParameterInt(IReadOnlyDictionary<string, object?> parameters, string key, int fallback) =>
         int.TryParse(GetDataString(parameters, key, fallback.ToString()), out var value) ? value : fallback;
 
+    private static PcbaConnectionMode ParseConnectionMode(string? value)
+    {
+        if (string.Equals(value, "mock", StringComparison.OrdinalIgnoreCase))
+        {
+            return PcbaConnectionMode.Mock;
+        }
+
+        if (string.Equals(value, "tcp", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "network", StringComparison.OrdinalIgnoreCase))
+        {
+            return PcbaConnectionMode.Tcp;
+        }
+
+        return PcbaConnectionMode.AdbForward;
+    }
+
     public async Task InitializeAsync()
     {
         await ValidateUpgradePackageAsync();
-        if (_upgradePackageReady && ConnectionMode == PcbaConnectionMode.AdbForward)
+        if (_upgradePackageReady && _connectionMode != PcbaConnectionMode.Mock)
         {
-            OperatorInstruction = "升级软件已准备，正在通过 ADB 检查设备程序。";
-            var upgradeClient = _pcbaCommandClientFactory.Create(ConnectionMode);
+            OperatorInstruction = _connectionMode == PcbaConnectionMode.Tcp
+                ? "升级软件已准备，正在通过网线检查设备程序。"
+                : "升级软件已准备，正在通过 ADB 检查设备程序。";
+            var upgradeClient = _pcbaCommandClientFactory.Create(_connectionMode);
             if (!await EnsureApplicationUpgradeAsync(upgradeClient))
             {
                 OperatorInstruction = "设备程序升级失败或无法确认，测试暂不可开始。";
@@ -2645,12 +2663,9 @@ public sealed class MainViewModel : ObservableObject
 
     private static IReadOnlyDictionary<string, object?> GetTestParameters(AppConfiguration configuration, string testId, string mode)
     {
-        if (!configuration.TestPlan.TestParameters.TryGetValue(testId, out var parameters))
-        {
-            return new Dictionary<string, object?> { ["mode"] = mode };
-        }
-
-        var result = parameters.ToDictionary(pair => pair.Key, pair => (object?)pair.Value, StringComparer.OrdinalIgnoreCase);
+        var result = configuration.TestPlan.TestParameters.TryGetValue(testId, out var parameters)
+            ? parameters.ToDictionary(pair => pair.Key, pair => (object?)pair.Value, StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         result["mode"] = mode;
         if (testId == "bluetooth" && !string.IsNullOrWhiteSpace(configuration.BluetoothBroadcaster.BroadcastName))
         {
@@ -2658,6 +2673,13 @@ public sealed class MainViewModel : ObservableObject
             // scans for that exact name.  Override bluetooth.targetName here so
             // production only changes bluetoothBroadcaster.broadcastName.
             result["targetName"] = configuration.BluetoothBroadcaster.BroadcastName;
+        }
+        if (testId == "indicator_led")
+        {
+            result.TryAdd("phaseDurationMs", 2000);
+            result.TryAdd("redGreenOverlapMs", 200);
+            result.TryAdd("i2cTimeoutMs", 3000);
+            result.TryAdd("i2cRetryIntervalMs", 100);
         }
         return result;
     }
@@ -2870,7 +2892,7 @@ public sealed class MainViewModel : ObservableObject
     private void UpdateDebugOutput()
     {
         DebugOutput =
-            $"Mode: {ConnectionMode}\n" +
+            $"Mode: {_connectionMode}\n" +
             $"SessionId: {SessionId}\n" +
             $"SN: {CurrentSn}\n" +
             $"BoardId: {BoardId}\n" +

@@ -15,16 +15,51 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
     private readonly string? _deviceSerial;
     private readonly int _localPort;
     private readonly int _remotePort;
+    private readonly string _tcpHost;
+    private readonly int _tcpPort;
+    private readonly bool _useAdbForward;
+    private readonly PcbaDiscoveryService? _discoveryService;
+    private readonly string _upgradeTransport;
+    private readonly string _sshUser;
+    private readonly int _sshPort;
+    private readonly string _sshPath;
+    private readonly string _scpPath;
     private readonly SemaphoreSlim _sessionWriteGate = new(1, 1);
     private NetworkStream? _activeSessionStream;
     private string? _activeSessionId;
 
-    public AdbPcbaCommandClient(string adbPath = "adb", int localPort = 19001, int remotePort = 19001, string? deviceSerial = null)
+    public AdbPcbaCommandClient(
+        string adbPath = "adb",
+        int localPort = 19001,
+        int remotePort = 19001,
+        string? deviceSerial = null,
+        bool useAdbForward = true,
+        string tcpHost = "127.0.0.1",
+        int tcpPort = 19001,
+        PcbaDiscoveryService? discoveryService = null,
+        UpgradeConfiguration? upgradeConfiguration = null)
     {
         _adbPath = adbPath;
         _localPort = localPort;
         _remotePort = remotePort;
         _deviceSerial = deviceSerial;
+        _useAdbForward = useAdbForward;
+        _tcpHost = string.IsNullOrWhiteSpace(tcpHost) ? "127.0.0.1" : tcpHost.Trim();
+        _tcpPort = tcpPort > 0 ? tcpPort : remotePort;
+        _discoveryService = discoveryService;
+        _upgradeTransport = string.IsNullOrWhiteSpace(upgradeConfiguration?.Transport)
+            ? "auto"
+            : upgradeConfiguration.Transport.Trim();
+        _sshUser = string.IsNullOrWhiteSpace(upgradeConfiguration?.SshUser)
+            ? "originflow"
+            : upgradeConfiguration.SshUser.Trim();
+        _sshPort = upgradeConfiguration?.SshPort > 0 ? upgradeConfiguration.SshPort : 22;
+        _sshPath = string.IsNullOrWhiteSpace(upgradeConfiguration?.SshPath)
+            ? "ssh"
+            : upgradeConfiguration.SshPath.Trim();
+        _scpPath = string.IsNullOrWhiteSpace(upgradeConfiguration?.ScpPath)
+            ? "scp"
+            : upgradeConfiguration.ScpPath.Trim();
     }
 
     public async Task<ApplicationMd5Info> GetApplicationMd5Async(string remoteBinaryPath, CancellationToken cancellationToken = default)
@@ -32,7 +67,9 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         string md5;
         try
         {
-            var output = await RunAdbAsync($"shell md5sum {Quote(remoteBinaryPath)}", cancellationToken);
+            var output = ShouldUseSshScpUpgrade()
+                ? await RunSshAsync($"md5sum {ShellQuote(remoteBinaryPath)}", cancellationToken)
+                : await RunAdbAsync($"shell md5sum {Quote(remoteBinaryPath)}", cancellationToken);
             md5 = ParseMd5(output);
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("No such file or directory", StringComparison.OrdinalIgnoreCase))
@@ -63,6 +100,11 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         string localBinaryPath, string expectedMd5, string serviceName, string remoteBinaryPath,
         CancellationToken cancellationToken = default)
     {
+        if (ShouldUseSshScpUpgrade())
+        {
+            return await UpgradeApplicationOverSshScpAsync(localBinaryPath, expectedMd5, serviceName, remoteBinaryPath, cancellationToken);
+        }
+
         var remoteNewPath = remoteBinaryPath + ".new";
         var remoteBackupPath = remoteBinaryPath + ".bak";
         var hasBackup = false;
@@ -146,6 +188,132 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         return stdout;
     }
 
+    private async Task<ApplicationUpgradeResult> UpgradeApplicationOverSshScpAsync(
+        string localBinaryPath,
+        string expectedMd5,
+        string serviceName,
+        string remoteBinaryPath,
+        CancellationToken cancellationToken)
+    {
+        var remoteNewPath = remoteBinaryPath + ".new";
+        var remoteBackupPath = remoteBinaryPath + ".bak";
+        var hasBackup = false;
+        var totalTimer = Stopwatch.StartNew();
+        var timing = new List<string>();
+
+        try
+        {
+            var host = await ResolveTcpHostAsync(cancellationToken);
+            var localMd5 = await CalculateMd5Async(localBinaryPath, cancellationToken);
+            if (!string.Equals(localMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
+            {
+                return new ApplicationUpgradeResult { Message = "Local application MD5 changed before upload." };
+            }
+
+            var timer = Stopwatch.StartNew();
+            await RunScpAsync(localBinaryPath, host, remoteNewPath, cancellationToken);
+            timing.Add($"scp={timer.ElapsedMilliseconds}ms");
+
+            timer.Restart();
+            var upgradeScript = string.Join("; ",
+                "set -e",
+                $"chmod 755 {ShellQuote(remoteNewPath)}",
+                $"uploaded_md5=$(md5sum {ShellQuote(remoteNewPath)} | awk '{{print $1}}')",
+                $"[ \"$uploaded_md5\" = \"{expectedMd5}\" ]",
+                $"systemctl stop {ShellQuote(serviceName)}",
+                $"if [ -f {ShellQuote(remoteBinaryPath)} ]; then cp -p {ShellQuote(remoteBinaryPath)} {ShellQuote(remoteBackupPath)}; fi",
+                $"mv -f {ShellQuote(remoteNewPath)} {ShellQuote(remoteBinaryPath)}",
+                $"chmod 755 {ShellQuote(remoteBinaryPath)}",
+                $"systemctl start {ShellQuote(serviceName)}",
+                $"for i in $(seq 1 20); do systemctl is-active --quiet {ShellQuote(serviceName)} && break; sleep 0.1; done",
+                $"systemctl is-active --quiet {ShellQuote(serviceName)}",
+                $"final_md5=$(md5sum {ShellQuote(remoteBinaryPath)} | awk '{{print $1}}')",
+                "printf 'UPLOADED_MD5=%s\\nFINAL_MD5=%s\\n' \"$uploaded_md5\" \"$final_md5\"");
+            var upgradeOutput = await RunSshAsync(upgradeScript, cancellationToken, host);
+            timing.Add($"remoteUpgrade={timer.ElapsedMilliseconds}ms");
+
+            var uploadedMd5 = ParseTaggedMd5(upgradeOutput, "UPLOADED_MD5");
+            var finalMd5 = ParseTaggedMd5(upgradeOutput, "FINAL_MD5");
+            if (!string.Equals(uploadedMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
+            {
+                return new ApplicationUpgradeResult { Message = "Uploaded application MD5 verification failed." };
+            }
+
+            hasBackup = true;
+            if (!string.Equals(finalMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Final application MD5 verification failed.");
+            }
+
+            timing.Add($"total={totalTimer.ElapsedMilliseconds}ms");
+            return new ApplicationUpgradeResult
+            {
+                Success = true,
+                FinalMd5 = finalMd5,
+                Message = $"Application upgrade completed over SSH/SCP. Timing: {string.Join(", ", timing)}"
+            };
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                var host = await ResolveTcpHostAsync(cancellationToken);
+                await RunSshAsync($"systemctl stop {ShellQuote(serviceName)}", cancellationToken, host);
+                if (hasBackup)
+                {
+                    await RunSshAsync($"mv -f {ShellQuote(remoteBackupPath)} {ShellQuote(remoteBinaryPath)}", cancellationToken, host);
+                }
+                await RunSshAsync($"chmod 755 {ShellQuote(remoteBinaryPath)}", cancellationToken, host);
+                await RunSshAsync($"systemctl start {ShellQuote(serviceName)}", cancellationToken, host);
+            }
+            catch (Exception rollbackError)
+            {
+                return new ApplicationUpgradeResult { Message = $"Upgrade failed: {ex.Message}; rollback failed: {rollbackError.Message}; Timing: {string.Join(", ", timing)}, total={totalTimer.ElapsedMilliseconds}ms" };
+            }
+
+            return new ApplicationUpgradeResult { Message = $"Upgrade failed and was rolled back: {ex.Message}; Timing: {string.Join(", ", timing)}, total={totalTimer.ElapsedMilliseconds}ms" };
+        }
+    }
+
+    private async Task<string> RunSshAsync(string remoteCommand, CancellationToken cancellationToken, string? host = null)
+    {
+        var resolvedHost = host ?? await ResolveTcpHostAsync(cancellationToken);
+        var target = $"{_sshUser}@{resolvedHost}";
+        var arguments = $"-p {_sshPort} -o StrictHostKeyChecking=accept-new {Quote(target)} {Quote(remoteCommand)}";
+        return await RunProcessAsync(_sshPath, arguments, "SSH", cancellationToken);
+    }
+
+    private async Task RunScpAsync(string localPath, string host, string remotePath, CancellationToken cancellationToken)
+    {
+        var target = $"{_sshUser}@{host}:{remotePath}";
+        var arguments = $"-P {_sshPort} -o StrictHostKeyChecking=accept-new {Quote(localPath)} {Quote(target)}";
+        await RunProcessAsync(_scpPath, arguments, "SCP", cancellationToken);
+    }
+
+    private async Task<string> RunProcessAsync(string fileName, string arguments, string label, CancellationToken cancellationToken)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = fileName,
+            Arguments = arguments,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        using var process = new Process { StartInfo = startInfo };
+        process.Start();
+        var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stderr = await process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"{label} command failed: {stderr.Trim()} {stdout.Trim()}".Trim());
+        }
+
+        return stdout;
+    }
+
     private async Task<bool> RemoteFileExistsAsync(string path, CancellationToken cancellationToken)
     {
         try
@@ -209,16 +377,38 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
 
     private static string Quote(string value) => $"\"{value.Replace("\"", "\\\"")}\"";
 
+    private bool ShouldUseSshScpUpgrade()
+    {
+        if (string.Equals(_upgradeTransport, "sshScp", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(_upgradeTransport, "scp", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (string.Equals(_upgradeTransport, "adb", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return !_useAdbForward;
+    }
+
+    private async Task<string> ResolveTcpHostAsync(CancellationToken cancellationToken)
+    {
+        return _discoveryService is null
+            ? _tcpHost
+            : await _discoveryService.ResolveHostAsync(cancellationToken);
+    }
+
+    private static string ShellQuote(string value) => $"'{value.Replace("'", "'\"'\"'")}'";
+
     public async IAsyncEnumerable<TestSessionEvent> RunSessionAsync(
         string sessionId,
         string sn,
         IReadOnlyList<TestPlanItem> testPlan,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        await EnsureForwardAsync(cancellationToken);
-
-        using var client = new TcpClient();
-        await client.ConnectAsync("127.0.0.1", _localPort, cancellationToken);
+        using var client = await ConnectPcbaAsync(cancellationToken);
         await using var stream = client.GetStream();
         using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
 
@@ -528,10 +718,7 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
 
     private async Task<string> SendCommandAsync(HostCommand command, CancellationToken cancellationToken)
     {
-        await EnsureForwardAsync(cancellationToken);
-
-        using var client = new TcpClient();
-        await client.ConnectAsync("127.0.0.1", _localPort, cancellationToken);
+        using var client = await ConnectPcbaAsync(cancellationToken);
 
         await using var stream = client.GetStream();
 
@@ -554,6 +741,11 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
 
     private async Task EnsureForwardAsync(CancellationToken cancellationToken)
     {
+        if (!_useAdbForward)
+        {
+            return;
+        }
+
         var arguments = BuildAdbArguments($"forward tcp:{_localPort} tcp:{_remotePort}");
 
         var startInfo = new ProcessStartInfo
@@ -584,6 +776,30 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         return string.IsNullOrWhiteSpace(_deviceSerial)
             ? command
             : $"-s {_deviceSerial} {command}";
+    }
+
+    private async Task<TcpClient> ConnectPcbaAsync(CancellationToken cancellationToken)
+    {
+        await EnsureForwardAsync(cancellationToken);
+
+        var host = _useAdbForward
+            ? "127.0.0.1"
+            : _discoveryService is null
+                ? _tcpHost
+                : await _discoveryService.ResolveHostAsync(cancellationToken);
+        var port = _useAdbForward ? _localPort : _tcpPort;
+
+        var client = new TcpClient();
+        try
+        {
+            await client.ConnectAsync(host, port, cancellationToken);
+            return client;
+        }
+        catch
+        {
+            client.Dispose();
+            throw;
+        }
     }
 
     private static ResponseEnvelope<T> DeserializeEnvelope<T>(string payload)

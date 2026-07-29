@@ -34,12 +34,39 @@
     "fileEnabled": true,
     "filePath": "logs/space-test-pc.log"
   },
+  "pcbaConnection": {
+    // Supported values: adbForward, tcp, mock.
+    "mode": "adbForward",
+    // Use "auto" in tcp mode to discover the box through the router.
+    "host": "auto",
+    "port": 19001,
+    "adbPath": "adb",
+    "adbDeviceSerial": "",
+    "discovery": {
+      "enabled": true,
+      // Use "auto" to scan the PC network segment, or configure a small CIDR such as "192.168.110.0/28".
+      "subnet": "auto",
+      // Prefer this range when the router DHCP pool is intentionally small.
+      "startIp": "",
+      "endIp": "",
+      "pingTimeoutMs": 300,
+      "connectTimeoutMs": 500,
+      "maxParallel": 32
+    }
+  },
   "upgrade": {
     "enabled": true,
+    // auto means ADB in adbForward mode and SSH/SCP in tcp mode. Supported values: auto, adb, sshScp.
+    "transport": "auto",
     "localBinaryPath": "spacetest3576",
     "remoteBinaryPath": "/vendor/originflow/bin/spacetest3576",
     "serviceName": "pcba-test.service",
-    "autoUpgradeDelaySeconds": 5
+    "autoUpgradeDelaySeconds": 5,
+    "applicationVersion": "",
+    "sshUser": "originflow",
+    "sshPort": 22,
+    "sshPath": "ssh",
+    "scpPath": "scp"
   },
   "testPlan": {
     // Debug only. true allows testing to continue when board SN differs from scanned SN.
@@ -148,6 +175,14 @@
         "defaultMaxMv": 5000,
         "timeoutMs": 5000,
         "channels": []
+      },
+      "indicator_led": {
+        // RGB sequence duration per color. Operators may tune this value.
+        "phaseDurationMs": 2000,
+        // Keep red on briefly after enabling the I2C green LED to avoid a visible dark gap.
+        "redGreenOverlapMs": 200,
+        "i2cTimeoutMs": 3000,
+        "i2cRetryIntervalMs": 100
       }
     },
 
