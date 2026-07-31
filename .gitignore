@@ -1,7 +1,11 @@
 bin/
 obj/
 artifacts/
+release/
 data/
+tmp_jk5506_doc/
+spacetest_wifi_fan_stress*.jsonl
+spacetest_wifi_fan_stress*_summary.txt
 *.user
 *.suo
 *.cache

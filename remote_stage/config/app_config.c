@@ -19,7 +19,7 @@ void app_config_load_defaults(struct app_config *config)
     config->tf_mount_point = "/mnt/spacetest_tf";
     config->tf_allow_format_ext4 = 1;
     config->bluetooth_target_name = "yctc_bt_01";
-    config->bluetooth_min_rssi = -80;
+    config->bluetooth_min_rssi = -60;
     config->fast_charge_voltage_min_mv = 7500;
     config->fast_charge_voltage_max_mv = 12000;
     config->fast_charge_current_min_ma = 0;
