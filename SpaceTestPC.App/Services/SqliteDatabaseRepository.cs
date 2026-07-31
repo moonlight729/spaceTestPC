@@ -255,6 +255,7 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
     private static string GetTestDisplayNameZh(string testId) => testId switch
     {
         "board_state" => "板状态",
+        "emmc_ddr" => "EMMC/DDR",
         "hdmi" => "HDMI",
         "keys" => "按键",
         "lcd" => "LCD",

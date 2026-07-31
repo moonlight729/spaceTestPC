@@ -19,7 +19,7 @@ public sealed class MainViewModel : ObservableObject
     [
         new() { Id = "board_state" }, new() { Id = "hdmi" }, new() { Id = "keys" }, new() { Id = "lcd" },
         new() { Id = "ethernet" }, new() { Id = "wifi" }, new() { Id = "bluetooth" }, new() { Id = "fingerprint" },
-        new() { Id = "battery_management" }, new() { Id = "typec_fast_charge" }, new() { Id = "typec_camera" }, new() { Id = "tf" }, new() { Id = "usb2_3" },
+        new() { Id = "battery_management" }, new() { Id = "typec_fast_charge" }, new() { Id = "typec_camera" }, new() { Id = "tf" }, new() { Id = "emmc_ddr" }, new() { Id = "usb2_3" },
         new() { Id = "pcba_test_points" }, new() { Id = "ethernet_led" }, new() { Id = "indicator_led" }, new() { Id = "fan" }, new() { Id = "otg" }, new() { Id = "reset_button" }
     ];
 
@@ -472,7 +472,7 @@ public sealed class MainViewModel : ObservableObject
         "hdmi" => "请观察 HDMI 输出是否正常，然后手动选择通过或失败。",
         "keys" => "请依次按下上、下、左、右方向键和确认键，再按下 Recovery 实体键；六键全部识别后自动通过。",
         "lcd" => "请观察 LCD：背光正常、RGB 测试图案完整且稳定，无花屏、缺线、闪烁或明显亮暗异常后再判定。",
-        "ethernet_led" => "请观察网口灯：百兆绿色灯、千兆黄色灯都亮过后选择 PASS，否则选择 FAIL。",
+        "ethernet_led" => "请观察网口灯：看到黄色和绿色灯亮即可选择 PASS，否则选择 FAIL。",
         "indicator_led" => "请依次观察红灯、绿灯、蓝灯各亮 2 秒，最后确认绿灯正常后选择 PASS 或 FAIL。",
         "reset_button" => "请按下设备复位键，确认 LCD 屏幕已经息屏后选择 PASS 或 FAIL。",
         "fan" => "风扇正在自动检测，请等待下位机读取 tach_rpm 并返回结果。",
@@ -1496,10 +1496,10 @@ public sealed class MainViewModel : ObservableObject
                 "wait_cable" => elapsedSeconds > 0
                     ? $"请插入网线，系统正在等待网口灯测试。已等待 {elapsedSeconds} 秒。"
                     : "请插入网线，系统正在等待网口灯测试。",
-                "show_100m" => $"正在切换 {iface} 到百兆模式，请观察绿色网口灯。",
-                "show_1000m" => $"正在切换 {iface} 到千兆模式，请观察黄色网口灯。",
+                "show_100m" => $"正在切换 {iface} 到百兆模式，请观察绿色网口灯是否亮起。",
+                "show_1000m" => $"正在切换 {iface} 到千兆模式，请观察黄色网口灯是否亮起。",
                 "awaiting_operator" => "网口灯切换已完成，正在等待人工判定。",
-                _ => "请观察网口灯：百兆绿色、千兆黄色都亮过后选择 PASS。"
+                _ => "请观察网口灯：看到黄色和绿色灯亮即可选择 PASS。"
             };
         }
 
@@ -1850,6 +1850,7 @@ public sealed class MainViewModel : ObservableObject
     {
         ApplicationUpgradeItemId => "设备程序升级",
         "board_state" => "板状态",
+        "emmc_ddr" => "EMMC/DDR",
         "hdmi" => "HDMI",
         "keys" => "六键测试",
         "lcd" => "LCD",
@@ -2610,6 +2611,7 @@ public sealed class MainViewModel : ObservableObject
     private static string BuildSingleFailureInstruction(string testId) => testId switch
     {
         "board_state" => "检测完成，板状态读取失败。请检查设备连接状态后重新扫描当前 SN。",
+        "emmc_ddr" => "检测完成，EMMC/DDR 器件测试未通过。请检查存储、内存器件和焊接后重新扫描当前 SN。",
         "hdmi" => "检测完成，HDMI 测试未通过。请检查显示输出后重新扫描当前 SN。",
         "lcd" => "检测完成，LCD 测试未通过。请检查屏幕显示后重新扫描当前 SN。",
         "keys" => "检测完成，按键测试未通过。请检查按键输入后重新扫描当前 SN。",
@@ -2725,10 +2727,24 @@ public sealed class MainViewModel : ObservableObject
         {
             result.TryAdd("interfaceName", "end0");
             result.TryAdd("waitCableTimeoutMs", 15000);
+            result.TryAdd("cycleCount", 2);
             result.TryAdd("phaseDurationMs", 2000);
+            result.TryAdd("settleMs", 2000);
+            result.TryAdd("speedWaitTimeoutMs", 10000);
             result.TryAdd("manualDecisionTimeoutMs", 15000);
             result.TryAdd("timeoutMs", 15000);
             result.TryAdd("reconnectDelayMs", 8000);
+        }
+        if (testId == "emmc_ddr")
+        {
+            result.TryAdd("emmcDevice", "mmcblk0");
+            result.TryAdd("emmcMinCapacityGiB", 115);
+            result.TryAdd("emmcTestDirectory", "/userdata/factory_test");
+            result.TryAdd("emmcTestFileMiB", 64);
+            result.TryAdd("ddrMinMemTotalMiB", 3200);
+            result.TryAdd("ddrStressMiB", 256);
+            result.TryAdd("ddrStressLoops", 2);
+            result.TryAdd("timeoutMs", 30000);
         }
         return result;
     }

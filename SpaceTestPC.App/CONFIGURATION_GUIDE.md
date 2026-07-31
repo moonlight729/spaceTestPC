@@ -181,7 +181,7 @@ Wi-Fi 示例：
 "wifi": {
   "ssid": "test_router_001",
   "interfaceName": "wlan0",
-  "minRssi": -75,
+  "minRssi": -55,
   "maxRetryCount": 5,
   "retryIntervalMs": 2000,
   "decisionTimeoutMs": 5000,

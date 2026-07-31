@@ -602,6 +602,21 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 data["resolution"] = "1920x1080";
                 data["signalOk"] = true;
                 break;
+            case "emmc_ddr":
+                data["emmcDevice"] = GetParameterString(test.Parameters, "emmcDevice", "mmcblk0");
+                data["emmcName"] = "KIOXIA";
+                data["emmcCapacityMiB"] = GetParameterInt(test.Parameters, "emmcMinCapacityGiB", 115) * 1024;
+                data["emmcMinCapacityMiB"] = GetParameterInt(test.Parameters, "emmcMinCapacityGiB", 115) * 1024;
+                data["emmcTestFileMiB"] = GetParameterInt(test.Parameters, "emmcTestFileMiB", 64);
+                data["ddrMemTotalMiB"] = 3900;
+                data["ddrMinMemTotalMiB"] = GetParameterInt(test.Parameters, "ddrMinMemTotalMiB", 3200);
+                data["ddrStressMiB"] = GetParameterInt(test.Parameters, "ddrStressMiB", 256);
+                data["ddrStressLoops"] = GetParameterInt(test.Parameters, "ddrStressLoops", 2);
+                data["ddrProcessedMiB"] = GetParameterInt(test.Parameters, "ddrStressMiB", 256) * GetParameterInt(test.Parameters, "ddrStressLoops", 2) * 8;
+                data["ddrElapsedMs"] = 1800.0;
+                data["ddrThroughputMiBPerSec"] = 227.56;
+                data["ddrPatternPass"] = true;
+                break;
             case "keys":
                 data["inputSubsystem"] = "evdev";
                 data["expectedKeys"] = 5;
@@ -832,6 +847,23 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
             };
         }
 
+        if (testId == "emmc_ddr")
+        {
+            return new Dictionary<string, object?>
+            {
+                ["phase"] = "start",
+                ["emmcDevice"] = GetParameterString(test.Parameters, "emmcDevice", "mmcblk0"),
+                ["emmcMinCapacityMiB"] = GetParameterInt(test.Parameters, "emmcMinCapacityGiB", 115) * 1024,
+                ["emmcTestFileMiB"] = GetParameterInt(test.Parameters, "emmcTestFileMiB", 64),
+                ["ddrMinMemTotalMiB"] = GetParameterInt(test.Parameters, "ddrMinMemTotalMiB", 3200),
+                ["ddrStressMiB"] = GetParameterInt(test.Parameters, "ddrStressMiB", 256),
+                ["ddrStressLoops"] = GetParameterInt(test.Parameters, "ddrStressLoops", 2),
+                ["ddrProcessedMiB"] = GetParameterInt(test.Parameters, "ddrStressMiB", 256) * GetParameterInt(test.Parameters, "ddrStressLoops", 2) * 8,
+                ["ddrElapsedMs"] = 1800.0,
+                ["ddrThroughputMiBPerSec"] = 227.56
+            };
+        }
+
         if (testId == "bluetooth")
         {
             return new Dictionary<string, object?>
@@ -871,6 +903,7 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
     private static string CreateMockRunningMessage(string testId) => testId switch
     {
         "board_state" => "Reading SN, software versions and local test record",
+        "emmc_ddr" => "Running eMMC and DDR device test",
         "hdmi" => "Observe HDMI output and confirm the result manually",
         "lcd" => "Observe SPI LCD RGB pattern and confirm the result manually",
         _ => "Mock test started"
@@ -887,6 +920,7 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
     private static string CreateMockResultMessage(string testId) => testId switch
     {
         "board_state" => "Board state read",
+        "emmc_ddr" => "eMMC and DDR device test passed",
         "hdmi" => "HDMI signal passed",
         "keys" => "Input subsystem key test passed",
         "lcd" => "SPI LCD test passed",
