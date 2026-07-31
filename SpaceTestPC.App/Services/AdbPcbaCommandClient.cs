@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Renci.SshNet;
 using SpaceTestPC.App.Models;
 
 namespace SpaceTestPC.App.Services;
@@ -21,12 +22,14 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
     private readonly PcbaDiscoveryService? _discoveryService;
     private readonly string _upgradeTransport;
     private readonly string _sshUser;
+    private readonly string _sshPassword;
     private readonly int _sshPort;
     private readonly string _sshPath;
     private readonly string _scpPath;
     private readonly SemaphoreSlim _sessionWriteGate = new(1, 1);
     private NetworkStream? _activeSessionStream;
     private string? _activeSessionId;
+    public event Action<string>? Log;
 
     public AdbPcbaCommandClient(
         string adbPath = "adb",
@@ -53,6 +56,7 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         _sshUser = string.IsNullOrWhiteSpace(upgradeConfiguration?.SshUser)
             ? "originflow"
             : upgradeConfiguration.SshUser.Trim();
+        _sshPassword = upgradeConfiguration?.SshPassword ?? string.Empty;
         _sshPort = upgradeConfiguration?.SshPort > 0 ? upgradeConfiguration.SshPort : 22;
         _sshPath = string.IsNullOrWhiteSpace(upgradeConfiguration?.SshPath)
             ? "ssh"
@@ -195,7 +199,8 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         string remoteBinaryPath,
         CancellationToken cancellationToken)
     {
-        var remoteNewPath = remoteBinaryPath + ".new";
+        var remoteFileName = Path.GetFileName(remoteBinaryPath);
+        var remoteNewPath = $"/tmp/{remoteFileName}.{Guid.NewGuid():N}.new";
         var remoteBackupPath = remoteBinaryPath + ".bak";
         var hasBackup = false;
         var totalTimer = Stopwatch.StartNew();
@@ -229,7 +234,7 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
                 $"systemctl is-active --quiet {ShellQuote(serviceName)}",
                 $"final_md5=$(md5sum {ShellQuote(remoteBinaryPath)} | awk '{{print $1}}')",
                 "printf 'UPLOADED_MD5=%s\\nFINAL_MD5=%s\\n' \"$uploaded_md5\" \"$final_md5\"");
-            var upgradeOutput = await RunSshAsync(upgradeScript, cancellationToken, host);
+            var upgradeOutput = await RunSshAsync(BuildPrivilegedRemoteCommand(upgradeScript), cancellationToken, host);
             timing.Add($"remoteUpgrade={timer.ElapsedMilliseconds}ms");
 
             var uploadedMd5 = ParseTaggedMd5(upgradeOutput, "UPLOADED_MD5");
@@ -258,13 +263,13 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
             try
             {
                 var host = await ResolveTcpHostAsync(cancellationToken);
-                await RunSshAsync($"systemctl stop {ShellQuote(serviceName)}", cancellationToken, host);
+                await RunSshAsync(BuildPrivilegedRemoteCommand($"systemctl stop {ShellQuote(serviceName)}"), cancellationToken, host);
                 if (hasBackup)
                 {
-                    await RunSshAsync($"mv -f {ShellQuote(remoteBackupPath)} {ShellQuote(remoteBinaryPath)}", cancellationToken, host);
+                    await RunSshAsync(BuildPrivilegedRemoteCommand($"mv -f {ShellQuote(remoteBackupPath)} {ShellQuote(remoteBinaryPath)}"), cancellationToken, host);
                 }
-                await RunSshAsync($"chmod 755 {ShellQuote(remoteBinaryPath)}", cancellationToken, host);
-                await RunSshAsync($"systemctl start {ShellQuote(serviceName)}", cancellationToken, host);
+                await RunSshAsync(BuildPrivilegedRemoteCommand($"chmod 755 {ShellQuote(remoteBinaryPath)}"), cancellationToken, host);
+                await RunSshAsync(BuildPrivilegedRemoteCommand($"systemctl start {ShellQuote(serviceName)}"), cancellationToken, host);
             }
             catch (Exception rollbackError)
             {
@@ -278,16 +283,69 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
     private async Task<string> RunSshAsync(string remoteCommand, CancellationToken cancellationToken, string? host = null)
     {
         var resolvedHost = host ?? await ResolveTcpHostAsync(cancellationToken);
-        var target = $"{_sshUser}@{resolvedHost}";
-        var arguments = $"-p {_sshPort} -o StrictHostKeyChecking=accept-new {Quote(target)} {Quote(remoteCommand)}";
-        return await RunProcessAsync(_sshPath, arguments, "SSH", cancellationToken);
+        return await Task.Run(() =>
+        {
+            using var client = CreateSshClient(resolvedHost);
+            client.Connect();
+            var command = client.RunCommand(remoteCommand);
+            client.Disconnect();
+            if (command.ExitStatus != 0)
+            {
+                throw new InvalidOperationException($"SSH command failed on {resolvedHost}: {command.Error.Trim()} {command.Result.Trim()}".Trim());
+            }
+
+            return command.Result;
+        }, cancellationToken);
     }
 
     private async Task RunScpAsync(string localPath, string host, string remotePath, CancellationToken cancellationToken)
     {
-        var target = $"{_sshUser}@{host}:{remotePath}";
-        var arguments = $"-P {_sshPort} -o StrictHostKeyChecking=accept-new {Quote(localPath)} {Quote(target)}";
-        await RunProcessAsync(_scpPath, arguments, "SCP", cancellationToken);
+        await Task.Run(() =>
+        {
+            using var client = CreateScpClient(host);
+            client.Connect();
+            using var file = File.OpenRead(localPath);
+            client.Upload(file, remotePath);
+            client.Disconnect();
+        }, cancellationToken);
+    }
+
+    private SshClient CreateSshClient(string host)
+    {
+        var client = new SshClient(CreateConnectionInfo(host));
+        client.HostKeyReceived += (_, args) => args.CanTrust = true;
+        return client;
+    }
+
+    private ScpClient CreateScpClient(string host)
+    {
+        var client = new ScpClient(CreateConnectionInfo(host));
+        client.HostKeyReceived += (_, args) => args.CanTrust = true;
+        return client;
+    }
+
+    private ConnectionInfo CreateConnectionInfo(string host)
+    {
+        if (string.IsNullOrWhiteSpace(_sshPassword))
+        {
+            throw new InvalidOperationException("SSH password is not configured. Set upgrade.sshPassword for TCP OTA.");
+        }
+
+        var authentication = new PasswordAuthenticationMethod(_sshUser, _sshPassword);
+        return new ConnectionInfo(host, _sshPort, _sshUser, authentication)
+        {
+            Timeout = TimeSpan.FromSeconds(5)
+        };
+    }
+
+    private string BuildPrivilegedRemoteCommand(string script)
+    {
+        if (string.IsNullOrWhiteSpace(_sshPassword))
+        {
+            return $"sh -c {ShellQuote(script)}";
+        }
+
+        return $"printf '%s\\n' {ShellQuote(_sshPassword)} | sudo -S -p '' sh -c {ShellQuote(script)}";
     }
 
     private async Task<string> RunProcessAsync(string fileName, string arguments, string label, CancellationToken cancellationToken)
@@ -408,52 +466,141 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         IReadOnlyList<TestPlanItem> testPlan,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        using var client = await ConnectPcbaAsync(cancellationToken);
-        await using var stream = client.GetStream();
-        using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
+        var remainingTests = testPlan.ToArray();
+        var reconnectAttempted = false;
+        var reconnectDelayMs = GetEthernetLedReconnectDelayMs(remainingTests);
 
-        var command = new HostCommand
+        while (remainingTests.Length > 0)
         {
-            SessionId = sessionId,
-            Sn = sn,
-            CommandGroup = "session",
-            Command = "start",
-            Parameters = new Dictionary<string, object?> { ["tests"] = testPlan }
-        };
+            Log?.Invoke($"PCBA session connect attempt: session={sessionId}, sn={sn}, tests={string.Join(",", remainingTests.Select(item => item.Id))}.");
+            using var client = await ConnectPcbaAsync(cancellationToken);
+            await using var stream = client.GetStream();
+            using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
 
-        var requestBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(command, JsonOptions) + "\n");
-        await stream.WriteAsync(requestBytes, cancellationToken);
-        await stream.FlushAsync(cancellationToken);
-
-        _activeSessionStream = stream;
-        _activeSessionId = sessionId;
-
-        try
-        {
-            while (!cancellationToken.IsCancellationRequested)
+            var command = new HostCommand
             {
-                var line = await reader.ReadLineAsync(cancellationToken);
-                if (string.IsNullOrWhiteSpace(line))
-                {
-                    throw new InvalidOperationException("PCBA closed the test-session stream before completion.");
-                }
+                SessionId = sessionId,
+                Sn = sn,
+                CommandGroup = "session",
+                Command = "start",
+                Parameters = new Dictionary<string, object?> { ["tests"] = remainingTests }
+            };
 
-                var testEvent = JsonSerializer.Deserialize<TestSessionEvent>(line, JsonOptions)
-                    ?? throw new InvalidOperationException("Failed to parse PCBA test-session event.");
-                yield return testEvent;
+            var requestBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(command, JsonOptions) + "\n");
+            await stream.WriteAsync(requestBytes, cancellationToken);
+            await stream.FlushAsync(cancellationToken);
 
-                if (testEvent.Event == "session.completed")
+            _activeSessionStream = stream;
+            _activeSessionId = sessionId;
+
+            var lastRunningTestId = string.Empty;
+            var lastEventTestId = string.Empty;
+            var lastEventStatus = string.Empty;
+            var shouldReconnect = false;
+
+            try
+            {
+                while (!cancellationToken.IsCancellationRequested)
                 {
-                    yield break;
+                    string? line;
+                    try
+                    {
+                        line = await reader.ReadLineAsync(cancellationToken);
+                    }
+                    catch (IOException)
+                    {
+                        line = null;
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        line = null;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(line))
+                    {
+                        if (!reconnectAttempted &&
+                            string.Equals(lastEventTestId, "ethernet_led", StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(lastEventStatus, "running", StringComparison.OrdinalIgnoreCase))
+                        {
+                            Log?.Invoke($"PCBA session stream closed during ethernet_led running; reconnect will be attempted.");
+                            shouldReconnect = true;
+                            break;
+                        }
+
+                        if (!reconnectAttempted &&
+                            string.Equals(lastEventTestId, "ethernet_led", StringComparison.OrdinalIgnoreCase) &&
+                            (string.Equals(lastEventStatus, "passed", StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(lastEventStatus, "failed", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            Log?.Invoke($"PCBA session stream closed after ethernet_led {lastEventStatus}; reconnect will continue remaining tests.");
+                            shouldReconnect = true;
+                            break;
+                        }
+
+                        Log?.Invoke($"PCBA session stream closed unexpectedly: lastTest={lastEventTestId}, lastStatus={lastEventStatus}.");
+                        throw new InvalidOperationException("PCBA closed the test-session stream before completion.");
+                    }
+
+                    var testEvent = JsonSerializer.Deserialize<TestSessionEvent>(line, JsonOptions)
+                        ?? throw new InvalidOperationException("Failed to parse PCBA test-session event.");
+                    yield return testEvent;
+                    lastEventTestId = testEvent.TestId;
+                    lastEventStatus = testEvent.Status;
+
+                    if (testEvent.Event == "test.report" &&
+                        string.Equals(testEvent.Status, "running", StringComparison.OrdinalIgnoreCase) &&
+                        !string.IsNullOrWhiteSpace(testEvent.TestId))
+                    {
+                        lastRunningTestId = testEvent.TestId;
+                    }
+
+                    if (testEvent.Status is "passed" or "failed" or "skipped" &&
+                        string.Equals(testEvent.TestId, lastRunningTestId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        lastRunningTestId = string.Empty;
+                    }
+
+                    if (testEvent.Event == "session.completed")
+                    {
+                        Log?.Invoke($"PCBA session completed event received: status={testEvent.Status}, code={testEvent.ResultCode}.");
+                        yield break;
+                    }
                 }
             }
-        }
-        finally
-        {
-            if (ReferenceEquals(_activeSessionStream, stream))
+            finally
             {
-                _activeSessionStream = null;
-                _activeSessionId = null;
+                if (ReferenceEquals(_activeSessionStream, stream))
+                {
+                    _activeSessionStream = null;
+                    _activeSessionId = null;
+                }
+            }
+
+            if (!shouldReconnect)
+            {
+                yield break;
+            }
+
+            var completedIndex = FindTestIndex(remainingTests, lastEventTestId);
+            var resumeIndex = (string.Equals(lastEventStatus, "passed", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(lastEventStatus, "failed", StringComparison.OrdinalIgnoreCase))
+                ? completedIndex < 0 ? -1 : completedIndex + 1
+                : FindTestIndex(remainingTests, lastRunningTestId);
+            if (resumeIndex < 0)
+            {
+                throw new InvalidOperationException("Unable to resume Ethernet LED session after reconnect.");
+            }
+            remainingTests = remainingTests.Skip(resumeIndex).ToArray();
+            if (remainingTests.Length == 0)
+            {
+                yield break;
+            }
+
+            reconnectAttempted = true;
+            Log?.Invoke($"PCBA session reconnect scheduled: lastTest={lastEventTestId}, lastStatus={lastEventStatus}, resumeTests={string.Join(",", remainingTests.Select(item => item.Id))}, delayMs={reconnectDelayMs}.");
+            if (reconnectDelayMs > 0)
+            {
+                await Task.Delay(reconnectDelayMs, cancellationToken);
             }
         }
     }
@@ -747,6 +894,7 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         }
 
         var arguments = BuildAdbArguments($"forward tcp:{_localPort} tcp:{_remotePort}");
+        Log?.Invoke($"PCBA ADB forward start: adb={_adbPath}, args={arguments}.");
 
         var startInfo = new ProcessStartInfo
         {
@@ -766,9 +914,11 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
 
         if (process.ExitCode != 0)
         {
+            Log?.Invoke($"PCBA ADB forward failed: exit={process.ExitCode}, stdout={stdOut.Trim()}, stderr={stdErr.Trim()}.");
             throw new InvalidOperationException(
                 $"ADB forward failed with exit code {process.ExitCode}. stdout: {stdOut} stderr: {stdErr}");
         }
+        Log?.Invoke($"PCBA ADB forward ok: localPort={_localPort}, remotePort={_remotePort}.");
     }
 
     private string BuildAdbArguments(string command)
@@ -792,14 +942,66 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         var client = new TcpClient();
         try
         {
+            Log?.Invoke($"PCBA TCP connect start: mode={(_useAdbForward ? "adb-forward" : "tcp")}, host={host}, port={port}.");
             await client.ConnectAsync(host, port, cancellationToken);
+            Log?.Invoke($"PCBA TCP connect ok: host={host}, port={port}, local={client.Client.LocalEndPoint}.");
             return client;
         }
-        catch
+        catch (Exception ex)
         {
+            Log?.Invoke($"PCBA TCP connect failed: host={host}, port={port}, error={ex.GetType().Name}: {ex.Message}.");
             client.Dispose();
             throw;
         }
+    }
+
+    private static int FindTestIndex(IReadOnlyList<TestPlanItem> tests, string testId)
+    {
+        if (string.IsNullOrWhiteSpace(testId))
+        {
+            return -1;
+        }
+
+        for (var index = 0; index < tests.Count; index++)
+        {
+            if (string.Equals(tests[index].Id, testId, StringComparison.OrdinalIgnoreCase))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static int GetEthernetLedReconnectDelayMs(IReadOnlyList<TestPlanItem> tests)
+    {
+        const int fallback = 8000;
+        var ethernetLed = tests.FirstOrDefault(item => string.Equals(item.Id, "ethernet_led", StringComparison.OrdinalIgnoreCase));
+        if (ethernetLed is null)
+        {
+            return fallback;
+        }
+
+        return TryGetIntParameter(ethernetLed.Parameters, "reconnectDelayMs", fallback);
+    }
+
+    private static int TryGetIntParameter(IReadOnlyDictionary<string, object?> parameters, string key, int fallback)
+    {
+        if (!parameters.TryGetValue(key, out var value) || value is null)
+        {
+            return fallback;
+        }
+
+        return value switch
+        {
+            int intValue => intValue,
+            long longValue => longValue is >= int.MinValue and <= int.MaxValue ? (int)longValue : fallback,
+            short shortValue => shortValue,
+            byte byteValue => byteValue,
+            string text when int.TryParse(text, out var parsed) => parsed,
+            JsonElement element when element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var parsed) => parsed,
+            _ => fallback
+        };
     }
 
     private static ResponseEnvelope<T> DeserializeEnvelope<T>(string payload)

@@ -5,12 +5,13 @@
 
 enum indicator_led_channel {
     INDICATOR_LED_BLUE = 0,
-    INDICATOR_LED_GREEN = 1
+    INDICATOR_LED_GREEN = 1,
+    INDICATOR_LED_RED = 2
 };
 
 struct indicator_led_device {
     const char *blue_brightness_path;
-    const char *green_brightness_path;
+    const char *red_brightness_path;
 };
 
 struct indicator_led_result {
@@ -27,5 +28,6 @@ int indicator_led_set(struct indicator_led_device *device,
                       enum indicator_led_channel channel,
                       int brightness,
                       struct indicator_led_result *result);
+int indicator_led_set_charge(bool enabled, int timeout_ms, int retry_interval_ms);
 
 #endif

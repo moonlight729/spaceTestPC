@@ -28,6 +28,8 @@ struct app_config {
     const char *application_path;
     const char *application_service;
     const char *application_version;
+    int usb_pretest_enabled;
+    int usb_pretest_http_port;
 };
 
 void app_config_load_defaults(struct app_config *config);

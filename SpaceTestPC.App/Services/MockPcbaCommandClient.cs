@@ -208,6 +208,45 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                     yield break;
                 }
             }
+            else if (test.Id == "ethernet_led")
+            {
+                yield return new TestSessionEvent
+                {
+                    Event = "test.report",
+                    TestId = test.Id,
+                    Status = "running",
+                    Message = "Ethernet LED 100M mode; observe green LED",
+                    Data = new Dictionary<string, object?>
+                    {
+                        ["phase"] = "show_100m",
+                        ["interfaceName"] = GetParameterString(test.Parameters, "interfaceName", "end0"),
+                        ["expectedLed"] = "green",
+                        ["phaseDurationMs"] = GetParameterInt(test.Parameters, "phaseDurationMs", 2000),
+                        ["timeoutMs"] = GetParameterInt(test.Parameters, "timeoutMs", 15000)
+                    }
+                };
+                yield return new TestSessionEvent
+                {
+                    Event = "test.report",
+                    TestId = test.Id,
+                    Status = "running",
+                    Message = "Ethernet LED 1000M mode; observe yellow LED",
+                    Data = new Dictionary<string, object?>
+                    {
+                        ["phase"] = "show_1000m",
+                        ["interfaceName"] = GetParameterString(test.Parameters, "interfaceName", "end0"),
+                        ["expectedLed"] = "yellow",
+                        ["phaseDurationMs"] = GetParameterInt(test.Parameters, "phaseDurationMs", 2000),
+                        ["timeoutMs"] = GetParameterInt(test.Parameters, "timeoutMs", 15000)
+                    }
+                };
+                if (!await WaitForManualDecisionAsync(test.Id, cancellationToken))
+                {
+                    yield return new TestSessionEvent { Event = "test.report", TestId = test.Id, Status = "failed", ResultCode = 3910, Message = "Operator confirmed Ethernet LEDs fail" };
+                    yield return new TestSessionEvent { Event = "session.completed", TestId = test.Id, Status = "failed", ResultCode = 3015, Message = "Mock session stopped after Ethernet LED failure" };
+                    yield break;
+                }
+            }
             else if (test.Id is "indicator_led" or "fan")
             {
                 foreach (var phase in new[] { "high", "low" })
@@ -592,6 +631,13 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 data["pingOk"] = true;
                 data["avgDelayMs"] = 3;
                 break;
+            case "ethernet_led":
+                data["interfaceName"] = GetParameterString(test.Parameters, "interfaceName", "end0");
+                data["manualObserved"] = true;
+                data["displayMode"] = "100m_1000m_led_sequence";
+                data["greenLedObserved"] = true;
+                data["yellowLedObserved"] = true;
+                break;
             case "bluetooth":
                 data["mode"] = GetParameterString(test.Parameters, "mode", "observer");
                 data["targetName"] = GetParameterString(test.Parameters, "targetName", "NODE_A_01");
@@ -845,6 +891,7 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
         "keys" => "Input subsystem key test passed",
         "lcd" => "SPI LCD test passed",
         "ethernet" => "Ethernet cable test passed",
+        "ethernet_led" => "Ethernet LED test passed",
         "wifi" => "WiFi RSSI scan passed",
         "bluetooth" => "Target Bluetooth name scanned",
         "fingerprint" => "Fingerprint module is not implemented yet",

@@ -1,11 +1,16 @@
 #include "app_config.h"
+#include "version.h"
 
 #include <stdlib.h>
+
+static const char g_spacetest_version[] __attribute__((used)) = SPACETEST_VERSION_STRING;
 
 void app_config_load_defaults(struct app_config *config)
 {
     const char *keys_timeout_ms;
-    config->bind_address = "127.0.0.1";
+    const char *port;
+    const char *bind_address;
+    config->bind_address = "0.0.0.0";
     config->port = 19001;
     config->board_state_path = "/userdata/factory_test/spacetest3576_board_state.txt";
     config->wifi_ssid = "originflow";
@@ -30,7 +35,23 @@ void app_config_load_defaults(struct app_config *config)
     config->camera_pwm_min_pulse_delta = 1;
     config->application_path = "/vendor/originflow/bin/spacetest3576";
     config->application_service = "pcba-test.service";
-    config->application_version = "1.0.0";
+    config->application_version = SPACETEST_VERSION;
+    /* USB pretest is retained but disabled until the hardware flow is finalized. */
+    config->usb_pretest_enabled = 0;
+    config->usb_pretest_http_port = 18080;
+    if (getenv("SPACETEST_USB_PRETEST_ENABLED") != NULL &&
+        atoi(getenv("SPACETEST_USB_PRETEST_ENABLED")) != 0) {
+        config->usb_pretest_enabled = 1;
+    }
+    bind_address = getenv("SPACETEST_BIND_ADDRESS");
+    if (bind_address != NULL && bind_address[0] != '\0') {
+        config->bind_address = bind_address;
+    }
+    port = getenv("SPACETEST_PORT");
+    if (port != NULL && port[0] != '\0') {
+        int value = atoi(port);
+        if (value > 0 && value <= 65535) config->port = value;
+    }
     keys_timeout_ms = getenv("SPACETEST_KEYS_TIMEOUT_MS");
     if (keys_timeout_ms != NULL && keys_timeout_ms[0] != '\0') {
         int value = atoi(keys_timeout_ms);

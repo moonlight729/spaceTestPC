@@ -33,24 +33,26 @@ public partial class MainWindow : Window
             ? null
             : pcbaConnection.AdbDeviceSerial.Trim();
         var discoveryService = new PcbaDiscoveryService(pcbaConnection);
+        var adbClient = new AdbPcbaCommandClient(
+            adbPath: pcbaConnection.AdbPath,
+            localPort: pcbaConnection.Port,
+            remotePort: pcbaConnection.Port,
+            deviceSerial: adbDeviceSerial,
+            upgradeConfiguration: configuration.Upgrade);
+        var tcpClient = new AdbPcbaCommandClient(
+            adbPath: pcbaConnection.AdbPath,
+            localPort: pcbaConnection.Port,
+            remotePort: pcbaConnection.Port,
+            deviceSerial: adbDeviceSerial,
+            useAdbForward: false,
+            tcpHost: pcbaConnection.Host,
+            tcpPort: pcbaConnection.Port,
+            discoveryService: discoveryService,
+            upgradeConfiguration: configuration.Upgrade);
         var pcbaClientFactory = new PcbaCommandClientFactory(
             new MockPcbaCommandClient(mockConfiguration: configuration.TestPlan.Mock, manualTestInteractionService: manualTestInteractionService),
-            new AdbPcbaCommandClient(
-                adbPath: pcbaConnection.AdbPath,
-                localPort: pcbaConnection.Port,
-                remotePort: pcbaConnection.Port,
-                deviceSerial: adbDeviceSerial,
-                upgradeConfiguration: configuration.Upgrade),
-            new AdbPcbaCommandClient(
-                adbPath: pcbaConnection.AdbPath,
-                localPort: pcbaConnection.Port,
-                remotePort: pcbaConnection.Port,
-                deviceSerial: adbDeviceSerial,
-                useAdbForward: false,
-                tcpHost: pcbaConnection.Host,
-                tcpPort: pcbaConnection.Port,
-                discoveryService: discoveryService,
-                upgradeConfiguration: configuration.Upgrade));
+            adbClient,
+            tcpClient);
 
         _viewModel = new MainViewModel(
             new ScannerService(),
@@ -64,10 +66,13 @@ public partial class MainWindow : Window
             new Jk5506Service(configuration.Jk5506),
             new JxTvmService(configuration.JxTvm),
             new BluetoothBroadcasterService(configuration.BluetoothBroadcaster));
+        discoveryService.Log += message => Dispatcher.Invoke(() => _viewModel.AppendExternalLog(message));
 
         DataContext = _viewModel;
         _viewModel.SequenceAdvanceRequested += SequenceAdvanceRequested;
         _viewModel.HistoryRecordFound += HistoryRecordFound;
+        adbClient.Log += message => Dispatcher.Invoke(() => _viewModel.AppendExternalLog(message));
+        tcpClient.Log += message => Dispatcher.Invoke(() => _viewModel.AppendExternalLog(message));
         Loaded += async (_, _) => await _viewModel.InitializeAsync();
     }
 

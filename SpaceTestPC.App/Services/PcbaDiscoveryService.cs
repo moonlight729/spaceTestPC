@@ -1,10 +1,12 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using SpaceTestPC.App.Models;
 
 namespace SpaceTestPC.App.Services;
@@ -12,8 +14,10 @@ namespace SpaceTestPC.App.Services;
 public sealed class PcbaDiscoveryService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly Regex Ipv4Regex = new(@"\b(?:\d{1,3}\.){3}\d{1,3}\b", RegexOptions.Compiled);
     private readonly PcbaConnectionConfiguration _configuration;
     private string? _resolvedHost;
+    public event Action<string>? Log;
 
     public PcbaDiscoveryService(PcbaConnectionConfiguration configuration)
     {
@@ -25,11 +29,13 @@ public sealed class PcbaDiscoveryService
         if (!string.IsNullOrWhiteSpace(_configuration.Host) &&
             !string.Equals(_configuration.Host, "auto", StringComparison.OrdinalIgnoreCase))
         {
+            Log?.Invoke($"PCBA discovery skipped: configured host={_configuration.Host.Trim()}.");
             return _configuration.Host.Trim();
         }
 
         if (!string.IsNullOrWhiteSpace(_resolvedHost))
         {
+            Log?.Invoke($"PCBA discovery cached: host={_resolvedHost}.");
             return _resolvedHost;
         }
 
@@ -44,6 +50,7 @@ public sealed class PcbaDiscoveryService
             throw new InvalidOperationException("No candidate IP addresses are available for PCBA discovery.");
         }
 
+        Log?.Invoke($"PCBA discovery started: port={_configuration.Port}, candidates={candidates.Length}, parallel={Math.Max(1, _configuration.Discovery.MaxParallel)}, tcpTimeoutMs={Math.Max(100, _configuration.Discovery.ConnectTimeoutMs)}.");
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         using var gate = new SemaphoreSlim(Math.Max(1, _configuration.Discovery.MaxParallel));
         var tasks = candidates.Select(candidate => ProbeCandidateAsync(candidate, gate, linkedCancellation.Token)).ToArray();
@@ -56,13 +63,14 @@ public sealed class PcbaDiscoveryService
             {
                 await linkedCancellation.CancelAsync();
                 _resolvedHost = result;
+                Log?.Invoke($"PCBA discovery verified: host={result}.");
                 return result;
             }
 
             tasks = tasks.Where(task => !ReferenceEquals(task, completed)).ToArray();
         }
 
-        throw new InvalidOperationException($"No PCBA service was discovered on TCP port {_configuration.Port}.");
+        throw new InvalidOperationException($"No PCBA service was discovered on TCP port {_configuration.Port} after probing {candidates.Length} candidate IPs.");
     }
 
     private async Task<string?> ProbeCandidateAsync(string host, SemaphoreSlim gate, CancellationToken cancellationToken)
@@ -70,15 +78,13 @@ public sealed class PcbaDiscoveryService
         await gate.WaitAsync(cancellationToken);
         try
         {
-            if (!await IsPingReachableAsync(host, cancellationToken))
-            {
-                return null;
-            }
+            var pingReachable = await IsPingReachableAsync(host, cancellationToken);
 
             using var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             connectTimeout.CancelAfter(Math.Max(100, _configuration.Discovery.ConnectTimeoutMs));
             using var client = new TcpClient();
             await client.ConnectAsync(host, _configuration.Port, connectTimeout.Token);
+            Log?.Invoke($"PCBA discovery candidate: host={host}, ping={(pingReachable ? "ok" : "no_reply")}, tcp=connected.");
 
             await using var stream = client.GetStream();
             var command = new HostCommand
@@ -113,12 +119,14 @@ public sealed class PcbaDiscoveryService
             if (data.TryGetProperty("appName", out var appName) &&
                 string.Equals(appName.GetString(), "spacetest3576", StringComparison.OrdinalIgnoreCase))
             {
+                Log?.Invoke($"PCBA discovery response: host={host}, app=spacetest3576.");
                 return host;
             }
 
             if (data.TryGetProperty("path", out var path) &&
                 path.GetString()?.Contains("spacetest3576", StringComparison.OrdinalIgnoreCase) == true)
             {
+                Log?.Invoke($"PCBA discovery response: host={host}, path={path.GetString()}.");
                 return host;
             }
 
@@ -146,17 +154,23 @@ public sealed class PcbaDiscoveryService
         catch
         {
             // Some devices block ICMP. TCP probing still gives a reliable final answer.
-            return true;
+            return false;
         }
     }
 
     private IEnumerable<string> GetCandidateAddresses()
     {
+        foreach (var address in GetArpCandidateAddresses())
+        {
+            yield return address;
+        }
+
         if (!string.IsNullOrWhiteSpace(_configuration.Discovery.StartIp) &&
             !string.IsNullOrWhiteSpace(_configuration.Discovery.EndIp) &&
             IPAddress.TryParse(_configuration.Discovery.StartIp, out var start) &&
             IPAddress.TryParse(_configuration.Discovery.EndIp, out var end))
         {
+            Log?.Invoke($"PCBA discovery range: {_configuration.Discovery.StartIp}-{_configuration.Discovery.EndIp}.");
             foreach (var address in EnumerateRange(start, end))
             {
                 yield return address;
@@ -168,6 +182,7 @@ public sealed class PcbaDiscoveryService
         if (!string.IsNullOrWhiteSpace(_configuration.Discovery.Subnet) &&
             !string.Equals(_configuration.Discovery.Subnet, "auto", StringComparison.OrdinalIgnoreCase))
         {
+            Log?.Invoke($"PCBA discovery subnet: {_configuration.Discovery.Subnet}.");
             foreach (var address in EnumerateCidr(_configuration.Discovery.Subnet))
             {
                 yield return address;
@@ -176,13 +191,106 @@ public sealed class PcbaDiscoveryService
             yield break;
         }
 
-        foreach (var address in EnumerateLocalSubnets())
+        Log?.Invoke("PCBA discovery subnet: auto from local IPv4 adapters.");
+        foreach (var address in EnumerateLocalSubnets(Log))
         {
             yield return address;
         }
     }
 
-    private static IEnumerable<string> EnumerateLocalSubnets()
+    private IEnumerable<string> GetArpCandidateAddresses()
+    {
+        var localSubnets = GetLocalIpv4Subnets().ToArray();
+        if (localSubnets.Length == 0)
+        {
+            yield break;
+        }
+
+        string output;
+        try
+        {
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "arp",
+                    Arguments = "-a",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+
+            process.Start();
+            output = process.StandardOutput.ReadToEnd();
+            if (!process.WaitForExit(2000))
+            {
+                try { process.Kill(entireProcessTree: true); }
+                catch { }
+                Log?.Invoke("PCBA discovery ARP candidates skipped: arp -a timed out.");
+                yield break;
+            }
+
+            if (process.ExitCode != 0)
+            {
+                Log?.Invoke("PCBA discovery ARP candidates skipped: arp -a failed.");
+                yield break;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log?.Invoke($"PCBA discovery ARP candidates skipped: {ex.Message}");
+            yield break;
+        }
+
+        var candidates = Ipv4Regex.Matches(output)
+            .Select(match => match.Value)
+            .Where(value => IPAddress.TryParse(value, out var address) && IsInAnyLocalSubnet(address, localSubnets))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (candidates.Length > 0)
+        {
+            Log?.Invoke($"PCBA discovery ARP candidates: {string.Join(",", candidates)}.");
+        }
+
+        foreach (var candidate in candidates)
+        {
+            yield return candidate;
+        }
+    }
+
+    private static IEnumerable<(uint Network, uint Mask)> GetLocalIpv4Subnets()
+    {
+        foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (networkInterface.OperationalStatus != OperationalStatus.Up ||
+                networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback)
+            {
+                continue;
+            }
+
+            foreach (var unicast in networkInterface.GetIPProperties().UnicastAddresses)
+            {
+                if (unicast.Address.AddressFamily != AddressFamily.InterNetwork || unicast.IPv4Mask is null)
+                {
+                    continue;
+                }
+
+                var mask = ToUInt32(unicast.IPv4Mask);
+                yield return (ToUInt32(unicast.Address) & mask, mask);
+            }
+        }
+    }
+
+    private static bool IsInAnyLocalSubnet(IPAddress address, IReadOnlyList<(uint Network, uint Mask)> localSubnets)
+    {
+        var value = ToUInt32(address);
+        return localSubnets.Any(subnet => (value & subnet.Mask) == subnet.Network);
+    }
+
+    private static IEnumerable<string> EnumerateLocalSubnets(Action<string>? log)
     {
         foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
         {
@@ -201,6 +309,7 @@ public sealed class PcbaDiscoveryService
 
                 var start = ToUInt32(unicast.Address) & ToUInt32(unicast.IPv4Mask);
                 var end = start | ~ToUInt32(unicast.IPv4Mask);
+                log?.Invoke($"PCBA discovery adapter: {networkInterface.Name}, address={unicast.Address}, mask={unicast.IPv4Mask}, range={FromUInt32(start + 1)}-{FromUInt32(end - 1)}.");
                 for (var value = start + 1; value < end; value++)
                 {
                     var candidate = FromUInt32(value);

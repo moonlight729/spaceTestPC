@@ -2,6 +2,7 @@
 
 #include "config/app_config.h"
 #include "manage/session_manager.h"
+#include "hardware/usb_pretest/usb_pretest.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -43,6 +44,9 @@ int main(void)
     struct app_config config;
     int listener;
     app_config_load_defaults(&config);
+    if (usb_pretest_start(&config) != 0) {
+        fprintf(stderr, "usb pretest worker failed to start\n");
+    }
     listener = create_listener(&config);
     if (listener < 0) {
         perror("create_listener");

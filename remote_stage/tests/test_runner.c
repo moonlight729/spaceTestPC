@@ -31,6 +31,7 @@
 #define PMIC_STATUS1_READ_COMMAND "i2ctransfer -f -y 7 w1@0x6b 0x1c r1"
 
 static int wait_test_decision(int fd, const char *test_id, int timeout_ms, int *passed);
+static int wait_operator_decision_or_disconnect(int fd, const char *test_id, int timeout_ms, int *passed, int *disconnected);
 
 static const char *find_object_end(const char *start)
 {
@@ -573,42 +574,35 @@ static int run_tf_card(int fd, const struct app_config *config, const char *test
 static int run_usb2_3(int fd, const char *test_start, const char *test_end)
 {
     char record_file[160] = "/tmp/spacetest_usb_ports.json";
-    struct usb_ports_request request = {
-        .record_file = record_file,
-        .expected_usb2_count = 2,
-        .expected_usb3_count = 2,
-        .timeout_ms = 3000,
-    };
-    struct usb_ports_result result;
-    char data[768];
+    char test_mode[32] = "pcba";
+    char content[4096];
+    char data[1024];
+    FILE *file;
 
     param_string(test_start, test_end, "recordFile", record_file, sizeof(record_file));
-    request.expected_usb2_count = param_int(test_start, test_end, "expectedUsb2Count", request.expected_usb2_count);
-    request.expected_usb3_count = param_int(test_start, test_end, "expectedUsb3Count", request.expected_usb3_count);
-    request.timeout_ms = param_int(test_start, test_end, "timeoutMs", request.timeout_ms);
+    param_string(test_start, test_end, "mode", test_mode, sizeof(test_mode));
+    snprintf(record_file, sizeof(record_file), "/userdata/factory_test/usb/%s_usb_test.json",
+             strcmp(test_mode, "finished_product") == 0 ? "finished_product" : "pcba");
 
     snprintf(data, sizeof(data),
-             "{\"recordFile\":\"%s\",\"expectedUsb2Count\":%d,\"expectedUsb3Count\":%d}",
-             record_file, request.expected_usb2_count, request.expected_usb3_count);
-    send_report(fd, "usb2_3", "running", 0, "Read USB2.0&3.0 summary file", data);
-
-    if (usb_ports_run_test(&request, &result) != 0) {
-        snprintf(data, sizeof(data),
-                 "{\"recordFile\":\"%s\",\"usb2Count\":%d,\"usb3Count\":%d,\"expectedUsb2Count\":%d,\"expectedUsb3Count\":%d}",
-                 result.record_file, result.usb2_count, result.usb3_count,
-                 result.expected_usb2_count, result.expected_usb3_count);
-        send_report(fd, "usb2_3", "failed",
-                    result.error_code == 0 ? 4900 : result.error_code,
-                    result.message[0] == '\0' ? "USB2.0&3.0 record check failed" : result.message,
-                    data);
+             "{\"recordFile\":\"%s\",\"mode\":\"%s\",\"requiredUsb2Cycles\":4,\"requiredUsb3Cycles\":4}", record_file, test_mode);
+    send_report(fd, "usb2_3", "running", 0, "Read USB connectivity pretest result", data);
+    file = fopen(record_file, "r");
+    if (file == NULL || fgets(content, sizeof(content), file) == NULL) {
+        if (file != NULL) fclose(file);
+        send_report(fd, "usb2_3", "failed", 4901, "USB pretest result file not found", data);
         return -1;
     }
-
-    snprintf(data, sizeof(data),
-             "{\"recordFile\":\"%s\",\"usb2Count\":%d,\"usb3Count\":%d,\"expectedUsb2Count\":%d,\"expectedUsb3Count\":%d}",
-             result.record_file, result.usb2_count, result.usb3_count,
-             result.expected_usb2_count, result.expected_usb3_count);
-    return send_report(fd, "usb2_3", "passed", 0, result.message, data);
+    fclose(file);
+    if (strstr(content, "\"overallResult\":\"passed\"") == NULL ||
+        strstr(content, "\"usb2Cycles\":4") == NULL ||
+        strstr(content, "\"usb3Cycles\":4") == NULL ||
+        (strcmp(test_mode, "finished_product") == 0 && strstr(content, "\"testMode\":\"finished_product\"") == NULL) ||
+        (strcmp(test_mode, "finished_product") != 0 && strstr(content, "\"testMode\":\"pcba\"") == NULL)) {
+        send_report(fd, "usb2_3", "failed", 4902, "USB pretest connectivity result failed or mode mismatch", data);
+        return -1;
+    }
+    return send_report(fd, "usb2_3", "passed", 0, "USB2.0 and USB3.0 connectivity pretest passed", data);
 }
 
 static void append_pcba_points_json(char *data, size_t data_size,
@@ -1280,6 +1274,43 @@ static int run_manual_observation(int fd, const char *test_id, const char *displ
     }
 }
 
+static int wait_operator_decision_or_disconnect(int fd, const char *test_id, int timeout_ms, int *passed, int *disconnected)
+{
+    struct timespec start, now;
+    char line[PROTOCOL_MAX_LINE];
+
+    if (passed == NULL || disconnected == NULL) return -1;
+    *passed = 0;
+    *disconnected = 0;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for (;;) {
+        int remaining;
+        fd_set read_fds;
+        struct timeval tv;
+        int ready;
+
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        remaining = timeout_ms - elapsed_ms(&start, &now);
+        if (remaining <= 0) return 0;
+
+        FD_ZERO(&read_fds);
+        FD_SET(fd, &read_fds);
+        tv.tv_sec = remaining / 1000;
+        tv.tv_usec = (remaining % 1000) * 1000;
+        ready = select(fd + 1, &read_fds, NULL, NULL, &tv);
+        if (ready < 0) return -1;
+        if (ready == 0) return 0;
+        if (protocol_read_line(fd, line, sizeof(line)) <= 0) {
+            *disconnected = 1;
+            return 2;
+        }
+        if (strstr(line, "\"event\":\"operator.decision\"") == NULL) continue;
+        if (strstr(line, test_id) == NULL) continue;
+        *passed = strstr(line, "\"passed\":true") != NULL;
+        return 1;
+    }
+}
+
 static int write_fan_pwm(const char *path, int value)
 {
     char text[32];
@@ -1384,15 +1415,180 @@ static int run_finished_product_fan(int fd, const char *test_start, const char *
                        tach_running_seen ? "Fan tach_rpm indicates running" : "Fan tach_rpm indicates stopped", data) == 0 && tach_running_seen ? 0 : -1;
 }
 
+static int run_ethernet_led_command(const char *interface_name, int gigabit)
+{
+    char command[256];
+    const char *speed_args = gigabit
+        ? "autoneg on advertise 0x0028"
+        : "speed 100 duplex full autoneg off";
+    if (geteuid() == 0) {
+        snprintf(command, sizeof(command), "ethtool -s %s %s >/dev/null 2>&1", interface_name, speed_args);
+    } else {
+        snprintf(command, sizeof(command), "sudo -n ethtool -s %s %s >/dev/null 2>&1", interface_name, speed_args);
+    }
+    return system(command) == 0 ? 0 : -1;
+}
+
+static int run_ethernet_led_shell(const char *command)
+{
+    int rc;
+    if (command == NULL || command[0] == '\0') return -1;
+    rc = system(command);
+    return rc == 0 ? 0 : -1;
+}
+
+static void restore_ethernet_led_autoneg(const char *interface_name)
+{
+    char command[256];
+    if (geteuid() == 0) {
+        snprintf(command, sizeof(command), "ethtool -s %s autoneg on advertise 0x0028 >/dev/null 2>&1", interface_name);
+    } else {
+        snprintf(command, sizeof(command), "sudo -n ethtool -s %s autoneg on advertise 0x0028 >/dev/null 2>&1", interface_name);
+    }
+    (void)run_ethernet_led_shell(command);
+
+    snprintf(command, sizeof(command), "ip link set dev %s up >/dev/null 2>&1", interface_name);
+    (void)run_ethernet_led_shell(command);
+    snprintf(command, sizeof(command), "nmcli device reapply %s >/dev/null 2>&1", interface_name);
+    (void)run_ethernet_led_shell(command);
+    snprintf(command, sizeof(command), "nmcli device connect %s >/dev/null 2>&1", interface_name);
+    (void)run_ethernet_led_shell(command);
+}
+
+static int run_ethernet_led(int fd, const char *test_start, const char *test_end)
+{
+    char interface_name[64] = "end0";
+    char data[768];
+    int wait_cable_timeout_ms = param_int(test_start, test_end, "waitCableTimeoutMs", 15000);
+    int progress_report_interval_ms = param_int(test_start, test_end, "progressReportIntervalMs", 1000);
+    int phase_ms = param_int(test_start, test_end, "phaseDurationMs", 2000);
+    int timeout_ms = param_int(test_start, test_end, "manualDecisionTimeoutMs", 15000);
+    int wait_cable_elapsed_ms = 0;
+    int disconnected = 0;
+    int passed = 0;
+
+    param_string(test_start, test_end, "interfaceName", interface_name, sizeof(interface_name));
+    timeout_ms = param_int(test_start, test_end, "timeoutMs", timeout_ms);
+    if (wait_cable_timeout_ms <= 0) wait_cable_timeout_ms = 15000;
+    if (progress_report_interval_ms <= 0) progress_report_interval_ms = 1000;
+    if (phase_ms <= 0) phase_ms = 2000;
+    if (timeout_ms <= 0) timeout_ms = 15000;
+
+    snprintf(data, sizeof(data),
+             "{\"interfaceName\":\"%s\",\"phase\":\"wait_cable\",\"ethernetLinkUp\":false,"
+             "\"requiresCableInsert\":true,\"waitCableTimeoutMs\":%d,\"elapsedMs\":0}",
+             interface_name, wait_cable_timeout_ms);
+    send_report(fd, "ethernet_led", "running", 0, "Insert Ethernet cable for LED test", data);
+
+    while (wait_cable_elapsed_ms < wait_cable_timeout_ms && !net_carrier_is_up(interface_name)) {
+        sleep_ms_local(progress_report_interval_ms);
+        wait_cable_elapsed_ms += progress_report_interval_ms;
+        snprintf(data, sizeof(data),
+                 "{\"interfaceName\":\"%s\",\"phase\":\"wait_cable\",\"ethernetLinkUp\":false,"
+                 "\"requiresCableInsert\":true,\"waitCableTimeoutMs\":%d,\"elapsedMs\":%d}",
+                 interface_name, wait_cable_timeout_ms, wait_cable_elapsed_ms);
+        send_report(fd, "ethernet_led", "running", 0, "Waiting for Ethernet cable for LED test", data);
+    }
+
+    if (!net_carrier_is_up(interface_name)) {
+        snprintf(data, sizeof(data),
+                 "{\"interfaceName\":\"%s\",\"phase\":\"wait_cable\",\"ethernetLinkUp\":false,"
+                 "\"requiresCableInsert\":true,\"waitCableTimeoutMs\":%d,\"failureReason\":\"ethernet_insert_timeout\"}",
+                 interface_name, wait_cable_timeout_ms);
+        send_report(fd, "ethernet_led", "failed", 4811, "Ethernet cable insert timeout before LED test", data);
+        return -1;
+    }
+
+    if (run_ethernet_led_command(interface_name, 0) != 0) {
+        restore_ethernet_led_autoneg(interface_name);
+        snprintf(data, sizeof(data),
+                 "{\"interfaceName\":\"%s\",\"phase\":\"show_100m\",\"expectedLed\":\"green\","
+                 "\"failureReason\":\"ethtool_command_failed\"}",
+                 interface_name);
+        send_report(fd, "ethernet_led", "failed", 4812, "Unable to switch Ethernet LED speed mode", data);
+        return -1;
+    }
+
+    snprintf(data, sizeof(data),
+             "{\"interfaceName\":\"%s\",\"phase\":\"show_100m\",\"ethernetLinkUp\":true,"
+             "\"expectedLed\":\"green\",\"phaseDurationMs\":%d,\"timeoutMs\":%d}",
+             interface_name, phase_ms, timeout_ms);
+    send_report(fd, "ethernet_led", "running", 0,
+                "Ethernet LED 100M mode; observe green LED",
+                data);
+    sleep_ms_local(phase_ms);
+
+    if (run_ethernet_led_command(interface_name, 1) != 0) {
+        restore_ethernet_led_autoneg(interface_name);
+        snprintf(data, sizeof(data),
+                 "{\"interfaceName\":\"%s\",\"phase\":\"show_1000m\",\"expectedLed\":\"yellow\","
+                 "\"failureReason\":\"ethtool_command_failed\"}",
+                 interface_name);
+        send_report(fd, "ethernet_led", "failed", 4812, "Unable to switch Ethernet LED speed mode", data);
+        return -1;
+    }
+
+    snprintf(data, sizeof(data),
+             "{\"interfaceName\":\"%s\",\"phase\":\"show_1000m\",\"ethernetLinkUp\":true,"
+             "\"expectedLed\":\"yellow\",\"phaseDurationMs\":%d,\"timeoutMs\":%d}",
+             interface_name, phase_ms, timeout_ms);
+    send_report(fd, "ethernet_led", "running", 0,
+                "Ethernet LED 1000M mode; observe yellow LED",
+                data);
+    sleep_ms_local(phase_ms);
+
+    snprintf(data, sizeof(data),
+             "{\"manualObserved\":true,\"requiresOperatorDecision\":true,\"interfaceName\":\"%s\","
+             "\"displayMode\":\"100m_1000m_led_sequence\",\"timeoutMs\":%d}",
+             interface_name, timeout_ms);
+    send_report(fd, "ethernet_led", "running", 0,
+                "Waiting for operator decision after Ethernet LED sequence",
+                data);
+
+    switch (wait_operator_decision_or_disconnect(fd, "ethernet_led", timeout_ms, &passed, &disconnected)) {
+    case 1:
+        restore_ethernet_led_autoneg(interface_name);
+        snprintf(data, sizeof(data),
+                 "{\"manualObserved\":true,\"operatorConfirmed\":%s,\"interfaceName\":\"%s\","
+                 "\"displayMode\":\"100m_1000m_led_sequence\",\"timeoutMs\":%d}",
+                 passed ? "true" : "false", interface_name, timeout_ms);
+        return send_report(fd, "ethernet_led", passed ? "passed" : "failed",
+                           passed ? 0 : 3910,
+                           passed ? "Operator confirmed Ethernet LEDs pass" :
+                                    "Operator confirmed Ethernet LEDs fail",
+                           data) == 0 && passed ? 0 : -1;
+    case 0:
+        restore_ethernet_led_autoneg(interface_name);
+        snprintf(data, sizeof(data),
+                 "{\"manualObserved\":true,\"operatorConfirmed\":false,\"interfaceName\":\"%s\","
+                 "\"displayMode\":\"100m_1000m_led_sequence\",\"timeoutMs\":%d}",
+                 interface_name, timeout_ms);
+        send_report(fd, "ethernet_led", "failed", 3911, "Operator decision timed out", data);
+        return -1;
+    case 2:
+        restore_ethernet_led_autoneg(interface_name);
+        return -2;
+    default:
+        restore_ethernet_led_autoneg(interface_name);
+        send_report(fd, "ethernet_led", "failed", 3912, "Unable to read operator decision", "{}");
+        return -1;
+    }
+}
+
 static int run_finished_product_indicator_led(int fd, const char *test_start, const char *test_end)
 {
 #define INDICATOR_LED_ON_BRIGHTNESS 255
+#define INDICATOR_LED_PHASE_COUNT 3
     struct indicator_led_device device;
     struct indicator_led_result result;
     int timeout_ms = param_int(test_start, test_end, "timeoutMs", 60000);
-    int elapsed_ms = 0;
-    int blue_on = 1;
+    int phase_ms = param_int(test_start, test_end, "phaseDurationMs", 2000);
+    int red_green_overlap_ms = param_int(test_start, test_end, "redGreenOverlapMs", 200);
+    int i2c_timeout_ms = param_int(test_start, test_end, "i2cTimeoutMs", 3000);
+    int retry_interval_ms = param_int(test_start, test_end, "i2cRetryIntervalMs", 100);
     char data[512];
+    int elapsed_ms = 0;
+    int phase;
 
     if (timeout_ms < 30000) timeout_ms = 30000;
     if (indicator_led_open(&device) != 0) {
@@ -1400,68 +1596,128 @@ static int run_finished_product_indicator_led(int fd, const char *test_start, co
         return -1;
     }
 
-    indicator_led_set(&device, INDICATOR_LED_GREEN, 0, &result);
-    if (indicator_led_set(&device, INDICATOR_LED_GREEN, 0, &result) != 0 ||
-        indicator_led_set(&device, INDICATOR_LED_BLUE, INDICATOR_LED_ON_BRIGHTNESS, &result) != 0) {
+    if (phase_ms <= 0) phase_ms = 2000;
+    if (red_green_overlap_ms < 0) red_green_overlap_ms = 0;
+    if (indicator_led_set(&device, INDICATOR_LED_BLUE, 0, &result) != 0 ||
+        indicator_led_set(&device, INDICATOR_LED_RED, 0, &result) != 0 ||
+        indicator_led_set_charge(false, i2c_timeout_ms, retry_interval_ms) != 0) {
         indicator_led_close(&device);
-        send_report(fd, "indicator_led", "failed", 4601, "Unable to set initial indicator LED state", "{}");
+        send_report(fd, "indicator_led", "failed", 4602, "Unable to initialize RGB LED test", "{}");
         return -1;
     }
-    snprintf(data, sizeof(data),
-             "{\"manualObserved\":true,\"requiresOperatorDecision\":true,\"displayMode\":\"alternating\","
-             "\"cycleMs\":2000,\"currentLed\":\"blue\",\"timeoutMs\":%d}", timeout_ms);
-    send_report(fd, "indicator_led", "running", 0, "Waiting for operator to observe alternating LEDs", data);
+
+    for (phase = 0; phase < INDICATOR_LED_PHASE_COUNT; ++phase) {
+        const char *current_led = phase == 0 ? "red" : (phase == 1 ? "green" : "blue");
+        fd_set read_fds;
+        struct timeval tv;
+        char line[PROTOCOL_MAX_LINE];
+        int ready;
+
+        if ((phase == 0 &&
+             (indicator_led_set_charge(false, i2c_timeout_ms, retry_interval_ms) != 0 ||
+              indicator_led_set(&device, INDICATOR_LED_BLUE, 0, &result) != 0 ||
+              indicator_led_set(&device, INDICATOR_LED_RED, INDICATOR_LED_ON_BRIGHTNESS, &result) != 0)) ||
+            (phase == 1 &&
+             (indicator_led_set_charge(true, i2c_timeout_ms, retry_interval_ms) != 0 ||
+              indicator_led_set(&device, INDICATOR_LED_BLUE, 0, &result) != 0)) ||
+            (phase == 2 &&
+             (indicator_led_set(&device, INDICATOR_LED_BLUE, INDICATOR_LED_ON_BRIGHTNESS, &result) != 0 ||
+              indicator_led_set(&device, INDICATOR_LED_RED, 0, &result) != 0 ||
+              indicator_led_set_charge(false, i2c_timeout_ms, retry_interval_ms) != 0))) {
+            indicator_led_set(&device, INDICATOR_LED_BLUE, 0, &result);
+            indicator_led_set(&device, INDICATOR_LED_RED, 0, &result);
+            indicator_led_set_charge(false, i2c_timeout_ms, retry_interval_ms);
+            indicator_led_close(&device);
+            snprintf(data, sizeof(data), "{\"currentLed\":\"%s\"}", current_led);
+            send_report(fd, "indicator_led", "failed", 4601, "Unable to set RGB LED phase", data);
+            return -1;
+        }
+        if (phase == 1) {
+            sleep_ms_local(red_green_overlap_ms);
+            if (indicator_led_set(&device, INDICATOR_LED_RED, 0, &result) != 0) {
+                indicator_led_set(&device, INDICATOR_LED_BLUE, 0, &result);
+                indicator_led_set_charge(false, i2c_timeout_ms, retry_interval_ms);
+                indicator_led_close(&device);
+                send_report(fd, "indicator_led", "failed", 4601, "Unable to switch red LED off", "{}");
+                return -1;
+            }
+        }
+        snprintf(data, sizeof(data),
+                 "{\"manualObserved\":true,\"requiresOperatorDecision\":true,\"displayMode\":\"rgb_sequence\","
+                 "\"phaseDurationMs\":%d,\"currentLed\":\"%s\",\"phaseIndex\":%d,\"phaseCount\":%d,"
+                 "\"redGreenOverlapMs\":%d,\"timeoutMs\":%d}",
+                 phase_ms, current_led, phase + 1, INDICATOR_LED_PHASE_COUNT,
+                 red_green_overlap_ms, timeout_ms);
+        send_report(fd, "indicator_led", "running", 0,
+                    phase == 0 ? "Red LED is on; observe for 2 seconds" :
+                    phase == 1 ? "Green LED is on; observe for 2 seconds" :
+                                 "Blue LED is on; observe for 2 seconds",
+                    data);
+
+        FD_ZERO(&read_fds);
+        FD_SET(fd, &read_fds);
+        tv.tv_sec = phase_ms / 1000;
+        tv.tv_usec = (phase_ms % 1000) * 1000;
+        ready = select(fd + 1, &read_fds, NULL, NULL, &tv);
+        if (ready < 0) break;
+        if (ready > 0 && protocol_read_line(fd, line, sizeof(line)) > 0 &&
+            (strstr(line, "\"event\":\"operator.decision\"") != NULL ||
+             strstr(line, "\"event\":\"test.decision\"") != NULL) &&
+            strstr(line, "indicator_led") != NULL) {
+            int passed = strstr(line, "\"passed\":true") != NULL;
+            indicator_led_set(&device, INDICATOR_LED_BLUE, 0, &result);
+            indicator_led_set(&device, INDICATOR_LED_RED, 0, &result);
+            indicator_led_set_charge(false, i2c_timeout_ms, retry_interval_ms);
+            indicator_led_close(&device);
+            snprintf(data, sizeof(data),
+                     "{\"manualObserved\":true,\"operatorConfirmed\":%s,\"displayMode\":\"rgb_sequence\",\"phaseDurationMs\":%d}",
+                     passed ? "true" : "false", phase_ms);
+            return send_report(fd, "indicator_led", passed ? "passed" : "failed",
+                               passed ? 0 : 3910,
+                               passed ? "Operator confirmed pass" : "Operator confirmed fail", data) == 0 && passed ? 0 : -1;
+        }
+        elapsed_ms += phase_ms;
+    }
+
+    indicator_led_set(&device, INDICATOR_LED_BLUE, 0, &result);
+    indicator_led_set_charge(false, i2c_timeout_ms, retry_interval_ms);
+    indicator_led_set(&device, INDICATOR_LED_RED, 0, &result);
 
     while (elapsed_ms < timeout_ms) {
         fd_set read_fds;
         struct timeval tv;
         char line[PROTOCOL_MAX_LINE];
         int ready;
+        int wait_ms = timeout_ms - elapsed_ms;
 
+        if (wait_ms > 1000) wait_ms = 1000;
         FD_ZERO(&read_fds);
         FD_SET(fd, &read_fds);
-        tv.tv_sec = 2;
-        tv.tv_usec = 0;
+        tv.tv_sec = wait_ms / 1000;
+        tv.tv_usec = (wait_ms % 1000) * 1000;
         ready = select(fd + 1, &read_fds, NULL, NULL, &tv);
         if (ready < 0) break;
         if (ready > 0 && protocol_read_line(fd, line, sizeof(line)) > 0 &&
-            strstr(line, "\"event\":\"test.decision\"") != NULL &&
+            (strstr(line, "\"event\":\"operator.decision\"") != NULL ||
+             strstr(line, "\"event\":\"test.decision\"") != NULL) &&
             strstr(line, "indicator_led") != NULL) {
             int passed = strstr(line, "\"passed\":true") != NULL;
-            indicator_led_set(&device, INDICATOR_LED_BLUE, 0, &result);
-            indicator_led_set(&device, INDICATOR_LED_GREEN, 0, &result);
             indicator_led_close(&device);
             snprintf(data, sizeof(data),
-                     "{\"manualObserved\":true,\"operatorConfirmed\":%s,\"displayMode\":\"alternating\",\"cycleMs\":2000}",
-                     passed ? "true" : "false");
+                     "{\"manualObserved\":true,\"operatorConfirmed\":%s,\"displayMode\":\"rgb_sequence\",\"phaseDurationMs\":%d}",
+                     passed ? "true" : "false", phase_ms);
             return send_report(fd, "indicator_led", passed ? "passed" : "failed",
                                passed ? 0 : 3910,
                                passed ? "Operator confirmed pass" : "Operator confirmed fail", data) == 0 && passed ? 0 : -1;
         }
-
-        blue_on = !blue_on;
-        if (indicator_led_set(&device, INDICATOR_LED_BLUE, blue_on ? INDICATOR_LED_ON_BRIGHTNESS : 0, &result) != 0 ||
-            indicator_led_set(&device, INDICATOR_LED_GREEN, blue_on ? 0 : INDICATOR_LED_ON_BRIGHTNESS, &result) != 0) {
-            indicator_led_set(&device, INDICATOR_LED_BLUE, 0, &result);
-            indicator_led_set(&device, INDICATOR_LED_GREEN, 0, &result);
-            indicator_led_close(&device);
-            send_report(fd, "indicator_led", "failed", 4601, "Unable to switch indicator LED state", "{}");
-            return -1;
-        }
-        elapsed_ms += 2000;
-        snprintf(data, sizeof(data),
-                 "{\"manualObserved\":true,\"requiresOperatorDecision\":true,\"displayMode\":\"alternating\","
-                 "\"cycleMs\":2000,\"currentLed\":\"%s\",\"elapsedMs\":%d,\"timeoutMs\":%d}",
-                 blue_on ? "blue" : "green", elapsed_ms, timeout_ms);
-        send_report(fd, "indicator_led", "running", 0, "Alternating LEDs for operator observation", data);
+        elapsed_ms += wait_ms;
     }
 
-    indicator_led_set(&device, INDICATOR_LED_BLUE, 0, &result);
-    indicator_led_set(&device, INDICATOR_LED_GREEN, 0, &result);
     indicator_led_close(&device);
-    send_report(fd, "indicator_led", "failed", 3911, "Operator decision timed out", "{\"displayMode\":\"alternating\",\"cycleMs\":2000}");
+    send_report(fd, "indicator_led", "failed", 3911, "Operator decision timed out", "{\"displayMode\":\"rgb_sequence\"}");
     return -1;
 #undef INDICATOR_LED_ON_BRIGHTNESS
+#undef INDICATOR_LED_PHASE_COUNT
 }
 
 static int run_recovery_adc(int fd, const char *test_start, const char *test_end)
@@ -1734,6 +1990,7 @@ static int run_one_test(int fd, const char *test_id, const struct app_config *co
     if (strcmp(test_id, "reset_button") == 0) return run_manual_observation(fd, "reset_button", "Reset button and LCD off state", test_start, test_end);
     if (strcmp(test_id, "fan") == 0 && strcmp(test_mode, "finished_product") == 0) return run_finished_product_fan(fd, test_start, test_end);
     if (strcmp(test_id, "fan") == 0) return run_skipped_test(fd, "fan", test_start, test_end);
+    if (strcmp(test_id, "ethernet_led") == 0) return run_ethernet_led(fd, test_start, test_end);
     if (strcmp(test_id, "indicator_led") == 0 && strcmp(test_mode, "finished_product") == 0) {
         return run_finished_product_indicator_led(fd, test_start, test_end);
     }
@@ -1760,6 +2017,7 @@ static int failure_code_for_test(const char *test_id)
     if (strcmp(test_id, "board_state") == 0) return 3001;
     if (strcmp(test_id, "fingerprint") == 0) return 3002;
     if (strcmp(test_id, "ethernet") == 0) return 3011;
+    if (strcmp(test_id, "ethernet_led") == 0) return 3015;
     if (strcmp(test_id, "wifi") == 0) return 3003;
     if (strcmp(test_id, "tf") == 0) return 3004;
     if (strcmp(test_id, "usb2_3") == 0) return 3012;
@@ -1788,6 +2046,7 @@ int test_runner_run_plan(int fd, const char *session_id, const char *request_jso
     char test_id[80];
     char session_start_time[40];
     char session_end_time[40];
+    int rc;
 
     format_timestamp_now(session_start_time, sizeof(session_start_time));
 
@@ -1798,7 +2057,11 @@ int test_runner_run_plan(int fd, const char *session_id, const char *request_jso
             skipped_count++;
             continue;
         }
-        if (run_one_test(fd, test_id, config, test_start, test_end) != 0) {
+        rc = run_one_test(fd, test_id, config, test_start, test_end);
+        if (rc == -2) {
+            return -2;
+        }
+        if (rc != 0) {
             remember_failure(&failed_count, &first_failed_code,
                              first_failed_test, sizeof(first_failed_test),
                              failure_code_for_test(test_id), test_id);

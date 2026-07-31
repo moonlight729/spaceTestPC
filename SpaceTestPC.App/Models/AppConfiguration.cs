@@ -56,6 +56,7 @@ public sealed class UpgradeConfiguration
     public int AutoUpgradeDelaySeconds { get; set; } = 5;
     public string ApplicationVersion { get; set; } = string.Empty;
     public string SshUser { get; set; } = "originflow";
+    public string SshPassword { get; set; } = string.Empty;
     public int SshPort { get; set; } = 22;
     public string SshPath { get; set; } = "ssh";
     public string ScpPath { get; set; } = "scp";

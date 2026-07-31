@@ -132,6 +132,27 @@ Recommended order:
 
 `ethernet` must stay before `wifi` because Ethernet test disables Wi-Fi and Wi-Fi test re-enables it.
 
+## Fan Test Mode Split
+
+The `fan` test uses different mechanisms by test mode:
+
+- In `finished_product` mode, the runner writes `startValue` (default `100`) to `pwmPath` (default `/sys/class/hwmon/hwmon12/pwm1`), reports `running`, and waits for the upper PC operator to confirm whether the fan rotates normally. After PASS, FAIL, timeout, connection error, or any other decision failure, it always writes `stopValue` (default `0`) before reporting the final result.
+- In `pcba` mode, the voltage test-point implementation is reserved. Until the voltage acquisition interface is connected, the runner reports the item as skipped by its mode-specific policy.
+
+Host parameters:
+
+```json
+{
+  "pwmPath": "/sys/class/hwmon/hwmon12/pwm1",
+  "startValue": 100,
+  "stopValue": 0,
+  "manualDecisionTimeoutMs": 30000,
+  "pcbaMode": "reserved_voltage_test"
+}
+```
+
+The upper PC shows an operator prompt in finished-product mode. The PWM path is configured rather than embedded in the test flow so a future hwmon index change does not require protocol changes.
+
 ## 2026-07-18 Wi-Fi Phase Update
 
 - `wifi` now mirrors the Ethernet operator flow when a network cable is still inserted.

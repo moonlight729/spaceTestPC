@@ -44,6 +44,7 @@
     "adbDeviceSerial": "",
     "discovery": {
       "enabled": true,
+      // Discovery probes ARP-table IPs on local subnets first, then falls back to the range/CIDR below.
       // Use "auto" to scan the PC network segment, or configure a small CIDR such as "192.168.110.0/28".
       "subnet": "auto",
       // Prefer this range when the router DHCP pool is intentionally small.
@@ -64,6 +65,8 @@
     "autoUpgradeDelaySeconds": 5,
     "applicationVersion": "",
     "sshUser": "originflow",
+    // Required when TCP OTA uses password authentication. Prefer SSH keys in production if available.
+    "sshPassword": "",
     "sshPort": 22,
     "sshPath": "ssh",
     "scpPath": "scp"
@@ -105,6 +108,13 @@
         "timeoutMs": 15000,
         "waitCableTimeoutMs": 30000,
         "progressReportIntervalMs": 1000
+      },
+      "ethernet_led": {
+        "interfaceName": "end0",
+        "waitCableTimeoutMs": 15000,
+        "phaseDurationMs": 2000,
+        "manualDecisionTimeoutMs": 15000,
+        "timeoutMs": 15000
       },
       "bluetooth": {
         "mode": "observer",

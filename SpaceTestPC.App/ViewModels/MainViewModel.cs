@@ -20,7 +20,7 @@ public sealed class MainViewModel : ObservableObject
         new() { Id = "board_state" }, new() { Id = "hdmi" }, new() { Id = "keys" }, new() { Id = "lcd" },
         new() { Id = "ethernet" }, new() { Id = "wifi" }, new() { Id = "bluetooth" }, new() { Id = "fingerprint" },
         new() { Id = "battery_management" }, new() { Id = "typec_fast_charge" }, new() { Id = "typec_camera" }, new() { Id = "tf" }, new() { Id = "usb2_3" },
-        new() { Id = "pcba_test_points" }, new() { Id = "indicator_led" }, new() { Id = "fan" }, new() { Id = "otg" }, new() { Id = "reset_button" }
+        new() { Id = "pcba_test_points" }, new() { Id = "ethernet_led" }, new() { Id = "indicator_led" }, new() { Id = "fan" }, new() { Id = "otg" }, new() { Id = "reset_button" }
     ];
 
     private const string BoardStateItemName = "板状态";
@@ -472,6 +472,7 @@ public sealed class MainViewModel : ObservableObject
         "hdmi" => "请观察 HDMI 输出是否正常，然后手动选择通过或失败。",
         "keys" => "请依次按下上、下、左、右方向键和确认键，再按下 Recovery 实体键；六键全部识别后自动通过。",
         "lcd" => "请观察 LCD：背光正常、RGB 测试图案完整且稳定，无花屏、缺线、闪烁或明显亮暗异常后再判定。",
+        "ethernet_led" => "请观察网口灯：百兆绿色灯、千兆黄色灯都亮过后选择 PASS，否则选择 FAIL。",
         "indicator_led" => "请依次观察红灯、绿灯、蓝灯各亮 2 秒，最后确认绿灯正常后选择 PASS 或 FAIL。",
         "reset_button" => "请按下设备复位键，确认 LCD 屏幕已经息屏后选择 PASS 或 FAIL。",
         "fan" => "风扇正在自动检测，请等待下位机读取 tach_rpm 并返回结果。",
@@ -480,11 +481,15 @@ public sealed class MainViewModel : ObservableObject
     public string ManualPassButtonText => _manualDecisionTestId switch
     {
         "lcd" => "LCD 通过",
+        "ethernet_led" => "网口灯通过",
+        "indicator_led" => "指示灯通过",
         _ => "HDMI 通过"
     };
     public string ManualFailButtonText => _manualDecisionTestId switch
     {
         "lcd" => "LCD 失败",
+        "ethernet_led" => "网口灯失败",
+        "indicator_led" => "指示灯失败",
         _ => "HDMI 失败"
     };
 
@@ -1293,7 +1298,7 @@ public sealed class MainViewModel : ObservableObject
 
         _manualDecisionTestId = testEvent.Status == "running" &&
             !_submittedManualDecisionTests.Contains(testEvent.TestId) &&
-            (testEvent.TestId is "hdmi" or "lcd" or "reset_button" ||
+            (testEvent.TestId is "hdmi" or "lcd" or "ethernet_led" or "reset_button" ||
              testEvent.TestId == "indicator_led" && _testProfileMode == "finished_product")
             ? testEvent.TestId
             : testEvent.Status is "passed" or "failed" && testEvent.TestId == _manualDecisionTestId
@@ -1419,6 +1424,8 @@ public sealed class MainViewModel : ObservableObject
             ? "正在读取 PCBA 32 通道测试点电压，系统将自动判断是否在阈值范围内。"
             : testEvent.TestId == "ethernet" && testEvent.Status == "running"
             ? "请插入网线，系统将检测有线网络。"
+            : testEvent.TestId == "ethernet_led" && testEvent.Status == "running"
+            ? BuildEthernetLedInstruction(testEvent)
             : testEvent.TestId == "typec_fast_charge" && testEvent.Status == "running" &&
               GetDataString(testEvent.Data, "phase", string.Empty) is "wait_ready" or "ready" or "wait_manual_charger_insert" or "wait_charger"
             ? BuildFastChargeWaitingInstruction(testEvent.Data)
@@ -1471,8 +1478,37 @@ public sealed class MainViewModel : ObservableObject
             "wifi" => BuildWifiInstruction(testEvent),
             "battery_management" => BuildBatteryDischargeInstruction(testEvent),
             "ethernet" => BuildEthernetInstruction(testEvent),
+            "ethernet_led" => BuildEthernetLedInstruction(testEvent),
             _ => BuildGeneralTestInstruction(testEvent)
         };
+    }
+
+    private static string BuildEthernetLedInstruction(TestSessionEvent testEvent)
+    {
+        var phase = GetDataString(testEvent.Data, "phase", string.Empty);
+        var iface = GetDataString(testEvent.Data, "interfaceName", "end0");
+        var elapsedSeconds = Math.Max(0, GetDataInt(testEvent.Data, "elapsedMs") / 1000);
+
+        if (testEvent.Status == "running")
+        {
+            return phase switch
+            {
+                "wait_cable" => elapsedSeconds > 0
+                    ? $"请插入网线，系统正在等待网口灯测试。已等待 {elapsedSeconds} 秒。"
+                    : "请插入网线，系统正在等待网口灯测试。",
+                "show_100m" => $"正在切换 {iface} 到百兆模式，请观察绿色网口灯。",
+                "show_1000m" => $"正在切换 {iface} 到千兆模式，请观察黄色网口灯。",
+                "awaiting_operator" => "网口灯切换已完成，正在等待人工判定。",
+                _ => "请观察网口灯：百兆绿色、千兆黄色都亮过后选择 PASS。"
+            };
+        }
+
+        if (testEvent.Status == "passed")
+        {
+            return "网口灯测试完成。";
+        }
+
+        return "网口灯测试失败，请检查网线、网口灯和 ethtool 切速率是否正常。";
     }
 
     private static string BuildFastChargeWaitingInstruction(IReadOnlyDictionary<string, object?> data)
@@ -1819,6 +1855,7 @@ public sealed class MainViewModel : ObservableObject
         "lcd" => "LCD",
         "reset_button" => "复位按键",
         "ethernet" => "网口",
+        "ethernet_led" => "网口灯",
         "wifi" => "WiFi",
         "bluetooth" => "蓝牙",
         "fingerprint" => "指纹模组",
@@ -2528,6 +2565,8 @@ public sealed class MainViewModel : ObservableObject
         if (IsQueryPage) await RefreshQueryRecordsAsync();
     }
 
+    public void AppendExternalLog(string message) => AppendLog(message);
+
     private void AppendLog(string message)
     {
         _logService.Info(message);
@@ -2583,6 +2622,7 @@ public sealed class MainViewModel : ObservableObject
         "typec_fast_charge" => "检测完成，快充测试未通过。请检查充电器与充电电流后重新扫描当前 SN。",
         "bluetooth" => "检测完成，蓝牙测试未通过。请检查广播设备与信号后重新扫描当前 SN。",
         "ethernet" => "检测完成，网口测试未通过。请检查网线与网络连接后重新扫描当前 SN。",
+        "ethernet_led" => "检测完成，网口灯测试未通过。请检查网线、网口灯和速率切换后重新扫描当前 SN。",
         "wifi" => "检测完成，Wi-Fi 测试未通过。请检查路由器与无线连接后重新扫描当前 SN。",
         _ => $"检测完成，{GetTestDisplayName(testId)}未通过。请处理异常后重新扫描当前 SN。"
     };
@@ -2681,6 +2721,15 @@ public sealed class MainViewModel : ObservableObject
             result.TryAdd("i2cTimeoutMs", 3000);
             result.TryAdd("i2cRetryIntervalMs", 100);
         }
+        if (testId == "ethernet_led")
+        {
+            result.TryAdd("interfaceName", "end0");
+            result.TryAdd("waitCableTimeoutMs", 15000);
+            result.TryAdd("phaseDurationMs", 2000);
+            result.TryAdd("manualDecisionTimeoutMs", 15000);
+            result.TryAdd("timeoutMs", 15000);
+            result.TryAdd("reconnectDelayMs", 8000);
+        }
         return result;
     }
 
@@ -2736,27 +2785,33 @@ public sealed class MainViewModel : ObservableObject
         }
 
         var testId = _manualDecisionTestId!;
-        _manualDecisionTestId = null;
-        _submittedManualDecisionTests.Add(testId);
         var displayName = GetTestDisplayName(testId);
         OperatorInstruction = passed ? $"{displayName} 已确认通过，继续后续测试。" : $"{displayName} 已确认失败，记录失败并继续后续测试。";
         AppendLog($"{testId} manual decision: {(passed ? "PASS" : "FAIL")}");
-        RaisePropertyChanged(nameof(IsManualDecisionVisible));
-        RaisePropertyChanged(nameof(ManualDecisionPrompt));
-        RaisePropertyChanged(nameof(ManualPassButtonText));
-        RaisePropertyChanged(nameof(ManualFailButtonText));
-        ConfirmManualPassCommand.NotifyCanExecuteChanged();
-        ConfirmManualFailCommand.NotifyCanExecuteChanged();
 
         try
         {
             await _activeSessionClient.SubmitOperatorDecisionAsync(SessionId, testId, passed);
+            _manualDecisionTestId = null;
+            _submittedManualDecisionTests.Add(testId);
+            RaisePropertyChanged(nameof(IsManualDecisionVisible));
+            RaisePropertyChanged(nameof(ManualDecisionPrompt));
+            RaisePropertyChanged(nameof(ManualPassButtonText));
+            RaisePropertyChanged(nameof(ManualFailButtonText));
+            ConfirmManualPassCommand.NotifyCanExecuteChanged();
+            ConfirmManualFailCommand.NotifyCanExecuteChanged();
         }
         catch (Exception ex)
         {
-            LastResult = "Manual decision send failed";
+            _manualDecisionTestId = testId;
             OperatorInstruction = $"{displayName} 判定未发送到设备，请检查连接后重新测试。";
             AppendLog($"{testId} operator decision send failed: {ex.Message}");
+            RaisePropertyChanged(nameof(IsManualDecisionVisible));
+            RaisePropertyChanged(nameof(ManualDecisionPrompt));
+            RaisePropertyChanged(nameof(ManualPassButtonText));
+            RaisePropertyChanged(nameof(ManualFailButtonText));
+            ConfirmManualPassCommand.NotifyCanExecuteChanged();
+            ConfirmManualFailCommand.NotifyCanExecuteChanged();
         }
     }
 
