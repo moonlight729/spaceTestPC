@@ -1,0 +1,2 @@
+remote_stage/** text eol=lf
+*.sh text eol=lf
