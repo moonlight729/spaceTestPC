@@ -4,7 +4,7 @@ namespace SpaceTestPC.App.Models;
 
 public sealed class AppConfiguration
 {
-    public string TestMode { get; set; } = "pcba";
+    public string TestMode { get; set; } = "finished_product";
     public Dictionary<string, TestModeConfiguration> TestModes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public TestPlanConfiguration TestPlan { get; set; } = new();
     public Jk5506Configuration Jk5506 { get; set; } = new();

@@ -20,7 +20,7 @@ public partial class MainWindow : Window
         var configuration = new ConfigurationService().Load(Path.Combine(AppContext.BaseDirectory, "appsettings.json"));
         var manualTestInteractionService = new ManualTestInteractionService();
         var dataDir = Path.Combine(AppContext.BaseDirectory, "data");
-        var mode = string.IsNullOrWhiteSpace(configuration.TestMode) ? "pcba" : configuration.TestMode.Trim().ToLowerInvariant();
+        var mode = string.IsNullOrWhiteSpace(configuration.TestMode) ? "finished_product" : configuration.TestMode.Trim().ToLowerInvariant();
         var modeConfiguration = configuration.TestModes.TryGetValue(mode, out var configuredMode)
             ? configuredMode
             : new Models.TestModeConfiguration();

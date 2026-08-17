@@ -144,7 +144,7 @@ public sealed class MainViewModel : ObservableObject
         _keyTestTimeoutMs = GetConfiguredKeyTimeoutMs(appConfiguration);
         _upgradeConfiguration = appConfiguration.Upgrade;
         _connectionMode = ParseConnectionMode(appConfiguration.PcbaConnection.Mode);
-        _testProfileMode = string.IsNullOrWhiteSpace(appConfiguration.TestMode) ? "pcba" : appConfiguration.TestMode.Trim().ToLowerInvariant();
+        _testProfileMode = string.IsNullOrWhiteSpace(appConfiguration.TestMode) ? "finished_product" : appConfiguration.TestMode.Trim().ToLowerInvariant();
         _testModeConfiguration = appConfiguration.TestModes.TryGetValue(_testProfileMode, out var modeConfiguration)
             ? modeConfiguration
             : new TestModeConfiguration();
@@ -2653,7 +2653,7 @@ public sealed class MainViewModel : ObservableObject
 
     private static IReadOnlyList<TestPlanItem> BuildActiveTestPlan(AppConfiguration configuration)
     {
-        var mode = string.IsNullOrWhiteSpace(configuration.TestMode) ? "pcba" : configuration.TestMode.Trim();
+        var mode = string.IsNullOrWhiteSpace(configuration.TestMode) ? "finished_product" : configuration.TestMode.Trim();
         var modeConfiguration = configuration.TestModes.TryGetValue(mode, out var configuredMode) ? configuredMode : null;
         var enabledSource = modeConfiguration is not null && modeConfiguration.EnabledTests.Length > 0
             ? modeConfiguration.EnabledTests
