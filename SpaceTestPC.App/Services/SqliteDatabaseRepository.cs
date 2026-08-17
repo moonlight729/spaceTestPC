@@ -17,7 +17,7 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
     private readonly string _connectionString;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public SqliteDatabaseRepository(string databasePath, string testMode = "finished_product")
+    public SqliteDatabaseRepository(string databasePath, string testMode = "pcba")
     {
         _databasePath = databasePath;
         _testMode = NormalizeTestMode(testMode);
@@ -246,9 +246,9 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
     }
 
     private static string NormalizeTestMode(string testMode) =>
-        string.Equals(testMode?.Trim(), "pcba", StringComparison.OrdinalIgnoreCase)
-            ? "pcba"
-            : "finished_product";
+        string.Equals(testMode?.Trim(), "finished_product", StringComparison.OrdinalIgnoreCase)
+            ? "finished_product"
+            : "pcba";
 
     private static string Escape(string value) => $"\"{value.Replace("\"", "\"\"")}\"";
 
