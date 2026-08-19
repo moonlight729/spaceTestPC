@@ -147,7 +147,7 @@ public partial class App : Application
         {
             var logDir = Path.Combine(AppContext.BaseDirectory, "logs");
             Directory.CreateDirectory(logDir);
-            var logPath = Path.Combine(logDir, "startup-error.log");
+            var logPath = Path.Combine(logDir, "space-test-pc.log");
             File.AppendAllText(
                 logPath,
                 $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} [{phase}] {ex}{Environment.NewLine}");

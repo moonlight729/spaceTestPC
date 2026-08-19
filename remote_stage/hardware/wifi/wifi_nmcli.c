@@ -9,8 +9,11 @@
 #include <unistd.h>
 
 #define WIFI_CMD_OUTPUT 32768
-#define WIFI_SCAN_BUSY_RETRY_COUNT 10
 #define WIFI_SCAN_BUSY_RETRY_INTERVAL_MS 1000
+#define WIFI_RADIO_ENABLE_TIMEOUT_MS 5000
+#define WIFI_RADIO_POLL_INTERVAL_MS 200
+
+static char *trim_left(char *text);
 
 static int run_command(char *const argv[], char *output, size_t output_size)
 {
@@ -32,6 +35,7 @@ static int run_command(char *const argv[], char *output, size_t output_size)
         dup2(pipefd[1], STDERR_FILENO);
         close(pipefd[0]);
         close(pipefd[1]);
+        setenv("LC_ALL", "C", 1);
         execvp(argv[0], argv);
         _exit(127);
     }
@@ -77,6 +81,41 @@ static void sleep_ms_wifi(int ms)
 {
     if (ms <= 0) return;
     usleep((useconds_t)ms * 1000U);
+}
+
+static void trim_command_output(char *output)
+{
+    char *start;
+    size_t length;
+
+    if (output == NULL) return;
+    start = trim_left(output);
+    if (start != output) memmove(output, start, strlen(start) + 1);
+    length = strlen(output);
+    while (length > 0 &&
+           (output[length - 1] == '\n' || output[length - 1] == '\r' ||
+            output[length - 1] == ' ' || output[length - 1] == '\t')) {
+        output[--length] = '\0';
+    }
+}
+
+static int read_wifi_radio_enabled(int *enabled, char *output, size_t output_size)
+{
+    char *const argv[] = { "nmcli", "radio", "wifi", NULL };
+
+    if (enabled == NULL || output == NULL || output_size == 0) return -1;
+    output[0] = '\0';
+    if (run_command(argv, output, output_size) != 0) return -1;
+    trim_command_output(output);
+    if (strcmp(output, "enabled") == 0) {
+        *enabled = 1;
+        return 0;
+    }
+    if (strcmp(output, "disabled") == 0) {
+        *enabled = 0;
+        return 0;
+    }
+    return -1;
 }
 
 static char *trim_left(char *text)
@@ -210,6 +249,7 @@ int wifi_nmcli_scan_signal(struct wifi_device *device, const struct wifi_request
     char *radio_argv[] = { "nmcli", "radio", "wifi", "on", NULL };
     char *link_argv[] = { "ip", "link", "set", "dev", device != NULL ? device->interface_name : NULL, "up", NULL };
     char *scan_argv[] = { "iw", "dev", device != NULL ? device->interface_name : NULL, "scan", NULL };
+    int radio_enabled = 0;
 
     if (device == NULL || request == NULL || result == NULL ||
         request->ssid == NULL || request->ssid[0] == '\0' || device->interface_name[0] == '\0') {
@@ -220,9 +260,26 @@ int wifi_nmcli_scan_signal(struct wifi_device *device, const struct wifi_request
     memset(result, 0, sizeof(*result));
     result->rssi = -127;
 
-    if (run_command(radio_argv, output, sizeof(output)) != 0) {
-        set_error(result, 4104, output[0] ? output : "failed to enable Wi-Fi radio", "wifi_radio_off");
+    if (read_wifi_radio_enabled(&radio_enabled, output, sizeof(output)) != 0) {
+        set_error(result, 4104, output[0] ? output : "failed to read Wi-Fi radio state", "wifi_radio_state_unknown");
         return -1;
+    }
+
+    if (!radio_enabled) {
+        int elapsed_ms = 0;
+        if (run_command(radio_argv, output, sizeof(output)) != 0) {
+            set_error(result, 4104, output[0] ? output : "failed to enable Wi-Fi radio", "wifi_radio_off");
+            return -1;
+        }
+        while (elapsed_ms < WIFI_RADIO_ENABLE_TIMEOUT_MS) {
+            if (read_wifi_radio_enabled(&radio_enabled, output, sizeof(output)) == 0 && radio_enabled) break;
+            sleep_ms_wifi(WIFI_RADIO_POLL_INTERVAL_MS);
+            elapsed_ms += WIFI_RADIO_POLL_INTERVAL_MS;
+        }
+        if (!radio_enabled) {
+            set_error(result, 4104, "Wi-Fi radio did not become enabled", "wifi_radio_enable_timeout");
+            return -1;
+        }
     }
     result->wifi_enabled = true;
 
@@ -232,18 +289,20 @@ int wifi_nmcli_scan_signal(struct wifi_device *device, const struct wifi_request
     }
 
     {
-        int scan_attempt;
+        int elapsed_ms = 0;
+        int scan_timeout_ms = request->scan_timeout_ms > 0 ? request->scan_timeout_ms : 10000;
         int scan_rc = -1;
-        for (scan_attempt = 1; scan_attempt <= WIFI_SCAN_BUSY_RETRY_COUNT; ++scan_attempt) {
+        for (;;) {
             output[0] = '\0';
             scan_rc = run_command(scan_argv, output, sizeof(output));
             if (scan_rc == 0) break;
-            if (!output_contains_scan_busy(output) || scan_attempt == WIFI_SCAN_BUSY_RETRY_COUNT) break;
-            result->scan_retry_count = scan_attempt;
-            sleep_ms_wifi(WIFI_SCAN_BUSY_RETRY_INTERVAL_MS * scan_attempt);
+            if (!output_contains_scan_busy(output) ||
+                elapsed_ms + WIFI_SCAN_BUSY_RETRY_INTERVAL_MS >= scan_timeout_ms) break;
+            result->scan_retry_count++;
+            sleep_ms_wifi(WIFI_SCAN_BUSY_RETRY_INTERVAL_MS);
+            elapsed_ms += WIFI_SCAN_BUSY_RETRY_INTERVAL_MS;
         }
         if (scan_rc != 0) {
-            result->scan_retry_count = scan_attempt > 1 ? scan_attempt - 1 : 0;
             set_error(result, 4101, output[0] ? output : "iw scan command failed", "scan_command_failed");
             return -1;
         }

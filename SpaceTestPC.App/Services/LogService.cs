@@ -10,14 +10,12 @@ public sealed class LogService : ILogService
     private readonly object _sync = new();
     private readonly bool _fileEnabled;
     private readonly string _filePath;
-    private readonly string _eventFilePath;
 
     public LogService(LoggingConfiguration? configuration = null)
     {
         configuration ??= new LoggingConfiguration();
         _fileEnabled = configuration.FileEnabled;
         _filePath = ResolveLogPath(configuration.FilePath);
-        _eventFilePath = ResolveLogPath(configuration.EventFilePath);
     }
 
     public string FilePath => _filePath;
@@ -57,19 +55,16 @@ public sealed class LogService : ILogService
 
         try
         {
-            var directory = Path.GetDirectoryName(_eventFilePath);
-            if (!string.IsNullOrWhiteSpace(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
             var json = JsonSerializer.Serialize(new
             {
                 time = DateTimeOffset.Now,
                 eventName,
                 payload
             });
-            File.AppendAllText(_eventFilePath, json + Environment.NewLine);
+            lock (_sync)
+            {
+                WriteFileEntry(json);
+            }
         }
         catch
         {

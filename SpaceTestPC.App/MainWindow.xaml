@@ -8,8 +8,9 @@
         Icon="{DynamicResource WindowIcon}"
         Width="1440"
         Height="900"
-        MinWidth="1180"
-        MinHeight="760"
+        MinWidth="1024"
+        MinHeight="680"
+        WindowState="Maximized"
         Background="#EEF2F6"
         FontFamily="Microsoft YaHei UI"
         Loaded="Window_Loaded">
@@ -56,7 +57,7 @@
             <RowDefinition Height="76" />
             <RowDefinition Height="150" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="190" />
+            <RowDefinition Height="40" />
         </Grid.RowDefinitions>
 
         <Border Grid.Row="0" Background="#0B1F3A" CornerRadius="8" Padding="22,0">
@@ -198,6 +199,7 @@
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
+                    <Border Grid.RowSpan="2" Height="4" VerticalAlignment="Bottom" Background="#DCEBFA" CornerRadius="0,0,7,7" Panel.ZIndex="2" />
                 </Grid>
             </Border>
 
@@ -224,6 +226,10 @@
                     <ScrollViewer Grid.Row="2" Margin="0,22,0,0" VerticalScrollBarVisibility="Auto">
                         <StackPanel>
                             <TextBlock Style="{StaticResource SectionTitle}" Text="RESULT DETAIL" />
+                            <ItemsControl Margin="0,12,0,4" ItemsSource="{Binding DirectionalKeys}" Visibility="{Binding IsKeyTestDetailVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="6" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate><DataTemplate><Border Margin="0,0,10,0" Padding="12" Background="{Binding Background}" CornerRadius="6"><StackPanel><TextBlock HorizontalAlignment="Center" FontWeight="Bold" Foreground="White" Text="{Binding Label}" /><TextBlock HorizontalAlignment="Center" Margin="0,4,0,0" Foreground="White" Text="{Binding StatusText}" /></StackPanel></Border></DataTemplate></ItemsControl.ItemTemplate>
+                            </ItemsControl>
                             <TextBlock Margin="0,12,0,0" FontSize="16" TextWrapping="Wrap" Text="{Binding SelectedTestResult.Message}" />
                             <Grid Margin="0,22,0,0">
                                 <Grid.ColumnDefinitions>
@@ -237,10 +243,6 @@
                             </Grid>
                             <TextBlock Margin="0,28,0,8" Style="{StaticResource SectionTitle}" Text="MEASUREMENT / DEVICE DATA" />
                             <TextBox MinHeight="150" Padding="14" Background="#101828" BorderThickness="0" Foreground="#D0D5DD" FontFamily="Consolas" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Text="{Binding SelectedTestResult.DataText, Mode=OneWay}" />
-                            <ItemsControl Margin="0,22,0,0" ItemsSource="{Binding DirectionalKeys}" Visibility="{Binding IsKeyTestDetailVisible, Converter={StaticResource BoolToVisibilityConverter}}">
-                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="6" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate><DataTemplate><Border Margin="0,0,10,0" Padding="12" Background="{Binding Background}" CornerRadius="6"><StackPanel><TextBlock HorizontalAlignment="Center" FontWeight="Bold" Foreground="White" Text="{Binding Label}" /><TextBlock HorizontalAlignment="Center" Margin="0,4,0,0" Foreground="White" Text="{Binding StatusText}" /></StackPanel></Border></DataTemplate></ItemsControl.ItemTemplate>
-                            </ItemsControl>
                         </StackPanel>
                     </ScrollViewer>
                     <Border Grid.Row="3" Margin="0,22,0,0" Padding="16" Background="#FFF7ED" BorderBrush="#FED7AA" BorderThickness="1" CornerRadius="6" Visibility="{Binding IsManualDecisionVisible, Converter={StaticResource BoolToVisibilityConverter}}">
@@ -261,44 +263,12 @@
                             </StackPanel>
                         </Grid>
                     </Border>
+                    <Border Grid.RowSpan="4" Height="4" VerticalAlignment="Bottom" Background="#DCEBFA" CornerRadius="0,0,7,7" Panel.ZIndex="2" />
                 </Grid>
             </Border>
         </Grid>
 
-        <Border Grid.Row="3" Margin="0,14,0,0" Style="{StaticResource Card}" Padding="16" Visibility="{Binding IsTestPage, Converter={StaticResource BoolToVisibilityConverter}}">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="130" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <StackPanel>
-                    <TextBlock Style="{StaticResource SectionTitle}" Text="RUN LOG" />
-                    <TextBlock Margin="0,4,0,0" Foreground="#667085" FontSize="12" Text="Latest events" />
-                </StackPanel>
-                <TextBox Grid.Column="1"
-                         Margin="10,0"
-                         Padding="10"
-                         Background="#F8FAFC"
-                         BorderBrush="#E4E7EC"
-                         FontFamily="Consolas"
-                         FontSize="12"
-                         Foreground="#475467"
-                         IsReadOnly="True"
-                         TextWrapping="Wrap"
-                         AcceptsReturn="True"
-                         VerticalScrollBarVisibility="Auto"
-                         HorizontalScrollBarVisibility="Auto"
-                         Text="{Binding LogsText, Mode=OneWay}" />
-                <Button Grid.Column="2"
-                        VerticalAlignment="Center"
-                        Command="{Binding StartMockSessionCommand}"
-                        Content="Run Mock"
-                        Visibility="{Binding IsMockVisible, Converter={StaticResource BoolToVisibilityConverter}}" />
-            </Grid>
-        </Border>
-
-        <Border Grid.Row="1" Grid.RowSpan="3" Margin="0,14,0,0" Style="{StaticResource Card}" Padding="28" Visibility="{Binding IsQueryPage, Converter={StaticResource BoolToVisibilityConverter}}">
+        <Border Grid.Row="1" Grid.RowSpan="2" Margin="0,14,0,0" Style="{StaticResource Card}" Padding="28" Visibility="{Binding IsQueryPage, Converter={StaticResource BoolToVisibilityConverter}}">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -325,6 +295,33 @@
                         <DataGridTextColumn Header="ITEMS" Binding="{Binding TestResults.Count}" Width="80" />
                     </DataGrid.Columns>
                 </DataGrid>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="3" Margin="0,10,0,0" Padding="14,0" Background="#F8FAFC" BorderBrush="#D8E0EA" BorderThickness="0,1,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Foreground="#475467" FontWeight="SemiBold" Text="{Binding StatusBarRunState}" />
+                    <TextBlock Margin="14,0" Foreground="#CBD5E1" Text="|" />
+                    <TextBlock Foreground="#667085" Text="{Binding StatusBarProgress}" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock Foreground="#667085" Text="{Binding StatusBarSn}" />
+                    <TextBlock Margin="14,0" Foreground="#CBD5E1" Text="|" />
+                    <TextBlock Foreground="#667085" Text="{Binding StatusBarElapsedTime}" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Foreground="#15803D" Text="{Binding StatusBarDatabase}" />
+                    <TextBlock Margin="12,0" Foreground="#CBD5E1" Text="|" />
+                    <TextBlock Foreground="#15803D" Text="{Binding StatusBarLog}" />
+                    <TextBlock Margin="12,0" Foreground="#CBD5E1" Text="|" />
+                    <TextBlock Foreground="#667085" Text="{Binding StatusBarCurrentTime}" />
+                </StackPanel>
             </Grid>
         </Border>
     </Grid>

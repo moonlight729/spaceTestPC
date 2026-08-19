@@ -99,11 +99,14 @@ public sealed class MainViewModel : ObservableObject
     private readonly HashSet<string> _submittedManualDecisionTests = new(StringComparer.OrdinalIgnoreCase);
     private bool _isContinuousTestEnabled;
     private bool _isSessionRunning;
+    private DateTimeOffset? _sessionStartedAt;
+    private DateTimeOffset? _sessionEndedAt;
     private DateTimeOffset? _keyDeadline;
     private TestSessionEvent? _latestKeyTestEvent;
     private TaskCompletionSource<bool?>? _upgradeDecisionSource;
     private readonly DispatcherTimer _upgradeCountdownTimer;
     private readonly DispatcherTimer _adbUpgradeMonitorTimer;
+    private readonly DispatcherTimer _statusBarTimer;
     private readonly SemaphoreSlim _upgradeCheckGate = new(1, 1);
     private int _upgradeCountdownSeconds;
     private bool _isUpgradePromptVisible;
@@ -187,6 +190,13 @@ public sealed class MainViewModel : ObservableObject
                 _applicationUpgradeCheckInProgress = false;
             }
         };
+        _statusBarTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _statusBarTimer.Tick += (_, _) =>
+        {
+            RaisePropertyChanged(nameof(StatusBarElapsedTime));
+            RaisePropertyChanged(nameof(StatusBarCurrentTime));
+        };
+        _statusBarTimer.Start();
         _isContinuousTestEnabled = appConfiguration.TestPlan.Continuous.EnabledByDefault;
         _testPlan = BuildActiveTestPlan(appConfiguration);
         _testItemIndexes = _testPlan
@@ -250,6 +260,8 @@ public sealed class MainViewModel : ObservableObject
             {
                 ReadBoardStateCommand.NotifyCanExecuteChanged();
                 StartPhaseOneCommand.NotifyCanExecuteChanged();
+                RaisePropertyChanged(nameof(StatusBarSn));
+                RaisePropertyChanged(nameof(StatusBarRunState));
             }
         }
     }
@@ -356,6 +368,24 @@ public sealed class MainViewModel : ObservableObject
 
     public string AppVersion { get; } = GetAppVersion();
     public string WindowTitle => $"SpaceTest PC - v{AppVersion}";
+    public string StatusBarRunState => _isSessionRunning
+        ? $"状态：{CurrentTestItem?.Name ?? "测试中"}"
+        : string.IsNullOrWhiteSpace(CurrentSn) ? "状态：等待扫码" : "状态：就绪";
+    public string StatusBarProgress => $"进度：{TestItems.Count(item => item.State is TestItemState.Passed or TestItemState.Failed or TestItemState.Skipped)} / {TestItems.Count}";
+    public string StatusBarSn => $"当前 SN：{(string.IsNullOrWhiteSpace(CurrentSn) ? "--" : CurrentSn)}";
+    public string StatusBarElapsedTime
+    {
+        get
+        {
+            var elapsed = _sessionStartedAt.HasValue
+                ? (_sessionEndedAt ?? DateTimeOffset.Now) - _sessionStartedAt.Value
+                : TimeSpan.Zero;
+            return $"已用时：{(int)elapsed.TotalMinutes:00}:{elapsed.Seconds:00}";
+        }
+    }
+    public string StatusBarDatabase => "数据库：正常";
+    public string StatusBarLog => "日志：正常";
+    public string StatusBarCurrentTime => DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss");
     public int TestOverviewColumns { get; }
     public string SnPolicyModeName => _allowSnMismatchForDebug ? "开发模式" : "生产模式";
     public string SnPolicyModeDescription => _allowSnMismatchForDebug
@@ -453,7 +483,11 @@ public sealed class MainViewModel : ObservableObject
     public TestItemViewModel? CurrentTestItem
     {
         get => _currentTestItem;
-        private set => SetProperty(ref _currentTestItem, value);
+        private set
+        {
+            if (SetProperty(ref _currentTestItem, value))
+                RaisePropertyChanged(nameof(StatusBarRunState));
+        }
     }
 
     public void SelectTestResult(string testId)
@@ -547,8 +581,12 @@ public sealed class MainViewModel : ObservableObject
         IsHistoryLoaded = false;
         HistorySummary = string.Empty;
         _isSessionRunning = true;
+        _sessionStartedAt = DateTimeOffset.Now;
+        _sessionEndedAt = null;
         ScanCommand.NotifyCanExecuteChanged();
         RaisePropertyChanged(nameof(ContinuousTestStatusText));
+        RaisePropertyChanged(nameof(StatusBarRunState));
+        RaisePropertyChanged(nameof(StatusBarElapsedTime));
         AppendLog($"Scan received: {CurrentSn}");
         AppendLog($"Session created: {SessionId}");
         UpdateDebugOutput();
@@ -662,9 +700,12 @@ public sealed class MainViewModel : ObservableObject
         }
 
         _isSessionRunning = false;
+        _sessionEndedAt = DateTimeOffset.Now;
         ScanCommand.NotifyCanExecuteChanged();
         PrepareForNextBoard();
         RaisePropertyChanged(nameof(ContinuousTestStatusText));
+        RaisePropertyChanged(nameof(StatusBarRunState));
+        RaisePropertyChanged(nameof(StatusBarElapsedTime));
         UpdateDebugOutput();
     }
 
@@ -1327,6 +1368,8 @@ public sealed class MainViewModel : ObservableObject
                 CurrentTestItem = testItem;
                 SequenceAdvanceRequested?.Invoke(this, CurrentTestItem);
             }
+            RaisePropertyChanged(nameof(StatusBarProgress));
+            RaisePropertyChanged(nameof(StatusBarRunState));
         }
 
         if (testEvent.TestId == "battery_management")
@@ -2791,6 +2834,8 @@ public sealed class MainViewModel : ObservableObject
         RaisePropertyChanged(nameof(ManualFailButtonText));
         ConfirmManualPassCommand.NotifyCanExecuteChanged();
         ConfirmManualFailCommand.NotifyCanExecuteChanged();
+        RaisePropertyChanged(nameof(StatusBarProgress));
+        RaisePropertyChanged(nameof(StatusBarRunState));
     }
 
     private async void SubmitManualDecision(bool passed)
@@ -2837,6 +2882,8 @@ public sealed class MainViewModel : ObservableObject
         if (item is not null)
         {
             item.State = state;
+            RaisePropertyChanged(nameof(StatusBarProgress));
+            RaisePropertyChanged(nameof(StatusBarRunState));
         }
     }
 
