@@ -15,8 +15,15 @@ public partial class MainWindow : Window
 
     private void EnvironmentSettings_Click(object sender, RoutedEventArgs e)
     {
-        var window = new EnvironmentSettingsWindow { Owner = this };
-        window.ShowDialog();
+        try
+        {
+            var window = new EnvironmentSettingsWindow { Owner = this };
+            window.ShowDialog();
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(this, $"打开环境配置失败：{exception.Message}", "设置", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     public MainWindow()
