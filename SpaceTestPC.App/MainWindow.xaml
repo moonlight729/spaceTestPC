@@ -150,7 +150,7 @@
 
         <Grid Grid.Row="2" Visibility="{Binding IsTestPage, Converter={StaticResource BoolToVisibilityConverter}}">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="390" />
+                <ColumnDefinition Width="330" />
                 <ColumnDefinition Width="14" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
@@ -167,33 +167,41 @@
                     </Grid>
                     <ListBox Grid.Row="1"
                              x:Name="TestSequenceListBox"
-                             Margin="8,0,8,8"
+                             Margin="8,0,3,8"
                              Background="Transparent"
                              BorderThickness="0"
                              ScrollViewer.CanContentScroll="False"
                              SelectionChanged="TestSequenceListBox_OnSelectionChanged"
                              ItemsSource="{Binding TestItems}">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="0" />
+                            </Style>
+                        </ListBox.ItemContainerStyle>
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <Border Margin="4"
-                                        Padding="14,11"
+                                <Border Margin="4,4,1,4"
+                                        Padding="0"
                                         Cursor="Hand"
-                                        Background="#F8FAFC"
-                                        BorderBrush="#E4E7EC"
+                                        Background="{Binding BackgroundBrush}"
+                                        BorderBrush="{Binding BorderBrush}"
                                         BorderThickness="1"
                                         CornerRadius="6">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="28" />
+                                            <ColumnDefinition Width="4" />
+                                            <ColumnDefinition Width="32" />
                                             <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="82" />
+                                            <ColumnDefinition Width="76" />
                                         </Grid.ColumnDefinitions>
-                                        <Ellipse Width="12" Height="12" VerticalAlignment="Center" Fill="{Binding StateBrush}" />
-                                        <StackPanel Grid.Column="1">
+                                        <Border Background="{Binding AccentBrush}" CornerRadius="5,0,0,5" />
+                                        <Ellipse Grid.Column="1" Width="12" Height="12" VerticalAlignment="Center" Fill="{Binding StateBrush}" />
+                                        <StackPanel Grid.Column="2" Margin="0,11">
                                             <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
                                             <TextBlock Margin="0,2,0,0" FontSize="11" Foreground="#667085" Text="{Binding StateLabel}" />
                                         </StackPanel>
-                                        <TextBlock Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center" FontWeight="Bold" Foreground="{Binding StateBrush}" Text="{Binding StateLabel}" />
+                                        <TextBlock Grid.Column="3" Margin="0,0,10,0" HorizontalAlignment="Right" VerticalAlignment="Center" FontWeight="Bold" Foreground="{Binding StateBrush}" Text="{Binding StateLabel}" />
                                     </Grid>
                                 </Border>
                             </DataTemplate>

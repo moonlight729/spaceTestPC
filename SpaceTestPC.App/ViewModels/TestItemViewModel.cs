@@ -26,6 +26,9 @@ public sealed class TestItemViewModel : ObservableObject
             {
                 RaisePropertyChanged(nameof(StateLabel));
                 RaisePropertyChanged(nameof(StateBrush));
+                RaisePropertyChanged(nameof(BackgroundBrush));
+                RaisePropertyChanged(nameof(BorderBrush));
+                RaisePropertyChanged(nameof(AccentBrush));
                 RaisePropertyChanged(nameof(ConnectorBrush));
             }
         }
@@ -47,6 +50,33 @@ public sealed class TestItemViewModel : ObservableObject
         TestItemState.Failed => "#EF4444",
         TestItemState.Skipped => "#64748B",
         _ => "#6B7280"
+    };
+
+    public string BackgroundBrush => State switch
+    {
+        TestItemState.Running => "#EFF8FF",
+        TestItemState.Passed => "#ECFDF3",
+        TestItemState.Failed => "#FEF3F2",
+        TestItemState.Skipped => "#FFF7ED",
+        _ => "#F8FAFC"
+    };
+
+    public string BorderBrush => State switch
+    {
+        TestItemState.Running => "#84CAFF",
+        TestItemState.Passed => "#86EFAC",
+        TestItemState.Failed => "#FDA29B",
+        TestItemState.Skipped => "#FED7AA",
+        _ => "#E4E7EC"
+    };
+
+    public string AccentBrush => State switch
+    {
+        TestItemState.Running => "#2E90FA",
+        TestItemState.Passed => "#22C55E",
+        TestItemState.Failed => "#EF4444",
+        TestItemState.Skipped => "#F59E0B",
+        _ => "#CBD5E1"
     };
 
     public string ConnectorBrush => State switch
