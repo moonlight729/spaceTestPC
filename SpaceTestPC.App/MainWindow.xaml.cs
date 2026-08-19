@@ -13,6 +13,12 @@ public partial class MainWindow : Window
     private readonly MainViewModel _viewModel;
     private CancellationTokenSource? _sequenceScrollCancellation;
 
+    private void EnvironmentSettings_Click(object sender, RoutedEventArgs e)
+    {
+        var window = new EnvironmentSettingsWindow { Owner = this };
+        window.ShowDialog();
+    }
+
     public MainWindow()
     {
         InitializeComponent();
