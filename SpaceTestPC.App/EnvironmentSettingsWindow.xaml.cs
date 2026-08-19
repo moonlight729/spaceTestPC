@@ -10,9 +10,17 @@ public partial class EnvironmentSettingsWindow : Window
     public EnvironmentSettingsWindow()
     {
         InitializeComponent();
-        PortComboBox.ItemsSource = SerialPort.GetPortNames().OrderBy(x => x).ToArray();
+        try
+        {
+            PortComboBox.ItemsSource = SerialPort.GetPortNames().OrderBy(x => x).ToArray();
+        }
+        catch
+        {
+            PortComboBox.ItemsSource = Array.Empty<string>();
+        }
         var current = _service.Load();
-        PortComboBox.SelectedItem = current.Port;
+        if (!string.IsNullOrWhiteSpace(current.Port) && PortComboBox.Items.Contains(current.Port))
+            PortComboBox.SelectedItem = current.Port;
         TargetNameTextBox.Text = current.TargetName;
         WifiSsidTextBox.Text = current.WifiSsid;
         FirmwarePathTextBox.Text = current.FirmwarePath;

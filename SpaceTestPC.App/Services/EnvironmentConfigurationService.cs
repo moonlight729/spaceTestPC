@@ -10,7 +10,15 @@ public sealed class EnvironmentConfigurationService
 
     public (string Port, string TargetName, string WifiSsid, string FirmwarePath) Load()
     {
-        var root = JsonNode.Parse(File.ReadAllText(ResolvePath()))?.AsObject() ?? new JsonObject();
+        JsonObject root;
+        try
+        {
+            root = JsonNode.Parse(File.ReadAllText(ResolvePath()))?.AsObject() ?? new JsonObject();
+        }
+        catch
+        {
+            return (string.Empty, string.Empty, string.Empty, string.Empty);
+        }
         var broadcaster = root["bluetoothBroadcaster"]?.AsObject();
         var upgrade = root["upgrade"]?.AsObject();
         var parameters = root["testPlan"]?["testParameters"]?.AsObject();
