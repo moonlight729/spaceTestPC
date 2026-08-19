@@ -23,7 +23,8 @@ public partial class TestRecordDialog : Window
     private static string GetChineseTestName(string testId) => testId switch
     {
         "board_state" => "板状态",
-        "emmc_ddr" => "EMMC/DDR",
+        "emmc" => "EMMC",
+        "ddr" => "DDR",
         "hdmi" => "HDMI 输出",
         "keys" => "六键测试",
         "lcd" => "LCD 显示屏",

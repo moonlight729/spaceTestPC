@@ -255,7 +255,8 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
     private static string GetTestDisplayNameZh(string testId) => testId switch
     {
         "board_state" => "板状态",
-        "emmc_ddr" => "EMMC/DDR",
+        "emmc" => "EMMC",
+        "ddr" => "DDR",
         "hdmi" => "HDMI",
         "keys" => "按键",
         "lcd" => "LCD",
@@ -267,7 +268,8 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
         "typec_fast_charge" => "板快充",
         "typec_camera" => "Type-C相机",
         "tf" => "TF卡",
-        "usb2_3" => "USB2.0&3.0",
+        "usb2" => "USB2.0",
+        "usb3" => "USB3.0",
         "pcba_test_points" => "PCBA测试点",
         "indicator_led" => "指示灯",
         "fan" => "风扇",
@@ -335,7 +337,8 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
             ("tf", "TF card check passed", _, _, _) => "TF卡测试通过",
             ("tf", "TF card read/write check failed", _, _, _) => "TF卡读写测试失败",
 
-            ("usb2_3", _, _, _, 2900) => message,
+            ("usb2", _, _, _, 2900) => message,
+            ("usb3", _, _, _, 2900) => message,
             ("pcba_test_points", _, _, _, 2900) => message,
             ("indicator_led", _, _, _, 2900) => message,
             ("fan", _, _, _, 2900) => message,

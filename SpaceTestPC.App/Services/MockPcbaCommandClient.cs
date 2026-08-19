@@ -602,7 +602,8 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 data["resolution"] = "1920x1080";
                 data["signalOk"] = true;
                 break;
-            case "emmc_ddr":
+            case "emmc":
+            case "ddr":
                 data["emmcDevice"] = GetParameterString(test.Parameters, "emmcDevice", "mmcblk0");
                 data["emmcName"] = "KIOXIA";
                 data["emmcCapacityMiB"] = GetParameterInt(test.Parameters, "emmcMinCapacityGiB", 115) * 1024;
@@ -699,12 +700,13 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 data["fileSystem"] = "exfat";
                 data["cardInfoRead"] = true;
                 break;
-            case "usb2_3":
+            case "usb2":
+            case "usb3":
                 data["recordFile"] = GetParameterString(test.Parameters, "recordFile", "/tmp/spacetest_usb_ports.json");
-                data["usb2Count"] = GetParameterInt(test.Parameters, "expectedUsb2Count", 2);
-                data["usb3Count"] = GetParameterInt(test.Parameters, "expectedUsb3Count", 2);
-                data["expectedUsb2Count"] = GetParameterInt(test.Parameters, "expectedUsb2Count", 2);
-                data["expectedUsb3Count"] = GetParameterInt(test.Parameters, "expectedUsb3Count", 2);
+                data["usbVersion"] = test.Id == "usb2" ? "usb2" : "usb3";
+                data["usb2Count"] = GetParameterInt(test.Parameters, "expectedUsb2Count", 4);
+                data["usb3Count"] = GetParameterInt(test.Parameters, "expectedUsb3Count", 4);
+                data["requiredCycles"] = 4;
                 break;
             case "pcba_test_points":
                 var channelCount = GetParameterInt(test.Parameters, "channelCount", 32);
@@ -847,7 +849,7 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
             };
         }
 
-        if (testId == "emmc_ddr")
+        if (testId == "emmc" || testId == "ddr")
         {
             return new Dictionary<string, object?>
             {
@@ -903,7 +905,8 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
     private static string CreateMockRunningMessage(string testId) => testId switch
     {
         "board_state" => "Reading SN, software versions and local test record",
-        "emmc_ddr" => "Running eMMC and DDR device test",
+        "emmc" => "Running eMMC device test",
+        "ddr" => "Running DDR device test",
         "hdmi" => "Observe HDMI output and confirm the result manually",
         "lcd" => "Observe SPI LCD RGB pattern and confirm the result manually",
         _ => "Mock test started"
@@ -920,7 +923,8 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
     private static string CreateMockResultMessage(string testId) => testId switch
     {
         "board_state" => "Board state read",
-        "emmc_ddr" => "eMMC and DDR device test passed",
+        "emmc" => "eMMC device test passed",
+        "ddr" => "DDR device test passed",
         "hdmi" => "HDMI signal passed",
         "keys" => "Input subsystem key test passed",
         "lcd" => "SPI LCD test passed",
@@ -932,7 +936,8 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
         "typec_fast_charge" => "TYPE-C fast charge current passed",
         "typec_camera" => "TYPE-C camera stream interrupt test passed",
         "tf" => "TF card info read passed",
-        "usb2_3" => "USB2.0&3.0 record loaded",
+        "usb2" => "USB2.0 record loaded",
+        "usb3" => "USB3.0 record loaded",
         "pcba_test_points" => "PCBA test point voltages are in range",
         "indicator_led" => "Indicator LED board voltage passed",
         "fan" => "Fan speed passed",

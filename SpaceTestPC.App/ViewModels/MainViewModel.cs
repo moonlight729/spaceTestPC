@@ -19,7 +19,7 @@ public sealed class MainViewModel : ObservableObject
     [
         new() { Id = "board_state" }, new() { Id = "hdmi" }, new() { Id = "keys" }, new() { Id = "lcd" },
         new() { Id = "ethernet" }, new() { Id = "wifi" }, new() { Id = "bluetooth" }, new() { Id = "fingerprint" },
-        new() { Id = "battery_management" }, new() { Id = "typec_fast_charge" }, new() { Id = "typec_camera" }, new() { Id = "tf" }, new() { Id = "emmc_ddr" }, new() { Id = "usb2_3" },
+        new() { Id = "battery_management" }, new() { Id = "typec_fast_charge" }, new() { Id = "typec_camera" }, new() { Id = "tf" }, new() { Id = "emmc" }, new() { Id = "ddr" }, new() { Id = "usb2" }, new() { Id = "usb3" },
         new() { Id = "pcba_test_points" }, new() { Id = "ethernet_led" }, new() { Id = "indicator_led" }, new() { Id = "fan" }, new() { Id = "otg" }, new() { Id = "reset_button" }
     ];
 
@@ -1461,8 +1461,8 @@ public sealed class MainViewModel : ObservableObject
             };
         }
 
-        return testEvent.TestId == "usb2_3" && testEvent.Status == "running"
-            ? "请先通过 HDMI 网页完成 USB2.0 和 USB3.0 联通性预检（两个端口分别正插、反插，共 8 次），再接入 ADB。当前测试将读取对应模式的预检结果文件。"
+        return testEvent.TestId is "usb2" or "usb3" && testEvent.Status == "running"
+            ? $"请先通过 HDMI 网页完成 USB{(testEvent.TestId == "usb2" ? "2.0" : "3.0")} 联通性预检（两个端口分别正插、反插，共 4 次），再接入 ADB。当前测试将读取对应模式的预检结果文件。"
             : testEvent.TestId == "pcba_test_points" && testEvent.Status == "running"
             ? "正在读取 PCBA 32 通道测试点电压，系统将自动判断是否在阈值范围内。"
             : testEvent.TestId == "ethernet" && testEvent.Status == "running"
@@ -1893,7 +1893,8 @@ public sealed class MainViewModel : ObservableObject
     {
         ApplicationUpgradeItemId => "设备程序升级",
         "board_state" => "板状态",
-        "emmc_ddr" => "EMMC/DDR",
+        "emmc" => "EMMC",
+        "ddr" => "DDR",
         "hdmi" => "HDMI",
         "keys" => "六键测试",
         "lcd" => "LCD",
@@ -1906,7 +1907,8 @@ public sealed class MainViewModel : ObservableObject
         "typec_fast_charge" => "板快充",
         "typec_camera" => "TYPE-C 相机",
         "tf" => "TF 卡",
-        "usb2_3" => "USB2.0&3.0",
+        "usb2" => "USB2.0 测试",
+        "usb3" => "USB3.0 测试",
         "pcba_test_points" => "PCBA测试点",
         "indicator_led" => "指示灯板",
         "fan" => "风扇",
@@ -2654,11 +2656,13 @@ public sealed class MainViewModel : ObservableObject
     private static string BuildSingleFailureInstruction(string testId) => testId switch
     {
         "board_state" => "检测完成，板状态读取失败。请检查设备连接状态后重新扫描当前 SN。",
-        "emmc_ddr" => "检测完成，EMMC/DDR 器件测试未通过。请检查存储、内存器件和焊接后重新扫描当前 SN。",
+        "emmc" => "检测完成，EMMC 测试未通过。请检查存储器件和焊接后重新扫描当前 SN。",
+        "ddr" => "检测完成，DDR 测试未通过。请检查内存器件和焊接后重新扫描当前 SN。",
         "hdmi" => "检测完成，HDMI 测试未通过。请检查显示输出后重新扫描当前 SN。",
         "lcd" => "检测完成，LCD 测试未通过。请检查屏幕显示后重新扫描当前 SN。",
         "keys" => "检测完成，按键测试未通过。请检查按键输入后重新扫描当前 SN。",
-        "usb2_3" => "检测完成，USB 测试未通过。请检查 U 盘与 USB 口后重新扫描当前 SN。",
+        "usb2" => "检测完成，USB2.0 测试未通过。请检查 U 盘与 USB2.0 口后重新扫描当前 SN。",
+        "usb3" => "检测完成，USB3.0 测试未通过。请检查 U 盘与 USB3.0 口后重新扫描当前 SN。",
         "indicator_led" => "检测完成，指示灯测试未通过。请检查指示灯状态后重新扫描当前 SN。",
         "fan" => "检测完成，风扇测试未通过。请检查风扇与供电后重新扫描当前 SN。",
         "fingerprint" => "检测完成，指纹测试未通过。请检查指纹模组后重新扫描当前 SN。",
@@ -2778,12 +2782,16 @@ public sealed class MainViewModel : ObservableObject
             result.TryAdd("timeoutMs", 15000);
             result.TryAdd("reconnectDelayMs", 8000);
         }
-        if (testId == "emmc_ddr")
+        if (testId == "emmc")
         {
             result.TryAdd("emmcDevice", "mmcblk0");
             result.TryAdd("emmcMinCapacityGiB", 115);
             result.TryAdd("emmcTestDirectory", "/userdata/factory_test");
             result.TryAdd("emmcTestFileMiB", 64);
+            result.TryAdd("timeoutMs", 30000);
+        }
+        if (testId == "ddr")
+        {
             result.TryAdd("ddrMinMemTotalMiB", 3200);
             result.TryAdd("ddrStressMiB", 256);
             result.TryAdd("ddrStressLoops", 2);
