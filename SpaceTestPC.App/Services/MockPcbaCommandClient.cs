@@ -684,11 +684,15 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 break;
             case "typec_camera":
                 data["streamProfile"] = GetParameterString(test.Parameters, "streamProfile", "1080p30");
+                data["streamFrameCount"] = GetParameterInt(test.Parameters, "streamFrameCount", 90);
                 data["minInterruptCount"] = GetParameterInt(test.Parameters, "minInterruptCount", 200);
                 data["timeoutMs"] = GetParameterInt(test.Parameters, "timeoutMs", 10000);
                 data["streaming"] = true;
                 data["interruptCount"] = 240;
                 data["frameRate"] = 30;
+                data["syncOk"] = true;
+                data["syncPulseDelta"] = 90;
+                data["syncRate"] = 30.0;
                 break;
             case "tf":
                 data["command"] = GetParameterString(test.Parameters, "command", "read_card_info");

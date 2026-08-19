@@ -1481,7 +1481,7 @@ public sealed class MainViewModel : ObservableObject
             : testEvent.TestId == "typec_camera" && testEvent.Status == "running" && GetDataString(testEvent.Data, "phase", string.Empty) == "wait_camera"
             ? "请插入 TYPE-C 相机，系统检测到 /dev/video 节点后会自动继续测试。"
             : testEvent.TestId == "typec_camera" && testEvent.Status == "running" && GetDataString(testEvent.Data, "phase", string.Empty) == "camera_detected"
-            ? "已检测到 TYPE-C 相机，正在进行相机拉流测试。"
+            ? "已检测到相机，正在进行相机拉流和同步信号测试。"
             : testEvent.Status == "skipped"
             ? $"{GetTestDisplayName(testEvent.TestId)}：本轮不测试。"
             : testEvent.Status == "running"
@@ -1905,7 +1905,7 @@ public sealed class MainViewModel : ObservableObject
         "bluetooth" => "蓝牙",
         "fingerprint" => "指纹模组",
         "typec_fast_charge" => "板快充",
-        "typec_camera" => "TYPE-C 相机",
+        "typec_camera" => "相机测试&同步信号测试",
         "tf" => "TF 卡",
         "usb2" => "USB2.0 测试",
         "usb3" => "USB3.0 测试",
