@@ -74,7 +74,6 @@
                 </StackPanel>
                 <TextBlock Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="30" FontWeight="Bold" Foreground="White" Text="Space 测试工作台" />
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Width="82" Height="34" Margin="0,0,10,0" Padding="0" HorizontalContentAlignment="Center" Background="#175CD3" Command="{Binding ShowTestPageCommand}" Content="TEST" />
                     <Button Width="82" Height="34" Margin="0,0,10,0" Padding="0" HorizontalContentAlignment="Center" Background="#0B1F3A" Foreground="#FFFFFF" BorderBrush="#175CD3" BorderThickness="1" Click="EnvironmentSettings_Click" Content="设置" />
                     <Button Width="142" Height="34" Margin="0,0,22,0" Padding="0" HorizontalContentAlignment="Center" Background="#344054" Command="{Binding ShowQueryPageCommand}" Content="QUERY RECORDS" />
                     <StackPanel Width="100" Margin="0,0,18,0" HorizontalAlignment="Center">
@@ -194,7 +193,8 @@
                                             <ColumnDefinition Width="4" />
                                             <ColumnDefinition Width="32" />
                                             <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="76" />
+                                            <ColumnDefinition Width="58" />
+                                            <ColumnDefinition Width="82" />
                                         </Grid.ColumnDefinitions>
                                         <Border Background="{Binding AccentBrush}" CornerRadius="5,0,0,5" />
                                         <Ellipse Grid.Column="1" Width="12" Height="12" VerticalAlignment="Center" Fill="{Binding StateBrush}" />
@@ -203,6 +203,20 @@
                                             <TextBlock Margin="0,2,0,0" FontSize="11" Foreground="#667085" Text="{Binding StateLabel}" />
                                         </StackPanel>
                                         <TextBlock Grid.Column="3" Margin="0,0,10,0" HorizontalAlignment="Right" VerticalAlignment="Center" FontWeight="Bold" Foreground="{Binding StateBrush}" Text="{Binding StateLabel}" />
+                                        <Button Grid.Column="4"
+                                                Width="76"
+                                                Height="30"
+                                                Margin="0,0,5,0"
+                                                Padding="0"
+                                                VerticalAlignment="Center"
+                                                Background="#FFFFFF"
+                                                BorderBrush="#F04438"
+                                                Foreground="#B42318"
+                                                BorderThickness="1"
+                                                Command="{Binding DataContext.RetestCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding TestId}"
+                                                Content="{Binding RetestButtonText}"
+                                                Visibility="{Binding CanRetest, Converter={StaticResource BoolToVisibilityConverter}}" />
                                     </Grid>
                                 </Border>
                             </DataTemplate>
@@ -225,9 +239,20 @@
                             <TextBlock Foreground="#667085" FontSize="12" Text="CURRENT TEST" />
                             <TextBlock Margin="0,5,0,0" FontSize="28" FontWeight="SemiBold" Text="{Binding SelectedTestResult.DisplayName}" />
                         </StackPanel>
-                        <Border HorizontalAlignment="Right" VerticalAlignment="Center" Padding="14,7" Background="#F2F4F7" CornerRadius="16">
-                            <TextBlock FontWeight="Bold" Foreground="{Binding SelectedTestResult.StateBrush}" Text="{Binding SelectedTestResult.StateLabel}" />
-                        </Border>
+                        <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
+                            <Button Height="34"
+                                    Margin="0,0,10,0"
+                                    Padding="14,0"
+                                    Background="#B42318"
+                                    BorderBrush="#B42318"
+                                    Foreground="White"
+                                    Command="{Binding EndFailedBoardCommand}"
+                                    Content="结束本机测试"
+                                    Visibility="{Binding IsRetestLifecycleActive, Converter={StaticResource BoolToVisibilityConverter}}" />
+                            <Border Padding="14,7" Background="#F2F4F7" CornerRadius="16">
+                                <TextBlock FontWeight="Bold" Foreground="{Binding SelectedTestResult.StateBrush}" Text="{Binding SelectedTestResult.StateLabel}" />
+                            </Border>
+                        </StackPanel>
                     </Grid>
                     <Border Grid.Row="1" Margin="0,24,0,0" Padding="18" Background="#F8FAFC" BorderBrush="#E4E7EC" BorderThickness="1" CornerRadius="6">
                         <TextBlock FontSize="16" FontWeight="SemiBold" Foreground="#175CD3" TextWrapping="Wrap" Text="{Binding OperatorInstruction}" />

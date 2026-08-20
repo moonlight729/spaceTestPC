@@ -14,6 +14,8 @@ public sealed class MainViewModel : ObservableObject
 {
     public event EventHandler<TestItemViewModel>? SequenceAdvanceRequested;
     public event EventHandler<TestSessionRecord>? HistoryRecordFound;
+    public event EventHandler<string>? ScanValidationFailed;
+    private const int RequiredSnLength = 20;
     private static bool UseUnifiedSessionProtocol => true;
     private static readonly IReadOnlyList<TestPlanItem> AllTestPlan =
     [
@@ -99,6 +101,12 @@ public sealed class MainViewModel : ObservableObject
     private readonly HashSet<string> _submittedManualDecisionTests = new(StringComparer.OrdinalIgnoreCase);
     private bool _isContinuousTestEnabled;
     private bool _isSessionRunning;
+    private bool _isRetestLifecycleActive;
+    private bool _isRetestRunning;
+    private string _rootSessionId = string.Empty;
+    private int _attemptNo = 1;
+    private BoardState? _latestBoardState;
+    private readonly Dictionary<string, string> _testResultSourceSessions = new(StringComparer.OrdinalIgnoreCase);
     private DateTimeOffset? _sessionStartedAt;
     private DateTimeOffset? _sessionEndedAt;
     private DateTimeOffset? _keyDeadline;
@@ -203,7 +211,7 @@ public sealed class MainViewModel : ObservableObject
             .Select((item, index) => new { item.Id, index })
             .ToDictionary(item => item.Id, item => item.index);
 
-        ScanCommand = new AsyncRelayCommand(() => HandleScanAsync(isMockSession: false), () => !string.IsNullOrWhiteSpace(ScannerInput) && _upgradePackageReady && !_isSessionRunning);
+        ScanCommand = new AsyncRelayCommand(() => HandleScanAsync(isMockSession: false), () => !string.IsNullOrWhiteSpace(ScannerInput) && !_isSessionRunning && !_isRetestLifecycleActive);
         StartMockSessionCommand = new RelayCommand(StartMockSession);
         ToggleContinuousTestCommand = new RelayCommand(ToggleContinuousTest);
         ConfirmManualPassCommand = new RelayCommand(() => SubmitManualDecision(true), () => IsManualDecisionVisible);
@@ -215,6 +223,8 @@ public sealed class MainViewModel : ObservableObject
         ShowTestPageCommand = new RelayCommand(() => IsQueryPage = false);
         ShowQueryPageCommand = new AsyncRelayCommand(ShowQueryPageAsync);
         QueryRecordsCommand = new AsyncRelayCommand(RefreshQueryRecordsAsync);
+        RetestCommand = new AsyncRelayCommand<string>(RetestSingleItemAsync, CanRetestItem);
+        EndFailedBoardCommand = new RelayCommand(EndFailedBoardLifecycle, () => _isRetestLifecycleActive && !_isRetestRunning);
 
         Logs = new ObservableCollection<string>();
         RecentSessions = new ObservableCollection<string>();
@@ -450,6 +460,9 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand ShowTestPageCommand { get; }
     public AsyncRelayCommand ShowQueryPageCommand { get; }
     public AsyncRelayCommand QueryRecordsCommand { get; }
+    public AsyncRelayCommand<string> RetestCommand { get; }
+    public RelayCommand EndFailedBoardCommand { get; }
+    public bool IsRetestLifecycleActive => _isRetestLifecycleActive;
     public bool IsQueryPage
     {
         get => _isQueryPage;
@@ -556,9 +569,35 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task HandleScanAsync(bool isMockSession)
     {
+        AppendLog($"Scan validation entered: rawLength={ScannerInput.Length}, raw={ScannerInput.Replace("\r", "<CR>").Replace("\n", "<LF>")}");
         var sn = _scannerService.Normalize(ScannerInput);
+        AppendLog($"Scan normalized: length={sn.Length}, value={sn}");
         if (string.IsNullOrWhiteSpace(sn))
         {
+            AppendLog("Scan ignored: normalized SN is empty.");
+            return;
+        }
+
+        if (sn.Length != RequiredSnLength || sn.Any(character => !char.IsLetterOrDigit(character)))
+        {
+            var reason = sn.Length != RequiredSnLength
+                ? $"SN 长度必须为 {RequiredSnLength} 个字符，当前为 {sn.Length} 个字符。"
+                : "SN 只能包含英文字母和数字。";
+            AppendLog($"Scan rejected: {sn} ({reason})");
+            OperatorInstruction = "SN 格式不正确，请重新扫描。";
+            UpdateDebugOutput();
+            ScanValidationFailed?.Invoke(this, $"SN 扫码错误\n\n当前 SN：{sn}\n{reason}\n\n请检查条码后重新扫描。\n要求：20 位英文字母或数字。"
+            );
+            return;
+        }
+
+        if (!_upgradePackageReady)
+        {
+            ScannerInput = string.Empty;
+            OperatorInstruction = "升级软件未准备好，暂时不能开始测试。";
+            UpdateDebugOutput();
+            ScanValidationFailed?.Invoke(this, "当前无法开始测试\n\n升级软件未准备好或校验失败。\n请检查固件路径和升级软件后重试。\n\n本次未创建测试会话。"
+            );
             return;
         }
 
@@ -574,6 +613,11 @@ public sealed class MainViewModel : ObservableObject
         CurrentSn = sn;
         _isMockSession = isMockSession;
         SessionId = Guid.NewGuid().ToString("N");
+        _rootSessionId = SessionId;
+        _attemptNo = 1;
+        _latestBoardState = null;
+        _testResultSourceSessions.Clear();
+        SetRetestLifecycleActive(false);
         LastResult = "SN scanned";
         OperatorInstruction = "SN 已确认，正在自动执行检测。请保持产品连接稳定。";
         ScannerInput = string.Empty;
@@ -701,8 +745,17 @@ public sealed class MainViewModel : ObservableObject
 
         _isSessionRunning = false;
         _sessionEndedAt = DateTimeOffset.Now;
+        if (TestResults.Any(result => result.State == TestItemState.Failed && result.TestId != ApplicationUpgradeItemId))
+        {
+            SetRetestLifecycleActive(true);
+            OperatorInstruction = "本次测试存在失败项。请处理异常后点击对应项目的“重新测试”，完成后点击“结束本机测试”。";
+        }
+        else
+        {
+            SetRetestLifecycleActive(false);
+            PrepareForNextBoard();
+        }
         ScanCommand.NotifyCanExecuteChanged();
-        PrepareForNextBoard();
         RaisePropertyChanged(nameof(ContinuousTestStatusText));
         RaisePropertyChanged(nameof(StatusBarRunState));
         RaisePropertyChanged(nameof(StatusBarElapsedTime));
@@ -906,6 +959,7 @@ public sealed class MainViewModel : ObservableObject
             state = await GetBoardStateWithTimeoutAsync(client);
             ApplyBoardState(state);
             state = await EnsureBoardSnAsync(client, state);
+            _latestBoardState = state;
             AppendLog($"Board state ok: {BoardId} / {BoardState} / {TestMode}");
 
             SetTestItemState(BatteryItemName, TestItemState.Running);
@@ -968,7 +1022,10 @@ public sealed class MainViewModel : ObservableObject
                 StationCode = "ST01",
                 StartTime = DateTimeOffset.Now,
                 EndTime = DateTimeOffset.Now,
-                FinalVerdict = finalVerdict
+                FinalVerdict = finalVerdict,
+                RootSessionId = _rootSessionId,
+                AttemptNo = 1,
+                RecordType = "initial"
             },
             BoardState = state ?? new BoardState
             {
@@ -982,6 +1039,7 @@ public sealed class MainViewModel : ObservableObject
         };
 
         await _databaseRepository.SaveSessionAsync(record);
+        RecordResultSources(SessionId);
         if (state is not null)
         {
             try
@@ -1019,6 +1077,7 @@ public sealed class MainViewModel : ObservableObject
             AppendLog($"ADB/sys.get_board_state response: boardId={state.BoardId}, boardSn={state.BoardSn}, mode={state.TestMode}, state={state.CurrentState}");
             ApplyBoardState(state);
             state = await EnsureBoardSnAsync(client, state);
+            _latestBoardState = state;
             SetTestItemState(BoardStateItemName, TestItemState.Passed);
 
             AppendLog("ADB/session.start request sent.");
@@ -1077,7 +1136,10 @@ public sealed class MainViewModel : ObservableObject
                 StationCode = "ST01",
                 StartTime = DateTimeOffset.Now,
                 EndTime = DateTimeOffset.Now,
-                FinalVerdict = finalVerdict
+                FinalVerdict = finalVerdict,
+                RootSessionId = _rootSessionId,
+                AttemptNo = 1,
+                RecordType = "initial"
             },
             BoardState = state,
             TestResults = BuildTestResultRecords(),
@@ -1085,6 +1147,7 @@ public sealed class MainViewModel : ObservableObject
         };
 
         await _databaseRepository.SaveSessionAsync(record);
+        RecordResultSources(SessionId);
         if (state is not null)
         {
             try
@@ -1102,6 +1165,217 @@ public sealed class MainViewModel : ObservableObject
         AppendLog("Session persisted.");
         UpdateDebugOutput();
     }
+
+    private bool CanRetestItem(string testId) =>
+        _isRetestLifecycleActive &&
+        !_isRetestRunning &&
+        _testPlan.Any(item => string.Equals(item.Id, testId, StringComparison.OrdinalIgnoreCase)) &&
+        TestResults.Any(result => string.Equals(result.TestId, testId, StringComparison.OrdinalIgnoreCase) && result.State == TestItemState.Failed);
+
+    private async Task RetestSingleItemAsync(string testId)
+    {
+        if (!CanRetestItem(testId))
+        {
+            return;
+        }
+
+        var testPlanItem = _testPlan.First(item => string.Equals(item.Id, testId, StringComparison.OrdinalIgnoreCase));
+        var testItem = TestItems.First(item => string.Equals(item.TestId, testId, StringComparison.OrdinalIgnoreCase));
+        var retestSessionId = Guid.NewGuid().ToString("N");
+        var startedAt = DateTimeOffset.Now;
+        _attemptNo++;
+        _isRetestRunning = true;
+        _isSessionRunning = true;
+        SessionId = retestSessionId;
+        testItem.IsRetesting = true;
+        RefreshRetestAvailability();
+        EndFailedBoardCommand.NotifyCanExecuteChanged();
+        ScanCommand.NotifyCanExecuteChanged();
+        OperatorInstruction = $"正在重新测试：{testItem.Name}。请按测试提示操作。";
+        AppendLog($"Retest started: rootSession={_rootSessionId}, session={retestSessionId}, attempt={_attemptNo}, test={testId}");
+
+        var client = _pcbaCommandClientFactory.Create(_connectionMode);
+        _activeSessionClient = client;
+        var terminalReportReceived = false;
+        try
+        {
+            await foreach (var testEvent in client.RunSessionAsync(retestSessionId, CurrentSn, [testPlanItem]))
+            {
+                if (testEvent.Event == "test.report")
+                {
+                    ApplyTestReport(testEvent);
+                    if (testEvent.Status is "passed" or "failed" or "skipped")
+                    {
+                        terminalReportReceived = true;
+                    }
+                }
+                else if (testEvent.Event == "session.completed")
+                {
+                    AppendLog($"Retest session completed: test={testId}, status={testEvent.Status}, code={testEvent.ResultCode}, message={testEvent.Message}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ApplyTestReport(new TestSessionEvent
+            {
+                Event = "test.report",
+                TestId = testId,
+                Status = "failed",
+                ResultCode = 3999,
+                Message = $"复测通信异常：{ex.Message}",
+                Timestamp = DateTimeOffset.Now,
+                Data = new Dictionary<string, object?> { ["exceptionType"] = ex.GetType().Name }
+            });
+            terminalReportReceived = true;
+            AppendLog($"Retest failed with exception: test={testId}, error={ex.Message}");
+        }
+        finally
+        {
+            _activeSessionClient = null;
+        }
+
+        if (!terminalReportReceived)
+        {
+            ApplyTestReport(new TestSessionEvent
+            {
+                Event = "test.report",
+                TestId = testId,
+                Status = "failed",
+                ResultCode = 3998,
+                Message = "复测未收到测试项最终结果。",
+                Timestamp = DateTimeOffset.Now,
+                Data = new Dictionary<string, object?> { ["terminalReportReceived"] = false }
+            });
+        }
+
+        _testResultSourceSessions[testId] = retestSessionId;
+        var finalVerdict = ResolveFinalVerdict("Pass");
+        var record = new TestSessionRecord
+        {
+            Session = new TestSession
+            {
+                SessionId = retestSessionId,
+                Sn = CurrentSn,
+                ProductModel = "PCBA_X1",
+                StationCode = "ST01",
+                StartTime = startedAt,
+                EndTime = DateTimeOffset.Now,
+                FinalVerdict = finalVerdict,
+                RootSessionId = _rootSessionId,
+                AttemptNo = _attemptNo,
+                RecordType = "retest",
+                RetestTestId = testId
+            },
+            BoardState = _latestBoardState ?? new BoardState
+            {
+                BoardId = BoardId,
+                BoardSn = CurrentSn,
+                TestMode = TestMode,
+                CurrentState = BoardState
+            },
+            TestResults = BuildRetestResultRecords(testId, retestSessionId),
+            Logs = _logService.Snapshot().Select(message => new LogEntry { Message = message }).ToArray()
+        };
+
+        await _databaseRepository.SaveSessionAsync(record);
+        try
+        {
+            await client.SyncSessionSummaryAsync(retestSessionId, CurrentSn, record.BoardState?.BoardId ?? BoardId, finalVerdict, record.TestResults);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Retest board summary sync failed: {ex.Message}");
+        }
+
+        await LoadRecentSessionsAsync();
+        testItem.IsRetesting = false;
+        _isRetestRunning = false;
+        _isSessionRunning = false;
+        RefreshRetestAvailability();
+        EndFailedBoardCommand.NotifyCanExecuteChanged();
+        ScanCommand.NotifyCanExecuteChanged();
+        LastResult = finalVerdict == "Pass" ? "Retest passed" : "Retest completed with failures";
+        OperatorInstruction = finalVerdict == "Pass"
+            ? "所有测试项当前均已通过。请确认后点击“结束本机测试”。"
+            : "仍有失败项目，可继续点击对应项目的“重新测试”；完成后点击“结束本机测试”。";
+        AppendLog($"Retest persisted: session={retestSessionId}, overall={finalVerdict}");
+        UpdateDebugOutput();
+    }
+
+    private void EndFailedBoardLifecycle()
+    {
+        if (!_isRetestLifecycleActive || _isRetestRunning)
+        {
+            return;
+        }
+
+        SetRetestLifecycleActive(false);
+        SessionId = string.Empty;
+        ScannerInput = string.Empty;
+        OperatorInstruction = "本机测试已结束，请扫描下一台产品 SN。";
+        AppendLog($"Failed-board lifecycle ended manually: sn={CurrentSn}, rootSession={_rootSessionId}, attempts={_attemptNo}");
+        UpdateDebugOutput();
+    }
+
+    private void SetRetestLifecycleActive(bool value)
+    {
+        if (_isRetestLifecycleActive == value)
+        {
+            RefreshRetestAvailability();
+            return;
+        }
+
+        _isRetestLifecycleActive = value;
+        RaisePropertyChanged(nameof(IsRetestLifecycleActive));
+        RefreshRetestAvailability();
+        EndFailedBoardCommand.NotifyCanExecuteChanged();
+        RetestCommand.NotifyCanExecuteChanged();
+        ScanCommand.NotifyCanExecuteChanged();
+    }
+
+    private void RefreshRetestAvailability()
+    {
+        foreach (var item in TestItems)
+        {
+            item.CanRetest = _isRetestLifecycleActive && !_isRetestRunning && item.State == TestItemState.Failed &&
+                             _testPlan.Any(planItem => string.Equals(planItem.Id, item.TestId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        RetestCommand.NotifyCanExecuteChanged();
+    }
+
+    private void RecordResultSources(string sessionId)
+    {
+        foreach (var result in TestResults.Where(result => result.TestId != ApplicationUpgradeItemId))
+        {
+            _testResultSourceSessions[result.TestId] = sessionId;
+        }
+    }
+
+    private IReadOnlyList<TestResultRecord> BuildRetestResultRecords(string retestTestId, string retestSessionId) => TestResults
+        .Where(result => result.TestId != ApplicationUpgradeItemId)
+        .Select(result =>
+        {
+            var executed = string.Equals(result.TestId, retestTestId, StringComparison.OrdinalIgnoreCase);
+            var data = result.Data.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+            data["recordOrigin"] = executed ? "executed" : "inherited";
+            data["executedInThisRecord"] = executed;
+            data["rootSessionId"] = _rootSessionId;
+            data["attemptNo"] = _attemptNo;
+            data["sourceSessionId"] = executed
+                ? retestSessionId
+                : _testResultSourceSessions.GetValueOrDefault(result.TestId, _rootSessionId);
+            return new TestResultRecord
+            {
+                TestId = result.TestId,
+                Status = result.StateLabel,
+                ResultCode = result.ResultCode,
+                Message = result.Message,
+                Data = data
+            };
+        })
+        .ToArray();
 
     private void PrepareForNextBoard()
     {
@@ -2612,6 +2886,8 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public void AppendExternalLog(string message) => AppendLog(message);
+
+    public void ClearScannerInput() => ScannerInput = string.Empty;
 
     private void AppendLog(string message)
     {

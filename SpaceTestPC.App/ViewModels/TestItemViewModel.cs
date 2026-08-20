@@ -5,6 +5,8 @@ namespace SpaceTestPC.App.ViewModels;
 public sealed class TestItemViewModel : ObservableObject
 {
     private TestItemState _state;
+    private bool _canRetest;
+    private bool _isRetesting;
 
     public TestItemViewModel(string testId, string name, bool showsConnector = true)
     {
@@ -16,6 +18,26 @@ public sealed class TestItemViewModel : ObservableObject
     public string TestId { get; }
     public string Name { get; }
     public bool ShowsConnector { get; }
+
+    public bool CanRetest
+    {
+        get => _canRetest;
+        set => SetProperty(ref _canRetest, value);
+    }
+
+    public bool IsRetesting
+    {
+        get => _isRetesting;
+        set
+        {
+            if (SetProperty(ref _isRetesting, value))
+            {
+                RaisePropertyChanged(nameof(RetestButtonText));
+            }
+        }
+    }
+
+    public string RetestButtonText => IsRetesting ? "复测中" : "重新测试";
 
     public TestItemState State
     {

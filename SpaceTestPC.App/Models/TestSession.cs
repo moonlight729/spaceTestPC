@@ -9,4 +9,8 @@ public sealed class TestSession
     public DateTimeOffset StartTime { get; init; } = DateTimeOffset.Now;
     public DateTimeOffset? EndTime { get; init; }
     public string FinalVerdict { get; init; } = "Pending";
+    public string RootSessionId { get; init; } = string.Empty;
+    public int AttemptNo { get; init; } = 1;
+    public string RecordType { get; init; } = "initial";
+    public string RetestTestId { get; init; } = string.Empty;
 }

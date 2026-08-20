@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using SpaceTestPC.App.Services;
 using SpaceTestPC.App.ViewModels;
 
@@ -12,6 +13,7 @@ public partial class MainWindow : Window
 {
     private readonly MainViewModel _viewModel;
     private CancellationTokenSource? _sequenceScrollCancellation;
+    private readonly DispatcherTimer _scannerInputIdleTimer;
 
     private void EnvironmentSettings_Click(object sender, RoutedEventArgs e)
     {
@@ -29,6 +31,12 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+
+        _scannerInputIdleTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(500)
+        };
+        _scannerInputIdleTimer.Tick += ScannerInputIdleTimer_OnTick;
 
         var configuration = new ConfigurationService().Load(Path.Combine(AppContext.BaseDirectory, "appsettings.json"));
         var manualTestInteractionService = new ManualTestInteractionService();
@@ -84,6 +92,7 @@ public partial class MainWindow : Window
         DataContext = _viewModel;
         _viewModel.SequenceAdvanceRequested += SequenceAdvanceRequested;
         _viewModel.HistoryRecordFound += HistoryRecordFound;
+        _viewModel.ScanValidationFailed += ScanValidationFailed;
         adbClient.Log += message => Dispatcher.Invoke(() => _viewModel.AppendExternalLog(message));
         tcpClient.Log += message => Dispatcher.Invoke(() => _viewModel.AppendExternalLog(message));
         Loaded += async (_, _) => await _viewModel.InitializeAsync();
@@ -102,6 +111,8 @@ public partial class MainWindow : Window
             return;
         }
 
+        _viewModel.AppendExternalLog($"Scanner UI Enter received: textLength={ScannerInputTextBox.Text.Length}");
+        _scannerInputIdleTimer.Stop();
         SubmitScanIfPossible();
         e.Handled = true;
     }
@@ -113,11 +124,31 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!textBox.Text.Contains('\r') && !textBox.Text.Contains('\n'))
+        _scannerInputIdleTimer.Stop();
+        if (string.IsNullOrWhiteSpace(textBox.Text))
         {
             return;
         }
 
+        if (textBox.Text.Contains('\r') || textBox.Text.Contains('\n'))
+        {
+            _viewModel.AppendExternalLog($"Scanner UI line ending received: textLength={textBox.Text.Length}");
+            SubmitScanIfPossible();
+            return;
+        }
+
+        _scannerInputIdleTimer.Start();
+    }
+
+    private void ScannerInputIdleTimer_OnTick(object? sender, EventArgs e)
+    {
+        _scannerInputIdleTimer.Stop();
+        if (string.IsNullOrWhiteSpace(ScannerInputTextBox.Text))
+        {
+            return;
+        }
+
+        _viewModel.AppendExternalLog($"Scanner UI idle submit: textLength={ScannerInputTextBox.Text.Length}");
         SubmitScanIfPossible();
     }
 
@@ -168,8 +199,22 @@ public partial class MainWindow : Window
         dialog.ShowDialog();
     }
 
+    private void ScanValidationFailed(object? sender, string message)
+    {
+        _viewModel.AppendExternalLog("Scan validation dialog opened.");
+        MessageBox.Show(this, message, "扫码校验失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        _viewModel.ClearScannerInput();
+        Dispatcher.BeginInvoke(() =>
+        {
+            ScannerInputTextBox.Focus();
+            Keyboard.Focus(ScannerInputTextBox);
+            _viewModel.AppendExternalLog("Scan validation dialog confirmed; scanner input cleared and focus restored.");
+        }, System.Windows.Threading.DispatcherPriority.Input);
+    }
+
     private void SubmitScanIfPossible()
     {
+        _viewModel.AppendExternalLog($"Scanner UI submit requested: canExecute={_viewModel.ScanCommand.CanExecute(null)}, textLength={ScannerInputTextBox.Text.Length}");
         if (_viewModel.ScanCommand.CanExecute(null))
         {
             _viewModel.ScanCommand.Execute(null);

@@ -51,7 +51,7 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
             await connection.OpenAsync(cancellationToken);
             await EnsureSchemaAsync(connection, cancellationToken);
             await using var command = connection.CreateCommand();
-            command.CommandText = "SELECT session_id, sn, start_time, end_time, final_verdict, board_id FROM test_sessions ORDER BY start_time DESC LIMIT $count";
+            command.CommandText = "SELECT session_id, sn, start_time, end_time, final_verdict, board_id, root_session_id, attempt_no, record_type, retest_test_id FROM test_sessions ORDER BY start_time DESC LIMIT $count";
             command.Parameters.AddWithValue("$count", count);
             var rows = new List<SessionRow>();
             await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
@@ -74,7 +74,7 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
             await connection.OpenAsync(cancellationToken);
             await EnsureSchemaAsync(connection, cancellationToken);
             await using var command = connection.CreateCommand();
-            command.CommandText = "SELECT session_id, sn, start_time, end_time, final_verdict, board_id FROM test_sessions WHERE sn = $sn ORDER BY start_time DESC LIMIT 1";
+            command.CommandText = "SELECT session_id, sn, start_time, end_time, final_verdict, board_id, root_session_id, attempt_no, record_type, retest_test_id FROM test_sessions WHERE sn = $sn ORDER BY start_time DESC LIMIT 1";
             command.Parameters.AddWithValue("$sn", sn);
             SessionRow? row = null;
             await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
@@ -87,7 +87,9 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
     }
 
     private static SessionRow ReadSessionRow(SqliteDataReader reader) => new(
-        reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetString(5));
+        reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetString(5),
+        reader.IsDBNull(6) ? string.Empty : reader.GetString(6), reader.IsDBNull(7) ? 1 : reader.GetInt32(7),
+        reader.IsDBNull(8) ? "initial" : reader.GetString(8), reader.IsDBNull(9) ? string.Empty : reader.GetString(9));
 
     private static async Task<TestSessionRecord> CreateRecordAsync(SqliteConnection connection, SessionRow row, CancellationToken cancellationToken)
     {
@@ -116,14 +118,20 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
                 Sn = row.Sn,
                 StartTime = DateTimeOffset.Parse(row.StartTime),
                 EndTime = string.IsNullOrEmpty(row.EndTime) ? null : DateTimeOffset.Parse(row.EndTime),
-                FinalVerdict = row.FinalVerdict
+                FinalVerdict = row.FinalVerdict,
+                RootSessionId = row.RootSessionId,
+                AttemptNo = row.AttemptNo,
+                RecordType = row.RecordType,
+                RetestTestId = row.RetestTestId
             },
             BoardState = new BoardState { BoardId = row.BoardId },
             TestResults = results
         };
     }
 
-    private sealed record SessionRow(string SessionId, string Sn, string StartTime, string EndTime, string FinalVerdict, string BoardId);
+    private sealed record SessionRow(
+        string SessionId, string Sn, string StartTime, string EndTime, string FinalVerdict, string BoardId,
+        string RootSessionId, int AttemptNo, string RecordType, string RetestTestId);
 
     private static async Task EnsureSchemaAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {
@@ -136,6 +144,34 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
             CREATE INDEX IF NOT EXISTS ix_test_results_session ON test_results(session_id);
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await EnsureColumnAsync(connection, "test_sessions", "root_session_id", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+        await EnsureColumnAsync(connection, "test_sessions", "attempt_no", "INTEGER NOT NULL DEFAULT 1", cancellationToken);
+        await EnsureColumnAsync(connection, "test_sessions", "record_type", "TEXT NOT NULL DEFAULT 'initial'", cancellationToken);
+        await EnsureColumnAsync(connection, "test_sessions", "retest_test_id", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+    }
+
+    private static async Task EnsureColumnAsync(SqliteConnection connection, string table, string column, string definition, CancellationToken cancellationToken)
+    {
+        var exists = false;
+        await using (var inspect = connection.CreateCommand())
+        {
+            inspect.CommandText = $"PRAGMA table_info({table})";
+            await using var reader = await inspect.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+                {
+                    exists = true;
+                    break;
+                }
+            }
+        }
+
+        if (exists) return;
+
+        await using var alter = connection.CreateCommand();
+        alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {definition}";
+        await alter.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task ExecuteAsync(SqliteConnection connection, SqliteTransaction transaction, string sql, CancellationToken cancellationToken, params (string Name, object Value)[] values)
@@ -159,11 +195,12 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
                 await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
 
                 await ExecuteAsync(connection, transaction, """
-                    INSERT INTO test_sessions(session_id, sn, start_time, end_time, final_verdict, board_id)
-                    VALUES($id, $sn, $start, $end, $verdict, $boardId)
+                    INSERT INTO test_sessions(session_id, sn, start_time, end_time, final_verdict, board_id, root_session_id, attempt_no, record_type, retest_test_id)
+                    VALUES($id, $sn, $start, $end, $verdict, $boardId, $rootSessionId, $attemptNo, $recordType, $retestTestId)
                     """, cancellationToken,
                     ("$id", record.Session.SessionId), ("$sn", record.Session.Sn), ("$start", record.Session.StartTime.ToString("O")),
-                    ("$end", record.Session.EndTime?.ToString("O") ?? string.Empty), ("$verdict", record.Session.FinalVerdict), ("$boardId", record.BoardState?.BoardId ?? string.Empty));
+                    ("$end", record.Session.EndTime?.ToString("O") ?? string.Empty), ("$verdict", record.Session.FinalVerdict), ("$boardId", record.BoardState?.BoardId ?? string.Empty),
+                    ("$rootSessionId", record.Session.RootSessionId), ("$attemptNo", record.Session.AttemptNo), ("$recordType", record.Session.RecordType), ("$retestTestId", record.Session.RetestTestId));
 
                 foreach (var result in record.TestResults)
                 {
