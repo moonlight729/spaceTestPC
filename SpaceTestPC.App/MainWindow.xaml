@@ -74,7 +74,7 @@
                 </StackPanel>
                 <TextBlock Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="30" FontWeight="Bold" Foreground="White" Text="Space 测试工作台" />
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Width="82" Height="34" Margin="0,0,10,0" Padding="0" HorizontalContentAlignment="Center" Background="#0B1F3A" Foreground="#FFFFFF" BorderBrush="#175CD3" BorderThickness="1" Click="EnvironmentSettings_Click" Content="设置" />
+                    <Button Width="82" Height="34" Margin="0,0,10,0" Padding="0" HorizontalContentAlignment="Center" Background="#0B1F3A" Foreground="#FFFFFF" BorderBrush="#175CD3" BorderThickness="1" Focusable="False" IsTabStop="False" Click="EnvironmentSettings_Click" Content="设置" />
                     <Button Width="142" Height="34" Margin="0,0,22,0" Padding="0" HorizontalContentAlignment="Center" Background="#344054" Command="{Binding ShowQueryPageCommand}" Content="QUERY RECORDS" />
                     <StackPanel Width="100" Margin="0,0,18,0" HorizontalAlignment="Center">
                         <TextBlock HorizontalAlignment="Center" Foreground="#B8C7D9" Text="BOARD" />

@@ -19,12 +19,22 @@ public partial class MainWindow : Window
     {
         try
         {
+            _viewModel.AppendExternalLog($"Settings dialog requested: focusedElement={Keyboard.FocusedElement?.GetType().Name ?? "none"}.");
             var window = new EnvironmentSettingsWindow { Owner = this };
             window.ShowDialog();
         }
         catch (Exception exception)
         {
             MessageBox.Show(this, $"打开环境配置失败：{exception.Message}", "设置", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                ScannerInputTextBox.Focus();
+                Keyboard.Focus(ScannerInputTextBox);
+                _viewModel.AppendExternalLog("Settings dialog closed; scanner focus restored.");
+            }, DispatcherPriority.Input);
         }
     }
 
