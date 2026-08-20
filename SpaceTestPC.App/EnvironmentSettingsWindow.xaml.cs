@@ -35,11 +35,14 @@ public partial class EnvironmentSettingsWindow : Window
         PortComboBox.Text = _current.Port;
         TargetNameTextBox.Text = _current.TargetName;
         WifiSsidTextBox.Text = _current.WifiSsid;
+        EthernetPingIpTextBox.Text = _current.EthernetPingIp;
         FirmwarePathTextBox.Text = _current.FirmwarePath;
         ConnectionHostTextBox.Text = string.IsNullOrWhiteSpace(_current.ConnectionHost) ? "auto" : _current.ConnectionHost;
         ConnectionPortTextBox.Text = _current.ConnectionPort.ToString();
         LoadBatterySettings("Finished", _current.FinishedProductBattery);
         LoadBatterySettings("Pcba", _current.PcbaBattery);
+        LoadFastChargeSettings("Finished", _current.FinishedProductFastCharge);
+        LoadFastChargeSettings("Pcba", _current.PcbaFastCharge);
 
         LoadAdapters(_current.AdapterId, _current.LocalIp);
         UpdateSummary();
@@ -144,6 +147,13 @@ public partial class EnvironmentSettingsWindow : Window
             return;
         }
 
+        if (!IPAddress.TryParse(EthernetPingIpTextBox.Text.Trim(), out var ethernetPingAddress) ||
+            ethernetPingAddress.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            MessageBox.Show(this, "网口 Ping 地址必须是合法的 IPv4 地址。", "配置校验", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(PortComboBox.Text) ||
             string.IsNullOrWhiteSpace(TargetNameTextBox.Text) ||
             string.IsNullOrWhiteSpace(WifiSsidTextBox.Text))
@@ -170,17 +180,22 @@ public partial class EnvironmentSettingsWindow : Window
         {
             var finishedBattery = ReadBatterySettings("Finished", "整机");
             var pcbaBattery = ReadBatterySettings("Pcba", "PCBA");
+            var finishedFastCharge = ReadFastChargeSettings("Finished", "整机");
+            var pcbaFastCharge = ReadFastChargeSettings("Pcba", "PCBA");
             _service.Save(
                 mode,
                 PortComboBox.Text,
                 TargetNameTextBox.Text,
                 WifiSsidTextBox.Text,
+                EthernetPingIpTextBox.Text,
                 FirmwarePathTextBox.Text,
                 adapter,
                 host,
                 connectionPort,
                 finishedBattery,
-                pcbaBattery);
+                pcbaBattery,
+                finishedFastCharge,
+                pcbaFastCharge);
             MessageBox.Show(this, "配置已保存。请重启应用，使网卡绑定和探测范围完全生效。", "保存成功", MessageBoxButton.OK, MessageBoxImage.Information);
             DialogResult = true;
         }
@@ -192,27 +207,14 @@ public partial class EnvironmentSettingsWindow : Window
 
     private void LoadBatterySettings(string prefix, BatteryDischargeSettings settings)
     {
-        FindTextBox($"{prefix}ChargerStatusPathTextBox").Text = settings.ChargerStatusPath;
-        FindTextBox($"{prefix}CurrentPathTextBox").Text = settings.CurrentPath;
-        FindTextBox($"{prefix}VoltagePathTextBox").Text = settings.VoltagePath;
-        FindTextBox($"{prefix}RequiredStatusTextBox").Text = settings.RequiredStatus;
         FindTextBox($"{prefix}VoltageMinTextBox").Text = settings.VoltageMinMv.ToString();
         FindTextBox($"{prefix}VoltageMaxTextBox").Text = settings.VoltageMaxMv.ToString();
         FindTextBox($"{prefix}CurrentMinTextBox").Text = settings.CurrentMinMa.ToString();
         FindTextBox($"{prefix}CurrentMaxTextBox").Text = settings.CurrentMaxMa.ToString();
-        FindTextBox($"{prefix}SamplingDurationTextBox").Text = settings.SamplingDurationMs.ToString();
-        FindTextBox($"{prefix}SampleIntervalTextBox").Text = settings.SampleIntervalMs.ToString();
-        FindTextBox($"{prefix}MinimumSamplesTextBox").Text = settings.MinimumValidSamples.ToString();
-        FindTextBox($"{prefix}ToleranceTextBox").Text = settings.CurrentStabilityToleranceMa.ToString();
-        FindTextBox($"{prefix}ConfirmationTimeoutTextBox").Text = settings.OperatorConfirmationTimeoutMs.ToString();
     }
 
     private BatteryDischargeSettings ReadBatterySettings(string prefix, string displayName)
     {
-        var statusPath = RequiredText(prefix, "ChargerStatusPath", displayName);
-        var currentPath = RequiredText(prefix, "CurrentPath", displayName);
-        var voltagePath = RequiredText(prefix, "VoltagePath", displayName);
-        var requiredStatus = RequiredText(prefix, "RequiredStatus", displayName);
         var voltageMin = PositiveInt(prefix, "VoltageMin", displayName);
         var voltageMax = PositiveInt(prefix, "VoltageMax", displayName);
         var currentMin = PositiveInt(prefix, "CurrentMin", displayName);
@@ -220,22 +222,35 @@ public partial class EnvironmentSettingsWindow : Window
         if (voltageMin >= voltageMax || currentMin >= currentMax)
             throw new InvalidDataException($"{displayName}放电参数的最小值必须小于最大值。");
 
-        return new BatteryDischargeSettings(
-            statusPath, currentPath, voltagePath, requiredStatus,
-            voltageMin, voltageMax, currentMin, currentMax,
-            PositiveInt(prefix, "SamplingDuration", displayName),
-            PositiveInt(prefix, "SampleInterval", displayName),
-            PositiveInt(prefix, "MinimumSamples", displayName),
-            PositiveInt(prefix, "Tolerance", displayName),
-            PositiveInt(prefix, "ConfirmationTimeout", displayName));
+        var current = prefix == "Finished" ? _current.FinishedProductBattery : _current.PcbaBattery;
+        return current with
+        {
+            VoltageMinMv = voltageMin,
+            VoltageMaxMv = voltageMax,
+            CurrentMinMa = currentMin,
+            CurrentMaxMa = currentMax
+        };
     }
 
-    private string RequiredText(string prefix, string field, string displayName)
+    private void LoadFastChargeSettings(string prefix, FastChargeSettings settings)
     {
-        var value = FindTextBox($"{prefix}{field}TextBox").Text.Trim();
-        return string.IsNullOrWhiteSpace(value)
-            ? throw new InvalidDataException($"{displayName}放电参数不能为空。")
-            : value;
+        FindTextBox($"{prefix}FastChargeVoltageMinTextBox").Text = settings.VoltageMinMv.ToString();
+        FindTextBox($"{prefix}FastChargeVoltageMaxTextBox").Text = settings.VoltageMaxMv.ToString();
+        FindTextBox($"{prefix}FastChargeCurrentMinTextBox").Text = settings.CurrentMinMa.ToString();
+        FindTextBox($"{prefix}FastChargeCurrentMaxTextBox").Text = settings.CurrentMaxMa.ToString();
+    }
+
+    private FastChargeSettings ReadFastChargeSettings(string prefix, string displayName)
+    {
+        var voltageMin = PositiveInt(prefix, "FastChargeVoltageMin", displayName);
+        var voltageMax = PositiveInt(prefix, "FastChargeVoltageMax", displayName);
+        var currentMin = PositiveInt(prefix, "FastChargeCurrentMin", displayName);
+        var currentMax = PositiveInt(prefix, "FastChargeCurrentMax", displayName);
+        if (voltageMin >= voltageMax)
+            throw new InvalidDataException($"{displayName}板快充电压下限必须小于上限。");
+        if (currentMin >= currentMax)
+            throw new InvalidDataException($"{displayName}板快充电流下限必须小于上限。");
+        return new FastChargeSettings(voltageMin, voltageMax, currentMin, currentMax);
     }
 
     private int PositiveInt(string prefix, string field, string displayName) =>

@@ -25,35 +25,53 @@
                 </Grid>
             </TabItem>
             <TabItem Header="设备通信">
-                <Grid Margin="12"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/><ColumnDefinition Width="100"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <Grid Margin="12"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/><ColumnDefinition Width="100"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                     <TextBlock Style="{StaticResource LabelStyle}" Text="设备通信网卡"/><ComboBox x:Name="AdapterComboBox" Grid.Column="1" Margin="0,3,8,3" DisplayMemberPath="DisplayText" SelectionChanged="AdapterComboBox_OnSelectionChanged"/><Button Grid.Column="2" Content="刷新网卡" Click="RefreshAdapters_Click"/>
                     <TextBlock Grid.Row="1" Style="{StaticResource LabelStyle}" Text="设备地址"/><TextBox x:Name="ConnectionHostTextBox" Grid.Row="1" Grid.Column="1" Margin="0,3,8,3" ToolTip="auto 自动扫描选定网卡，或填写同网段固定 IP"/><Button x:Name="ProbeDeviceButton" Grid.Row="1" Grid.Column="2" Content="探测设备" Click="ProbeDevice_Click"/>
                     <TextBlock Grid.Row="2" Style="{StaticResource LabelStyle}" Text="设备端口"/><TextBox x:Name="ConnectionPortTextBox" Grid.Row="2" Grid.Column="1"/>
-                    <Border Grid.Row="3" Grid.ColumnSpan="3" Margin="0,14,0,0" Padding="14" Background="#F8FAFC" BorderBrush="#D8E0EA" BorderThickness="1" CornerRadius="6"><TextBlock x:Name="SummaryTextBlock" Foreground="#667085" TextWrapping="Wrap"/></Border>
+                    <TextBlock Grid.Row="3" Style="{StaticResource LabelStyle}" Text="网口 Ping 地址"/><TextBox x:Name="EthernetPingIpTextBox" Grid.Row="3" Grid.Column="1" Margin="0,3,8,3" ToolTip="网口测试时由设备 Ping 的目标 IPv4 地址，例如路由器地址"/>
+                    <Border Grid.Row="4" Grid.ColumnSpan="3" Margin="0,14,0,0" Padding="14" Background="#F8FAFC" BorderBrush="#D8E0EA" BorderThickness="1" CornerRadius="6"><TextBlock x:Name="SummaryTextBlock" Foreground="#667085" TextWrapping="Wrap"/></Border>
                 </Grid>
             </TabItem>
             <TabItem Header="放电参数">
                 <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="12">
-                    <TextBlock Foreground="#667085" TextWrapping="Wrap" Text="板端只读取充电状态和电池电压/电流，不会主动关闭充电。检测到非放电状态时，上位机会提示操作员拔除充电器及外设；网线保持连接。"/>
-                    <Expander Header="整机测试" IsExpanded="True" Margin="0,10,0,4"><Grid Margin="16,8"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
-                        <TextBlock Visibility="Collapsed" Style="{StaticResource LabelStyle}" Text="充电状态节点"/><TextBox Visibility="Collapsed" x:Name="FinishedChargerStatusPathTextBox" Grid.Column="1" Grid.ColumnSpan="3"/>
-                        <TextBlock Visibility="Collapsed" Grid.Row="1" Style="{StaticResource LabelStyle}" Text="电流节点"/><TextBox Visibility="Collapsed" x:Name="FinishedCurrentPathTextBox" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3"/>
-                        <TextBlock Visibility="Collapsed" Grid.Row="2" Style="{StaticResource LabelStyle}" Text="电压节点"/><TextBox Visibility="Collapsed" x:Name="FinishedVoltagePathTextBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3"/>
-                        <TextBlock Visibility="Collapsed" Grid.Row="3" Style="{StaticResource LabelStyle}" Text="要求状态"/><TextBox Visibility="Collapsed" x:Name="FinishedRequiredStatusTextBox" Grid.Row="3" Grid.Column="1"/><TextBlock Grid.Row="3" Grid.Column="2" Style="{StaticResource LabelStyle}" Text="电压范围 (mV)"/><StackPanel Grid.Row="3" Grid.Column="3" Orientation="Horizontal"><TextBox x:Name="FinishedVoltageMinTextBox" Width="80"/><TextBlock Margin="8" VerticalAlignment="Center" Text="至"/><TextBox x:Name="FinishedVoltageMaxTextBox" Width="80"/></StackPanel>
-                        <TextBlock Grid.Row="4" Style="{StaticResource LabelStyle}" Text="放电电流范围 (mA)"/><StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="FinishedCurrentMinTextBox" Width="80"/><TextBlock Margin="8" VerticalAlignment="Center" Text="至"/><TextBox x:Name="FinishedCurrentMaxTextBox" Width="80"/></StackPanel><TextBox Visibility="Collapsed" x:Name="FinishedToleranceTextBox" Grid.Row="4" Grid.Column="3"/>
-                        <TextBlock Grid.Row="5" Style="{StaticResource LabelStyle}" Text="采样时长 (ms)"/><TextBox x:Name="FinishedSamplingDurationTextBox" Grid.Row="5" Grid.Column="1"/><TextBlock Grid.Row="5" Grid.Column="2" Style="{StaticResource LabelStyle}" Text="采样间隔 (ms)"/><TextBox x:Name="FinishedSampleIntervalTextBox" Grid.Row="5" Grid.Column="3"/>
-                        <TextBlock Grid.Row="6" Style="{StaticResource LabelStyle}" Text="最少有效样本"/><TextBox x:Name="FinishedMinimumSamplesTextBox" Grid.Row="6" Grid.Column="1"/><TextBlock Grid.Row="6" Grid.Column="2" Style="{StaticResource LabelStyle}" Text="确认超时 (ms)"/><TextBox x:Name="FinishedConfirmationTimeoutTextBox" Grid.Row="6" Grid.Column="3"/>
+                    <TextBlock Foreground="#667085" TextWrapping="Wrap" Text="分别配置整机测试和 PCBA 测试的板放电判定范围。其他采样和设备节点参数保持当前配置不变。"/>
+                    <Expander Header="整机测试" IsExpanded="True" Margin="0,10,0,4"><Grid Margin="16,8"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                        <TextBlock Style="{StaticResource LabelStyle}" Text="放电电压范围 (mV)"/><StackPanel Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="FinishedVoltageMinTextBox" Width="110"/><TextBlock Margin="10,0" VerticalAlignment="Center" Text="至"/><TextBox x:Name="FinishedVoltageMaxTextBox" Width="110"/></StackPanel>
+                        <TextBlock Grid.Row="1" Style="{StaticResource LabelStyle}" Text="放电电流范围 (mA)"/><StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="FinishedCurrentMinTextBox" Width="110"/><TextBlock Margin="10,0" VerticalAlignment="Center" Text="至"/><TextBox x:Name="FinishedCurrentMaxTextBox" Width="110"/></StackPanel>
                     </Grid></Expander>
-                    <Expander Header="PCBA 测试" IsExpanded="False" Margin="0,4"><Grid Margin="16,8"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
-                        <TextBlock Style="{StaticResource LabelStyle}" Text="充电状态节点"/><TextBox x:Name="PcbaChargerStatusPathTextBox" Grid.Column="1" Grid.ColumnSpan="3"/>
-                        <TextBlock Grid.Row="1" Style="{StaticResource LabelStyle}" Text="电流节点"/><TextBox x:Name="PcbaCurrentPathTextBox" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3"/>
-                        <TextBlock Grid.Row="2" Style="{StaticResource LabelStyle}" Text="电压节点"/><TextBox x:Name="PcbaVoltagePathTextBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3"/>
-                        <TextBlock Grid.Row="3" Style="{StaticResource LabelStyle}" Text="要求状态"/><TextBox x:Name="PcbaRequiredStatusTextBox" Grid.Row="3" Grid.Column="1"/><TextBlock Grid.Row="3" Grid.Column="2" Style="{StaticResource LabelStyle}" Text="电压范围 (mV)"/><StackPanel Grid.Row="3" Grid.Column="3" Orientation="Horizontal"><TextBox x:Name="PcbaVoltageMinTextBox" Width="80"/><TextBlock Margin="8" VerticalAlignment="Center" Text="至"/><TextBox x:Name="PcbaVoltageMaxTextBox" Width="80"/></StackPanel>
-                        <TextBlock Grid.Row="4" Style="{StaticResource LabelStyle}" Text="放电电流范围 (mA)"/><StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="PcbaCurrentMinTextBox" Width="80"/><TextBlock Margin="8" VerticalAlignment="Center" Text="至"/><TextBox x:Name="PcbaCurrentMaxTextBox" Width="80"/></StackPanel><TextBlock Grid.Row="4" Grid.Column="2" Style="{StaticResource LabelStyle}" Text="电流波动上限 (mA)"/><TextBox x:Name="PcbaToleranceTextBox" Grid.Row="4" Grid.Column="3"/>
-                        <TextBlock Grid.Row="5" Style="{StaticResource LabelStyle}" Text="采样时长 (ms)"/><TextBox x:Name="PcbaSamplingDurationTextBox" Grid.Row="5" Grid.Column="1"/><TextBlock Grid.Row="5" Grid.Column="2" Style="{StaticResource LabelStyle}" Text="采样间隔 (ms)"/><TextBox x:Name="PcbaSampleIntervalTextBox" Grid.Row="5" Grid.Column="3"/>
-                        <TextBlock Grid.Row="6" Style="{StaticResource LabelStyle}" Text="最少有效样本"/><TextBox x:Name="PcbaMinimumSamplesTextBox" Grid.Row="6" Grid.Column="1"/><TextBlock Grid.Row="6" Grid.Column="2" Style="{StaticResource LabelStyle}" Text="确认超时 (ms)"/><TextBox x:Name="PcbaConfirmationTimeoutTextBox" Grid.Row="6" Grid.Column="3"/>
+                    <Expander Header="PCBA 测试" IsExpanded="True" Margin="0,4"><Grid Margin="16,8"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                        <TextBlock Style="{StaticResource LabelStyle}" Text="放电电压范围 (mV)"/><StackPanel Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="PcbaVoltageMinTextBox" Width="110"/><TextBlock Margin="10,0" VerticalAlignment="Center" Text="至"/><TextBox x:Name="PcbaVoltageMaxTextBox" Width="110"/></StackPanel>
+                        <TextBlock Grid.Row="1" Style="{StaticResource LabelStyle}" Text="放电电流范围 (mA)"/><StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="PcbaCurrentMinTextBox" Width="110"/><TextBlock Margin="10,0" VerticalAlignment="Center" Text="至"/><TextBox x:Name="PcbaCurrentMaxTextBox" Width="110"/></StackPanel>
                     </Grid></Expander>
                 </StackPanel></ScrollViewer>
+            </TabItem>
+            <TabItem Header="板快充参数">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="12">
+                        <TextBlock Foreground="#667085" TextWrapping="Wrap" Text="分别配置整机测试和 PCBA 测试的板快充判定范围。打开设置时自动读取当前配置，保存后重启应用生效。" />
+                        <Expander Header="整机测试" IsExpanded="True" Margin="0,10,0,4">
+                            <Grid Margin="16,8">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                <TextBlock Style="{StaticResource LabelStyle}" Text="充电电压范围 (mV)"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="FinishedFastChargeVoltageMinTextBox" Width="110"/><TextBlock Margin="10,0" VerticalAlignment="Center" Text="至"/><TextBox x:Name="FinishedFastChargeVoltageMaxTextBox" Width="110"/></StackPanel>
+                                <TextBlock Grid.Row="1" Style="{StaticResource LabelStyle}" Text="充电电流范围 (mA)"/>
+                                <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="FinishedFastChargeCurrentMinTextBox" Width="110"/><TextBlock Margin="10,0" VerticalAlignment="Center" Text="至"/><TextBox x:Name="FinishedFastChargeCurrentMaxTextBox" Width="110"/></StackPanel>
+                            </Grid>
+                        </Expander>
+                        <Expander Header="PCBA 测试" IsExpanded="True" Margin="0,4">
+                            <Grid Margin="16,8">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                <TextBlock Style="{StaticResource LabelStyle}" Text="充电电压范围 (mV)"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="PcbaFastChargeVoltageMinTextBox" Width="110"/><TextBlock Margin="10,0" VerticalAlignment="Center" Text="至"/><TextBox x:Name="PcbaFastChargeVoltageMaxTextBox" Width="110"/></StackPanel>
+                                <TextBlock Grid.Row="1" Style="{StaticResource LabelStyle}" Text="充电电流范围 (mA)"/>
+                                <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="PcbaFastChargeCurrentMinTextBox" Width="110"/><TextBlock Margin="10,0" VerticalAlignment="Center" Text="至"/><TextBox x:Name="PcbaFastChargeCurrentMaxTextBox" Width="110"/></StackPanel>
+                            </Grid>
+                        </Expander>
+                    </StackPanel>
+                </ScrollViewer>
             </TabItem>
             <TabItem Header="升级与日志">
                 <Grid Margin="12"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/><ColumnDefinition Width="100"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>

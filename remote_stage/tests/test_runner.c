@@ -10,6 +10,7 @@
 #include "../hardware/keys/key_input.h"
 #include "../hardware/tf_card/tf_card.h"
 #include "../hardware/usb3.0/usb3_file_check.h"
+#include "../hardware/usb/usb_insert_test.h"
 #include "../hardware/pcba_points/pcba_points_file.h"
 #include "../hardware/wifi/wifi_nmcli.h"
 #include "../protocol/protocol.h"
@@ -604,38 +605,168 @@ static int run_tf_card(int fd, const struct app_config *config, const char *test
     return send_report(fd, "tf", "passed", 0, result.message, data);
 }
 
-static int run_usb2_3(int fd, const char *test_start, const char *test_end)
+static int usb_speed_matches(int usb_version, int speed_mbps)
 {
-    char record_file[160] = "/tmp/spacetest_usb_ports.json";
-    char test_mode[32] = "pcba";
-    char content[4096];
-    char data[1024];
-    FILE *file;
+    return usb_version == 2 ? speed_mbps > 0 && speed_mbps < 5000 : speed_mbps >= 5000;
+}
 
-    param_string(test_start, test_end, "recordFile", record_file, sizeof(record_file));
-    param_string(test_start, test_end, "mode", test_mode, sizeof(test_mode));
-    snprintf(record_file, sizeof(record_file), "/userdata/factory_test/usb/%s_usb_test.json",
-             strcmp(test_mode, "finished_product") == 0 ? "finished_product" : "pcba");
+static int wait_for_usb_absent(int fd, const char *test_id, const char *phase,
+                               const char *port_name, const char *direction,
+                               int step_index, int timeout_ms, int poll_interval_ms)
+{
+    int elapsed_ms = 0;
+    char data[512];
+    struct usb_insert_device device;
+    while (elapsed_ms <= timeout_ms) {
+        int found = usb_insert_find(NULL, &device);
+        if (found == 0) return 0;
+        if (found < 0) return -1;
+        if (elapsed_ms == 0 || elapsed_ms % 1000 == 0) {
+            snprintf(data, sizeof(data),
+                     "{\"phase\":\"%s\",\"port\":\"%s\",\"direction\":\"%s\","
+                     "\"stepIndex\":%d,\"totalSteps\":4,\"elapsedMs\":%d,\"timeoutMs\":%d,"
+                     "\"detectedBlock\":\"%s\",\"detectedTopology\":\"%s\",\"actualSpeedMbps\":%d}",
+                     phase, port_name, direction, step_index, elapsed_ms, timeout_ms,
+                     device.block_name, device.topology, device.speed_mbps);
+            send_report(fd, test_id, "running", 0, "Remove USB storage device before continuing", data);
+        }
+        sleep_ms_local(poll_interval_ms);
+        elapsed_ms += poll_interval_ms;
+    }
+    return 1;
+}
+
+static int run_usb_variant(int fd, const char *test_start, const char *test_end, int usb_version)
+{
+    const char *test_id = usb_version == 2 ? "usb2" : "usb3";
+    char port1_topology[64] = "";
+    char port2_topology[64] = "";
+    char data[768];
+    int insert_timeout_ms = param_int(test_start, test_end, "insertTimeoutMs", 30000);
+    int remove_timeout_ms = param_int(test_start, test_end, "removeTimeoutMs", 15000);
+    int poll_interval_ms = param_int(test_start, test_end, "pollIntervalMs", 250);
+    int step;
+
+    param_string(test_start, test_end, "port1Topology", port1_topology, sizeof(port1_topology));
+    param_string(test_start, test_end, "port2Topology", port2_topology, sizeof(port2_topology));
+    if (insert_timeout_ms < 1000) insert_timeout_ms = 30000;
+    if (remove_timeout_ms < 1000) remove_timeout_ms = 15000;
+    if (poll_interval_ms < 100) poll_interval_ms = 100;
+
+    if (wait_for_usb_absent(fd, test_id, "wait_remove_before_start", "", "", 0,
+                            remove_timeout_ms, poll_interval_ms) != 0) {
+        send_report(fd, test_id, "failed", 4903,
+                    "USB storage device was not removed before test start",
+                    "{\"phase\":\"wait_remove_before_start\"}");
+        return -1;
+    }
+
+    for (step = 0; step < 4; ++step) {
+        const char *port_name = step < 2 ? "port1" : "port2";
+        const char *direction = step % 2 == 0 ? "normal" : "reverse";
+        char *topology = step < 2 ? port1_topology : port2_topology;
+        struct usb_insert_device device;
+        int elapsed_ms = 0;
+        int found = 0;
+
+        snprintf(data, sizeof(data),
+                 "{\"phase\":\"wait_insert\",\"usbVersion\":\"usb%d\",\"port\":\"%s\","
+                 "\"direction\":\"%s\",\"stepIndex\":%d,\"totalSteps\":4,"
+                 "\"expectedTopology\":\"%s\",\"insertTimeoutMs\":%d}",
+                 usb_version, port_name, direction, step + 1, topology, insert_timeout_ms);
+        send_report(fd, test_id, "running", 0, "Insert USB storage device", data);
+
+        while (elapsed_ms <= insert_timeout_ms) {
+            found = usb_insert_find(NULL, &device);
+            if (found != 0) break;
+            sleep_ms_local(poll_interval_ms);
+            elapsed_ms += poll_interval_ms;
+        }
+        if (found < 0) {
+            send_report(fd, test_id, "failed", 4904,
+                        "Unable to scan USB storage devices", "{\"phase\":\"wait_insert\"}");
+            return -1;
+        }
+        if (found == 0) {
+            snprintf(data, sizeof(data),
+                     "{\"phase\":\"wait_insert\",\"port\":\"%s\",\"direction\":\"%s\","
+                     "\"stepIndex\":%d,\"totalSteps\":4,\"timeoutMs\":%d}",
+                     port_name, direction, step + 1, insert_timeout_ms);
+            send_report(fd, test_id, "failed", 4905, "USB insertion timed out", data);
+            return -1;
+        }
+        if (device.topology[0] == '\0') {
+            send_report(fd, test_id, "failed", 4904,
+                        "Unable to resolve USB physical topology",
+                        "{\"phase\":\"detected\",\"failureReason\":\"topology_unavailable\"}");
+            return -1;
+        }
+        if (topology[0] == '\0') {
+            if (step == 2 && port1_topology[0] != '\0' &&
+                strcmp(device.topology, port1_topology) == 0) {
+                snprintf(data, sizeof(data),
+                         "{\"phase\":\"detected\",\"port\":\"%s\",\"direction\":\"%s\","
+                         "\"stepIndex\":%d,\"port1Topology\":\"%s\",\"actualTopology\":\"%s\"}",
+                         port_name, direction, step + 1, port1_topology, device.topology);
+                send_report(fd, test_id, "failed", 4906,
+                            "USB port2 must use a different physical topology from port1", data);
+                return -1;
+            }
+            snprintf(topology, 64, "%s", device.topology);
+        } else if (strcmp(device.topology, topology) != 0) {
+            snprintf(data, sizeof(data),
+                     "{\"phase\":\"detected\",\"port\":\"%s\",\"direction\":\"%s\","
+                     "\"stepIndex\":%d,\"expectedTopology\":\"%s\",\"actualTopology\":\"%s\","
+                     "\"actualSpeedMbps\":%d}",
+                     port_name, direction, step + 1, topology, device.topology, device.speed_mbps);
+            send_report(fd, test_id, "failed", 4906, "USB device was inserted into the wrong port", data);
+            return -1;
+        }
+        if (!usb_speed_matches(usb_version, device.speed_mbps)) {
+            snprintf(data, sizeof(data),
+                     "{\"phase\":\"detected\",\"port\":\"%s\",\"direction\":\"%s\","
+                     "\"stepIndex\":%d,\"usbVersion\":\"usb%d\",\"actualSpeedMbps\":%d,"
+                     "\"detectedTopology\":\"%s\"}",
+                     port_name, direction, step + 1, usb_version, device.speed_mbps, device.topology);
+            send_report(fd, test_id, "failed", 4907, "USB link speed does not match the current test", data);
+            return -1;
+        }
+
+        snprintf(data, sizeof(data),
+                 "{\"phase\":\"detected\",\"port\":\"%s\",\"direction\":\"%s\","
+                 "\"stepIndex\":%d,\"totalSteps\":4,\"usbVersion\":\"usb%d\","
+                 "\"actualSpeedMbps\":%d,\"detectedBlock\":\"%s\",\"detectedTopology\":\"%s\","
+                 "\"speedPassed\":true}",
+                 port_name, direction, step + 1, usb_version, device.speed_mbps,
+                 device.block_name, device.topology);
+        send_report(fd, test_id, "running", 0, "USB insertion and link speed detected", data);
+
+        if (wait_for_usb_absent(fd, test_id, "wait_remove", port_name, direction, step + 1,
+                                remove_timeout_ms, poll_interval_ms) != 0) {
+            snprintf(data, sizeof(data),
+                     "{\"phase\":\"wait_remove\",\"port\":\"%s\",\"direction\":\"%s\","
+                     "\"stepIndex\":%d,\"totalSteps\":4,\"timeoutMs\":%d}",
+                     port_name, direction, step + 1, remove_timeout_ms);
+            send_report(fd, test_id, "failed", 4908, "USB removal timed out", data);
+            return -1;
+        }
+    }
 
     snprintf(data, sizeof(data),
-             "{\"recordFile\":\"%s\",\"mode\":\"%s\",\"requiredUsb2Cycles\":4,\"requiredUsb3Cycles\":4}", record_file, test_mode);
-    send_report(fd, "usb2_3", "running", 0, "Read USB connectivity pretest result", data);
-    file = fopen(record_file, "r");
-    if (file == NULL || fgets(content, sizeof(content), file) == NULL) {
-        if (file != NULL) fclose(file);
-        send_report(fd, "usb2_3", "failed", 4901, "USB pretest result file not found", data);
-        return -1;
-    }
-    fclose(file);
-    if (strstr(content, "\"overallResult\":\"passed\"") == NULL ||
-        strstr(content, "\"usb2Cycles\":4") == NULL ||
-        strstr(content, "\"usb3Cycles\":4") == NULL ||
-        (strcmp(test_mode, "finished_product") == 0 && strstr(content, "\"testMode\":\"finished_product\"") == NULL) ||
-        (strcmp(test_mode, "finished_product") != 0 && strstr(content, "\"testMode\":\"pcba\"") == NULL)) {
-        send_report(fd, "usb2_3", "failed", 4902, "USB pretest connectivity result failed or mode mismatch", data);
-        return -1;
-    }
-    return send_report(fd, "usb2_3", "passed", 0, "USB2.0 and USB3.0 connectivity pretest passed", data);
+             "{\"phase\":\"completed\",\"usbVersion\":\"usb%d\",\"completedSteps\":4,"
+             "\"port1Normal\":true,\"port1Reverse\":true,\"port2Normal\":true,\"port2Reverse\":true}",
+             usb_version);
+    return send_report(fd, test_id, "passed", 0,
+                       usb_version == 2 ? "USB2.0 four-step insertion test passed" :
+                                          "USB3.0 four-step insertion test passed",
+                       data);
+}
+
+static int run_usb2_3(int fd, const char *test_start, const char *test_end)
+{
+    int rc = run_usb_variant(fd, test_start, test_end, 2);
+    if (rc != 0) return rc;
+    return run_usb_variant(fd, test_start, test_end, 3);
 }
 
 static void append_pcba_points_json(char *data, size_t data_size,
@@ -2481,6 +2612,8 @@ static int run_one_test(int fd, const char *test_id, const struct app_config *co
     if (strcmp(test_id, "ethernet") == 0) return run_ethernet(fd, test_start, test_end);
     if (strcmp(test_id, "wifi") == 0) return run_wifi(fd, config, test_start, test_end);
     if (strcmp(test_id, "tf") == 0) return run_tf_card(fd, config, test_start, test_end);
+    if (strcmp(test_id, "usb2") == 0) return run_usb_variant(fd, test_start, test_end, 2);
+    if (strcmp(test_id, "usb3") == 0) return run_usb_variant(fd, test_start, test_end, 3);
     if (strcmp(test_id, "usb2_3") == 0) return run_usb2_3(fd, test_start, test_end);
     if (strcmp(test_id, "pcba_test_points") == 0) return run_pcba_test_points(fd, test_start, test_end);
     if (strcmp(test_id, "bluetooth") == 0) return run_bluetooth(fd, config, test_start, test_end);
@@ -2505,7 +2638,8 @@ static int failure_code_for_test(const char *test_id)
     if (strcmp(test_id, "ethernet_led") == 0) return 3015;
     if (strcmp(test_id, "wifi") == 0) return 3003;
     if (strcmp(test_id, "tf") == 0) return 3004;
-    if (strcmp(test_id, "usb2_3") == 0) return 3012;
+    if (strcmp(test_id, "usb2") == 0 || strcmp(test_id, "usb2_3") == 0) return 3012;
+    if (strcmp(test_id, "usb3") == 0) return 3016;
     if (strcmp(test_id, "pcba_test_points") == 0) return 3013;
     if (strcmp(test_id, "bluetooth") == 0) return 3005;
     if (strcmp(test_id, "battery_management") == 0) return 3014;

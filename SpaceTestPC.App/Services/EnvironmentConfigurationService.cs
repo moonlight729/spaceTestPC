@@ -9,6 +9,7 @@ public sealed record EnvironmentSettingsData(
     string Port,
     string TargetName,
     string WifiSsid,
+    string EthernetPingIp,
     string FirmwarePath,
     string ConnectionHost,
     int ConnectionPort,
@@ -17,7 +18,15 @@ public sealed record EnvironmentSettingsData(
     string LocalIp,
     int TestCount,
     BatteryDischargeSettings FinishedProductBattery,
-    BatteryDischargeSettings PcbaBattery);
+    BatteryDischargeSettings PcbaBattery,
+    FastChargeSettings FinishedProductFastCharge,
+    FastChargeSettings PcbaFastCharge);
+
+public sealed record FastChargeSettings(
+    int VoltageMinMv,
+    int VoltageMaxMv,
+    int CurrentMinMa,
+    int CurrentMaxMa);
 
 public sealed record BatteryDischargeSettings(
     string ChargerStatusPath,
@@ -51,6 +60,7 @@ public sealed class EnvironmentConfigurationService
             broadcaster?["portName"]?.GetValue<string>() ?? string.Empty,
             broadcaster?["broadcastName"]?.GetValue<string>() ?? string.Empty,
             parameters?["wifi"]?["ssid"]?.GetValue<string>() ?? string.Empty,
+            parameters?["ethernet"]?["routerIp"]?.GetValue<string>() ?? "192.168.31.1",
             upgrade?["localBinaryPath"]?.GetValue<string>() ?? string.Empty,
             connection?["host"]?.GetValue<string>() ?? "auto",
             connection?["port"]?.GetValue<int>() ?? 19001,
@@ -59,7 +69,9 @@ public sealed class EnvironmentConfigurationService
             connection?["localIp"]?.GetValue<string>() ?? string.Empty,
             testPlan?["enabledTests"]?.AsArray().Count ?? 0,
             ReadBattery(root, "finished_product", 7600, 80),
-            ReadBattery(root, "pcba", 7000, 100));
+            ReadBattery(root, "pcba", 7000, 100),
+            ReadFastCharge(root, "finished_product"),
+            ReadFastCharge(root, "pcba"));
     }
 
     public void Save(
@@ -67,12 +79,15 @@ public sealed class EnvironmentConfigurationService
         string port,
         string targetName,
         string wifiSsid,
+        string ethernetPingIp,
         string firmwarePath,
         EthernetAdapterInfo adapter,
         string connectionHost,
         int connectionPort,
         BatteryDischargeSettings finishedProductBattery,
-        BatteryDischargeSettings pcbaBattery)
+        BatteryDischargeSettings pcbaBattery,
+        FastChargeSettings finishedProductFastCharge,
+        FastChargeSettings pcbaFastCharge)
     {
         var path = ResolvePath();
         var root = ReadRoot(path);
@@ -109,11 +124,16 @@ public sealed class EnvironmentConfigurationService
         var wifi = parameters["wifi"] as JsonObject ?? new JsonObject();
         wifi["ssid"] = wifiSsid.Trim();
         parameters["wifi"] = wifi;
+        var ethernet = parameters["ethernet"] as JsonObject ?? new JsonObject();
+        ethernet["routerIp"] = ethernetPingIp.Trim();
+        parameters["ethernet"] = ethernet;
         testPlan["testParameters"] = parameters;
         root["testPlan"] = testPlan;
 
         WriteBattery(root, "finished_product", finishedProductBattery);
         WriteBattery(root, "pcba", pcbaBattery);
+        WriteFastCharge(root, "finished_product", finishedProductFastCharge);
+        WriteFastCharge(root, "pcba", pcbaFastCharge);
 
         var temporaryPath = path + ".tmp";
         File.WriteAllText(temporaryPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
@@ -162,6 +182,36 @@ public sealed class EnvironmentConfigurationService
         battery["currentStabilityToleranceMa"] = settings.CurrentStabilityToleranceMa;
         battery["operatorConfirmationTimeoutMs"] = settings.OperatorConfirmationTimeoutMs;
         testParameters["battery_management"] = battery;
+        modeNode["testParameters"] = testParameters;
+        modes[mode] = modeNode;
+        root["testModes"] = modes;
+    }
+
+    private static FastChargeSettings ReadFastCharge(JsonObject root, string mode)
+    {
+        var modeSettings = root["testModes"]?[mode]?["testParameters"]?["typec_fast_charge"] as JsonObject;
+        var globalSettings = root["testPlan"]?["testParameters"]?["typec_fast_charge"] as JsonObject;
+        return new FastChargeSettings(
+            ReadModeOrGlobalInt(modeSettings, globalSettings, "chargeVoltageMinMv", 7400),
+            ReadModeOrGlobalInt(modeSettings, globalSettings, "chargeVoltageMaxMv", 8400),
+            ReadModeOrGlobalInt(modeSettings, globalSettings, "chargeCurrentMinMa", 425),
+            ReadModeOrGlobalInt(modeSettings, globalSettings, "chargeCurrentMaxMa", 650));
+    }
+
+    private static int ReadModeOrGlobalInt(JsonObject? modeSettings, JsonObject? globalSettings, string name, int fallback) =>
+        modeSettings?[name]?.GetValue<int>() ?? globalSettings?[name]?.GetValue<int>() ?? fallback;
+
+    private static void WriteFastCharge(JsonObject root, string mode, FastChargeSettings settings)
+    {
+        var modes = root["testModes"] as JsonObject ?? new JsonObject();
+        var modeNode = modes[mode] as JsonObject ?? new JsonObject();
+        var testParameters = modeNode["testParameters"] as JsonObject ?? new JsonObject();
+        var fastCharge = testParameters["typec_fast_charge"] as JsonObject ?? new JsonObject();
+        fastCharge["chargeVoltageMinMv"] = settings.VoltageMinMv;
+        fastCharge["chargeVoltageMaxMv"] = settings.VoltageMaxMv;
+        fastCharge["chargeCurrentMinMa"] = settings.CurrentMinMa;
+        fastCharge["chargeCurrentMaxMa"] = settings.CurrentMaxMa;
+        testParameters["typec_fast_charge"] = fastCharge;
         modeNode["testParameters"] = testParameters;
         modes[mode] = modeNode;
         root["testModes"] = modes;

@@ -246,6 +246,8 @@ public sealed class MainViewModel : ObservableObject
         {
             new("up", "上"), new("down", "下"), new("left", "左"), new("right", "右"), new("confirm", "确认"), new("recovery", "Recovery")
         };
+        Usb2TestSteps = CreateUsbTestSteps();
+        Usb3TestSteps = CreateUsbTestSteps();
         SelectedTestResult = TestResults.FirstOrDefault();
         TestOverviewColumns = Math.Max(1, TestItems.Count);
 
@@ -428,6 +430,10 @@ public sealed class MainViewModel : ObservableObject
     public ObservableCollection<TestItemViewModel> TestItems { get; }
     public ObservableCollection<TestResultViewModel> TestResults { get; }
     public ObservableCollection<DirectionalKeyViewModel> DirectionalKeys { get; }
+    public ObservableCollection<UsbTestStepViewModel> Usb2TestSteps { get; }
+    public ObservableCollection<UsbTestStepViewModel> Usb3TestSteps { get; }
+    public ObservableCollection<UsbTestStepViewModel> SelectedUsbTestSteps =>
+        SelectedTestResult?.TestId == "usb3" ? Usb3TestSteps : Usb2TestSteps;
     public bool IsHistoryLoaded
     {
         get => _isHistoryLoaded;
@@ -448,6 +454,8 @@ public sealed class MainViewModel : ObservableObject
                 RaisePropertyChanged(nameof(IsManualDecisionVisible));
                 RaisePropertyChanged(nameof(ManualDecisionPrompt));
                 RaisePropertyChanged(nameof(IsKeyTestDetailVisible));
+                RaisePropertyChanged(nameof(IsUsbTestDetailVisible));
+                RaisePropertyChanged(nameof(SelectedUsbTestSteps));
                 ConfirmManualPassCommand.NotifyCanExecuteChanged();
                 ConfirmManualFailCommand.NotifyCanExecuteChanged();
             }
@@ -519,6 +527,7 @@ public sealed class MainViewModel : ObservableObject
     }
     public bool IsManualDecisionVisible => !string.IsNullOrWhiteSpace(_manualDecisionTestId);
     public bool IsKeyTestDetailVisible => SelectedTestResult?.TestId == "keys";
+    public bool IsUsbTestDetailVisible => SelectedTestResult?.TestId is "usb2" or "usb3";
     public string ManualDecisionPrompt => _manualDecisionTestId switch
     {
         "hdmi" => "请观察 HDMI 输出是否正常，然后手动选择通过或失败。",
@@ -1599,6 +1608,11 @@ public sealed class MainViewModel : ObservableObject
             UpdateRecoveryKeyState(testEvent);
         }
 
+        if (testEvent.TestId is "usb2" or "usb3")
+        {
+            UpdateUsbTestSteps(testEvent);
+        }
+
         if (testEvent.TestId == "typec_fast_charge" && testEvent.Status == "running")
         {
             HandleTypecChargingReport(testEvent);
@@ -1760,8 +1774,8 @@ public sealed class MainViewModel : ObservableObject
             };
         }
 
-        return testEvent.TestId is "usb2" or "usb3" && testEvent.Status == "running"
-            ? $"请先通过 HDMI 网页完成 USB{(testEvent.TestId == "usb2" ? "2.0" : "3.0")} 联通性预检（两个端口分别正插、反插，共 4 次），再接入 ADB。当前测试将读取对应模式的预检结果文件。"
+        return testEvent.TestId is "usb2" or "usb3"
+            ? BuildUsbInstruction(testEvent)
             : testEvent.TestId == "pcba_test_points" && testEvent.Status == "running"
             ? "正在读取 PCBA 32 通道测试点电压，系统将自动判断是否在阈值范围内。"
             : testEvent.TestId == "ethernet" && testEvent.Status == "running"
@@ -1821,8 +1835,101 @@ public sealed class MainViewModel : ObservableObject
             "battery_management" => BuildBatteryDischargeInstruction(testEvent),
             "ethernet" => BuildEthernetInstruction(testEvent),
             "ethernet_led" => BuildEthernetLedInstruction(testEvent),
+            "usb2" or "usb3" => BuildUsbInstruction(testEvent),
             _ => BuildGeneralTestInstruction(testEvent)
         };
+    }
+
+    private static string BuildUsbInstruction(TestSessionEvent testEvent)
+    {
+        var version = testEvent.TestId == "usb2" ? "USB2.0" : "USB3.0";
+        var phase = GetDataString(testEvent.Data, "phase", string.Empty);
+        var port = GetDataString(testEvent.Data, "port", string.Empty) switch
+        {
+            "port1" => "接口1",
+            "port2" => "接口2",
+            _ => "当前接口"
+        };
+        var direction = GetDataString(testEvent.Data, "direction", string.Empty) switch
+        {
+            "normal" => "正插",
+            "reverse" => "反插",
+            _ => string.Empty
+        };
+        var step = GetDataInt(testEvent.Data, "stepIndex");
+        var speed = GetDataInt(testEvent.Data, "actualSpeedMbps");
+
+        if (testEvent.Status == "running")
+        {
+            return phase switch
+            {
+                "wait_remove_before_start" => $"开始 {version} 测试前，请先拔出所有 USB U 盘。",
+                "wait_insert" => $"{version} 第 {Math.Max(1, step)}/4 步：请将 U 盘插入{port}，方向为{direction}。",
+                "detected" => $"已检测到{port}{direction}，链路速率 {speed} Mbps。请拔出 U 盘后继续下一步。",
+                "wait_remove" => $"{version} 第 {Math.Max(1, step)}/4 步检测完成，请拔出{port}上的 U 盘。",
+                _ => $"正在执行 {version} 两个接口正反插测试。"
+            };
+        }
+
+        return testEvent.Status switch
+        {
+            "passed" => $"{version} 两个接口正反插四步测试完成。",
+            "failed" => $"{version} 测试失败，请检查插拔顺序、物理接口和链路速率。",
+            "skipped" => $"{version}：本轮不测试。",
+            _ => $"{version} 状态更新。"
+        };
+    }
+
+    private static ObservableCollection<UsbTestStepViewModel> CreateUsbTestSteps() => new()
+    {
+        new(1, "port1", "normal"),
+        new(2, "port1", "reverse"),
+        new(3, "port2", "normal"),
+        new(4, "port2", "reverse")
+    };
+
+    private void UpdateUsbTestSteps(TestSessionEvent testEvent)
+    {
+        var steps = testEvent.TestId == "usb3" ? Usb3TestSteps : Usb2TestSteps;
+        var phase = GetDataString(testEvent.Data, "phase", string.Empty);
+        var stepIndex = GetDataInt(testEvent.Data, "stepIndex");
+        var speed = GetDataInt(testEvent.Data, "actualSpeedMbps");
+
+        if (testEvent.Status == "passed")
+        {
+            foreach (var step in steps) step.SetState("completed", step.ActualSpeedMbps);
+            return;
+        }
+
+        if (testEvent.Status == "failed")
+        {
+            var activeStep = steps.FirstOrDefault(step => step.Phase is "wait_insert" or "detected" or "wait_remove");
+            var failedIndex = Math.Clamp(stepIndex > 0 ? stepIndex : activeStep?.StepIndex ?? 1, 1, steps.Count);
+            for (var index = 0; index < failedIndex - 1; index++)
+                steps[index].SetState("completed", steps[index].ActualSpeedMbps);
+            steps[failedIndex - 1].SetState("failed", speed);
+            return;
+        }
+
+        if (testEvent.Status != "running") return;
+        if (phase == "wait_remove_before_start")
+        {
+            foreach (var step in steps) step.Reset();
+            return;
+        }
+
+        if (stepIndex < 1 || stepIndex > steps.Count) return;
+        for (var index = 0; index < stepIndex - 1; index++)
+            steps[index].SetState("completed", steps[index].ActualSpeedMbps);
+
+        var visualPhase = phase switch
+        {
+            "wait_insert" => "wait_insert",
+            "detected" => "detected",
+            "wait_remove" => "wait_remove",
+            _ => "pending"
+        };
+        steps[stepIndex - 1].SetState(visualPhase, speed);
     }
 
     private static string BuildEthernetLedInstruction(TestSessionEvent testEvent)
@@ -1907,17 +2014,7 @@ public sealed class MainViewModel : ObservableObject
 
     private bool ShouldSelectTestResult(TestSessionEvent testEvent, TestResultViewModel result)
     {
-        if (testEvent.Status == "failed")
-        {
-            return true;
-        }
-
-        if (testEvent.Status != "running")
-        {
-            return false;
-        }
-
-        return SelectedTestResult?.State != TestItemState.Failed || SelectedTestResult.TestId == result.TestId;
+        return testEvent.Status is "running" or "failed";
     }
 
     private static string FormatTestEventLog(TestSessionEvent testEvent)
@@ -2554,6 +2651,10 @@ public sealed class MainViewModel : ObservableObject
             AppendLog($"Battery discharge preparation required: chargerStatus={GetDataString(testEvent.Data, "chargerStatus", "unknown")}");
             BatteryDischargePreparationRequested?.Invoke(this, EventArgs.Empty);
             return;
+        }
+        foreach (var step in Usb2TestSteps.Concat(Usb3TestSteps))
+        {
+            step.Reset();
         }
 
         if (phase == "sampling")

@@ -36,13 +36,6 @@ void app_config_load_defaults(struct app_config *config)
     config->application_path = "/vendor/originflow/bin/spacetest3576";
     config->application_service = "pcba-test.service";
     config->application_version = SPACETEST_VERSION;
-    /* USB pretest is retained but disabled until the hardware flow is finalized. */
-    config->usb_pretest_enabled = 0;
-    config->usb_pretest_http_port = 18080;
-    if (getenv("SPACETEST_USB_PRETEST_ENABLED") != NULL &&
-        atoi(getenv("SPACETEST_USB_PRETEST_ENABLED")) != 0) {
-        config->usb_pretest_enabled = 1;
-    }
     bind_address = getenv("SPACETEST_BIND_ADDRESS");
     if (bind_address != NULL && bind_address[0] != '\0') {
         config->bind_address = bind_address;
