@@ -49,6 +49,7 @@ public sealed class TestModeConfiguration
     public string[] DisabledTests { get; set; } = [];
     public string[] TestOrder { get; set; } = [];
     public Dictionary<string, string> SkippedTests { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, Dictionary<string, JsonElement>> TestParameters { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class UpgradeConfiguration

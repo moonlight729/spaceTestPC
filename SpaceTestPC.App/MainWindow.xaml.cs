@@ -103,6 +103,7 @@ public partial class MainWindow : Window
         _viewModel.SequenceAdvanceRequested += SequenceAdvanceRequested;
         _viewModel.HistoryRecordFound += HistoryRecordFound;
         _viewModel.ScanValidationFailed += ScanValidationFailed;
+        _viewModel.BatteryDischargePreparationRequested += BatteryDischargePreparationRequested;
         adbClient.Log += message => Dispatcher.Invoke(() => _viewModel.AppendExternalLog(message));
         tcpClient.Log += message => Dispatcher.Invoke(() => _viewModel.AppendExternalLog(message));
         Loaded += async (_, _) => await _viewModel.InitializeAsync();
@@ -220,6 +221,17 @@ public partial class MainWindow : Window
             Keyboard.Focus(ScannerInputTextBox);
             _viewModel.AppendExternalLog("Scan validation dialog confirmed; scanner input cleared and focus restored.");
         }, System.Windows.Threading.DispatcherPriority.Input);
+    }
+
+    private async void BatteryDischargePreparationRequested(object? sender, EventArgs e)
+    {
+        MessageBox.Show(
+            this,
+            "检测到设备当前未处于放电状态。\n\n请拔掉充电器，并确认相机、HDMI、USB 等外设已经拔除。\n网线必须保持连接。\n\n完成后点击“确定”，系统会重新检查充电状态并自动测试 3–4 秒。",
+            "板放电测试准备",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
+        await _viewModel.ConfirmBatteryDischargePreparationAsync();
     }
 
     private void SubmitScanIfPossible()

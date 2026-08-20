@@ -43,6 +43,8 @@ int main(void)
 {
     struct app_config config;
     int listener;
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
     app_config_load_defaults(&config);
     if (usb_pretest_start(&config) != 0) {
         fprintf(stderr, "usb pretest worker failed to start\n");
@@ -59,7 +61,9 @@ int main(void)
             perror("accept");
             continue;
         }
+        fprintf(stderr, "[SESSION] client accepted fd=%d\n", client);
         session_manager_handle_client(client, &config);
+        fprintf(stderr, "[SESSION] client closing fd=%d\n", client);
         close(client);
     }
 }

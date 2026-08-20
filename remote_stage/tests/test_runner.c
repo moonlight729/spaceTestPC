@@ -18,9 +18,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <sys/select.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -34,6 +36,38 @@
 
 static int wait_test_decision(int fd, const char *test_id, int timeout_ms, int *passed);
 static int wait_operator_decision_or_disconnect(int fd, const char *test_id, int timeout_ms, int *passed, int *disconnected);
+static int ethernet_led_resume_pending;
+static int ethernet_led_resume_code;
+
+static int read_sysfs_long(const char *path, long long *value)
+{
+    FILE *file;
+    char buffer[64];
+    char *end;
+    if (path == NULL || value == NULL) return -1;
+    file = fopen(path, "r");
+    if (file == NULL || fgets(buffer, sizeof(buffer), file) == NULL) {
+        if (file != NULL) fclose(file);
+        return -1;
+    }
+    fclose(file);
+    *value = strtoll(buffer, &end, 10);
+    return end == buffer ? -1 : 0;
+}
+
+static int read_sysfs_text(const char *path, char *value, size_t value_size)
+{
+    FILE *file;
+    if (path == NULL || value == NULL || value_size == 0) return -1;
+    file = fopen(path, "r");
+    if (file == NULL || fgets(value, value_size, file) == NULL) {
+        if (file != NULL) fclose(file);
+        return -1;
+    }
+    fclose(file);
+    value[strcspn(value, "\r\n")] = '\0';
+    return 0;
+}
 
 static const char *find_object_end(const char *start)
 {
@@ -202,19 +236,6 @@ static double timespec_diff_ms(const struct timespec *start, const struct timesp
     seconds = (double)(end->tv_sec - start->tv_sec) * 1000.0;
     nanoseconds = (double)(end->tv_nsec - start->tv_nsec) / 1000000.0;
     return seconds + nanoseconds;
-}
-
-static int any_camera_device_present(void)
-{
-    int index;
-    char path[32];
-    for (index = 0; index < 10; ++index) {
-        snprintf(path, sizeof(path), "/dev/video%d", index);
-        if (access(path, F_OK) == 0) {
-            return 1;
-        }
-    }
-    return 0;
 }
 
 static int send_report(int fd, const char *test_id, const char *status,
@@ -1120,8 +1141,6 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
     int progress_report_interval_ms = 1000;
     int elapsed_ms = 0;
     int ready_elapsed_ms = 0;
-    int ethernet_link_up = 0;
-    int camera_present = 0;
     int pmic_status0 = 0;
     int pmic_status1 = 0;
     int vbus_present = 0;
@@ -1152,45 +1171,9 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
     if (progress_report_interval_ms <= 0) progress_report_interval_ms = 1000;
     memset(&result, 0, sizeof(result));
 
-    ethernet_link_up = net_carrier_is_up("end0");
-    camera_present = any_camera_device_present();
-    while (ready_elapsed_ms < wait_ready_timeout_ms && (ethernet_link_up || camera_present)) {
-        snprintf(data, sizeof(data),
-                 "{\"phase\":\"wait_ready\",\"waitReadyTimeoutMs\":%d,\"elapsedMs\":%d,"
-                 "\"ethernetLinkUp\":%s,\"cameraPresent\":%s,"
-                 "\"requiresEthernetUnplug\":%s,\"requiresCameraUnplug\":%s}",
-                 wait_ready_timeout_ms, ready_elapsed_ms,
-                 ethernet_link_up ? "true" : "false",
-                 camera_present ? "true" : "false",
-                 ethernet_link_up ? "true" : "false",
-                 camera_present ? "true" : "false");
-        send_report(fd, "typec_fast_charge", "running", 0,
-                    "Please unplug Ethernet cable and camera before fast charge test", data);
-        sleep_ms_local(progress_report_interval_ms);
-        ready_elapsed_ms += progress_report_interval_ms;
-        ethernet_link_up = net_carrier_is_up("end0");
-        camera_present = any_camera_device_present();
-    }
-
-    if (ethernet_link_up || camera_present) {
-        snprintf(data, sizeof(data),
-                 "{\"phase\":\"wait_ready\",\"waitReadyTimeoutMs\":%d,\"elapsedMs\":%d,"
-                 "\"ethernetLinkUp\":%s,\"cameraPresent\":%s,"
-                 "\"requiresEthernetUnplug\":%s,\"requiresCameraUnplug\":%s,"
-                 "\"failureReason\":\"external_load_not_removed\"}",
-                 wait_ready_timeout_ms, wait_ready_timeout_ms,
-                 ethernet_link_up ? "true" : "false",
-                 camera_present ? "true" : "false",
-                 ethernet_link_up ? "true" : "false",
-                 camera_present ? "true" : "false");
-        return send_report(fd, "typec_fast_charge", "failed", 4406,
-                           "Please unplug Ethernet cable and camera before fast charge test", data);
-    }
-
     snprintf(data, sizeof(data),
              "{\"phase\":\"ready\",\"waitReadyTimeoutMs\":%d,\"elapsedMs\":%d,"
-             "\"ethernetLinkUp\":false,\"cameraPresent\":false,"
-             "\"requiresEthernetUnplug\":false,\"requiresCameraUnplug\":false}",
+             "\"externalLoadConflictCheck\":false}",
              wait_ready_timeout_ms, ready_elapsed_ms);
     send_report(fd, "typec_fast_charge", "running", 0,
                 "External loads removed, enabling fast charge mode", data);
@@ -1415,86 +1398,128 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
 
 static int run_battery_management(int fd, const char *test_start, const char *test_end)
 {
-    char data[512];
-    int timeout_ms = 15000;
-    int wait_ready_timeout_ms = 120000;
-    int progress_report_interval_ms = 1000;
-    int elapsed_ms = 0;
-    int ethernet_link_up = 0;
-    int camera_present = 0;
-    int passed = 0;
+    char data[2048];
+    char status[64];
+    char required_status[32] = "Discharging";
+    char status_path[256] = "/sys/class/power_supply/bq2579x-charger/status";
+    char current_path[256] = "/sys/class/power_supply/cw221X-bat/current_now";
+    char voltage_path[256] = "/sys/class/power_supply/cw221X-bat/voltage_now";
+    int confirmation_timeout_ms = 15000;
+    int sampling_duration_ms = 4000;
+    int sample_interval_ms = 500;
+    int minimum_valid_samples = 6;
+    int voltage_min_mv = 7600;
+    int voltage_max_mv = 8400;
+    int current_min_ma = 100;
+    int current_max_ma = 500;
+    int stability_tolerance_ma = 80;
+    int confirmed = 0;
+    int sample_count = 0;
+    int valid_samples = 0;
+    long long voltage_sum_mv = 0;
+    long long current_sum_ma = 0;
+    int voltage_min_seen = 0;
+    int voltage_max_seen = 0;
+    int current_min_seen = 0;
+    int current_max_seen = 0;
+    int elapsed = 0;
 
-    timeout_ms = param_int(test_start, test_end, "timeoutMs", timeout_ms);
-    wait_ready_timeout_ms = param_int(test_start, test_end, "waitReadyTimeoutMs", wait_ready_timeout_ms);
-    progress_report_interval_ms = param_int(test_start, test_end, "progressReportIntervalMs", progress_report_interval_ms);
-    if (progress_report_interval_ms <= 0) progress_report_interval_ms = 1000;
+    param_string(test_start, test_end, "chargerStatusPath", status_path, sizeof(status_path));
+    param_string(test_start, test_end, "currentPath", current_path, sizeof(current_path));
+    param_string(test_start, test_end, "voltagePath", voltage_path, sizeof(voltage_path));
+    param_string(test_start, test_end, "requiredStatus", required_status, sizeof(required_status));
+    /* Sampling duration, interval, sample count and confirmation timeout are fixed by the test procedure. */
+    voltage_min_mv = param_int(test_start, test_end, "voltageMinMv", voltage_min_mv);
+    voltage_max_mv = param_int(test_start, test_end, "voltageMaxMv", voltage_max_mv);
+    current_min_ma = param_int(test_start, test_end, "dischargeCurrentMinMa", current_min_ma);
+    current_max_ma = param_int(test_start, test_end, "dischargeCurrentMaxMa", current_max_ma);
+    stability_tolerance_ma = param_int(test_start, test_end, "currentStabilityToleranceMa", stability_tolerance_ma);
+    if (sample_interval_ms < 100) sample_interval_ms = 100;
+    if (sampling_duration_ms < sample_interval_ms) sampling_duration_ms = sample_interval_ms;
 
-    ethernet_link_up = net_carrier_is_up("end0");
-    camera_present = any_camera_device_present();
-    while (elapsed_ms < wait_ready_timeout_ms && (ethernet_link_up || camera_present)) {
-        snprintf(data, sizeof(data),
-                 "{\"phase\":\"wait_ready\",\"waitReadyTimeoutMs\":%d,\"elapsedMs\":%d,"
-                 "\"ethernetLinkUp\":%s,\"cameraPresent\":%s,"
-                 "\"requiresEthernetUnplug\":%s,\"requiresCameraUnplug\":%s}",
-                 wait_ready_timeout_ms, elapsed_ms,
-                 ethernet_link_up ? "true" : "false",
-                 camera_present ? "true" : "false",
-                 ethernet_link_up ? "true" : "false",
-                 camera_present ? "true" : "false");
-        send_report(fd, "battery_management", "running", 0,
-                    "Please unplug Ethernet cable and camera before battery discharge test", data);
-        sleep_ms_local(progress_report_interval_ms);
-        elapsed_ms += progress_report_interval_ms;
-        ethernet_link_up = net_carrier_is_up("end0");
-        camera_present = any_camera_device_present();
+    if (read_sysfs_text(status_path, status, sizeof(status)) != 0) {
+        return send_report(fd, "battery_management", "failed", 4701, "Unable to read charger status", "{\"failureReason\":\"charger_status_read_failed\"}");
     }
 
-    if (ethernet_link_up || camera_present) {
+    if (strcmp(status, required_status) != 0) {
         snprintf(data, sizeof(data),
-                 "{\"phase\":\"wait_ready\",\"waitReadyTimeoutMs\":%d,\"elapsedMs\":%d,"
-                 "\"ethernetLinkUp\":%s,\"cameraPresent\":%s,"
-                 "\"requiresEthernetUnplug\":%s,\"requiresCameraUnplug\":%s,"
-                 "\"failureReason\":\"external_load_not_removed\"}",
-                 wait_ready_timeout_ms, wait_ready_timeout_ms,
-                 ethernet_link_up ? "true" : "false",
-                 camera_present ? "true" : "false",
-                 ethernet_link_up ? "true" : "false",
-                 camera_present ? "true" : "false");
-        return send_report(fd, "battery_management", "failed", 4705,
-                           "Please unplug Ethernet cable and camera before battery discharge test", data);
+                 "{\"phase\":\"wait_unplug_charger\",\"chargerStatus\":\"%s\",\"requiredStatus\":\"%s\","
+                 "\"requiresOperatorConfirmation\":true,\"operatorConfirmationTimeoutMs\":%d}",
+                 status, required_status, confirmation_timeout_ms);
+        send_report(fd, "battery_management", "running", 0, "Unplug charger and external devices, then confirm", data);
+        switch (wait_test_decision(fd, "battery_management", confirmation_timeout_ms, &confirmed)) {
+        case 1: break;
+        case 0: return send_report(fd, "battery_management", "failed", 4708, "Operator confirmation timed out", data);
+        default: return send_report(fd, "battery_management", "failed", 4708, "Unable to read operator confirmation", data);
+        }
+        if (!confirmed || read_sysfs_text(status_path, status, sizeof(status)) != 0 || strcmp(status, required_status) != 0) {
+            snprintf(data, sizeof(data),
+                     "{\"phase\":\"status_recheck_failed\",\"chargerStatus\":\"%s\",\"requiredStatus\":\"%s\","
+                     "\"failureReason\":\"not_discharging_after_confirmation\"}", status, required_status);
+            return send_report(fd, "battery_management", "failed", 4702, "Device is still not discharging after confirmation", data);
+        }
     }
 
-    snprintf(data, sizeof(data),
-             "{\"phase\":\"ready\",\"waitReadyTimeoutMs\":%d,\"elapsedMs\":%d,"
-             "\"ethernetLinkUp\":false,\"cameraPresent\":false,"
-             "\"requiresEthernetUnplug\":false,\"requiresCameraUnplug\":false}",
-             wait_ready_timeout_ms, elapsed_ms);
-    send_report(fd, "battery_management", "running", 0,
-                "External loads removed, enabling battery discharge mode", data);
-
-    if (set_charge_enabled(0) != 0) {
-        snprintf(data, sizeof(data),
-                 "{\"chargeControlCommand\":\"disable_charge\",\"chargeControlOk\":false,"
-                 "\"pmicCommunicationOk\":false,\"readyForHostDecision\":false}");
-        return send_report(fd, "battery_management", "failed", 4701,
-                           "Unable to disable charge before battery discharge test", data);
+    while (elapsed < sampling_duration_ms) {
+        long long current_ua;
+        long long voltage_uv;
+        int current_ma;
+        int voltage_mv;
+        ++sample_count;
+        if (read_sysfs_text(status_path, status, sizeof(status)) == 0 &&
+            strcmp(status, required_status) == 0 &&
+            read_sysfs_long(current_path, &current_ua) == 0 &&
+            read_sysfs_long(voltage_path, &voltage_uv) == 0 &&
+            current_ua < 0) {
+            current_ma = (int)((-current_ua + 500) / 1000);
+            voltage_mv = (int)((voltage_uv + 500) / 1000);
+            if (valid_samples == 0) {
+                voltage_min_seen = voltage_max_seen = voltage_mv;
+                current_min_seen = current_max_seen = current_ma;
+            } else {
+                if (voltage_mv < voltage_min_seen) voltage_min_seen = voltage_mv;
+                if (voltage_mv > voltage_max_seen) voltage_max_seen = voltage_mv;
+                if (current_ma < current_min_seen) current_min_seen = current_ma;
+                if (current_ma > current_max_seen) current_max_seen = current_ma;
+            }
+            voltage_sum_mv += voltage_mv;
+            current_sum_ma += current_ma;
+            ++valid_samples;
+            snprintf(data, sizeof(data),
+                     "{\"phase\":\"sampling\",\"chargerStatus\":\"%s\",\"elapsedMs\":%d,"
+                     "\"samplingDurationMs\":%d,\"sampleCount\":%d,\"validSampleCount\":%d,"
+                     "\"voltageMv\":%d,\"dischargeCurrentMa\":%d}",
+                     status, elapsed, sampling_duration_ms, sample_count, valid_samples, voltage_mv, current_ma);
+            send_report(fd, "battery_management", "running", 0, "Battery discharge sampling", data);
+        }
+        sleep_ms_local(sample_interval_ms);
+        elapsed += sample_interval_ms;
     }
 
-    snprintf(data, sizeof(data),
-             "{\"phase\":\"ready_for_host_decision\",\"chargeControlCommand\":\"disable_charge\",\"chargeControlOk\":true,"
-             "\"pmicCommunicationOk\":true,\"readyForHostDecision\":true,\"samplingDurationMs\":%d}",
-             timeout_ms);
-    send_report(fd, "battery_management", "running", 0, "Battery discharge mode enabled, waiting for host decision", data);
-    switch (wait_test_decision(fd, "battery_management", timeout_ms, &passed)) {
-    case 1:
-        return send_report(fd, "battery_management", passed ? "passed" : "failed",
-                           passed ? 0 : 4702,
-                           passed ? "Host confirmed discharge pass" : "Host confirmed discharge fail",
-                           data);
-    case 0:
-        return send_report(fd, "battery_management", "failed", 4703, "Host decision timed out", data);
-    default:
-        return send_report(fd, "battery_management", "failed", 4704, "Unable to read host decision", data);
+    if (valid_samples < minimum_valid_samples) {
+        snprintf(data, sizeof(data), "{\"phase\":\"completed\",\"sampleCount\":%d,\"validSampleCount\":%d,\"minimumValidSamples\":%d,\"failureReason\":\"insufficient_valid_samples\"}", sample_count, valid_samples, minimum_valid_samples);
+        return send_report(fd, "battery_management", "failed", 4705, "Insufficient valid discharge samples", data);
+    }
+
+    {
+        int avg_voltage_mv = (int)(voltage_sum_mv / valid_samples);
+        int avg_current_ma = (int)(current_sum_ma / valid_samples);
+        int current_ripple_ma = current_max_seen - current_min_seen;
+        int passed = avg_voltage_mv >= voltage_min_mv && avg_voltage_mv <= voltage_max_mv &&
+                     avg_current_ma >= current_min_ma && avg_current_ma <= current_max_ma;
+        int code = passed ? 0 : avg_voltage_mv < voltage_min_mv || avg_voltage_mv > voltage_max_mv ? 4704 :
+                   avg_current_ma < current_min_ma || avg_current_ma > current_max_ma ? 4703 : 4705;
+        snprintf(data, sizeof(data),
+                 "{\"phase\":\"completed\",\"chargerStatus\":\"%s\",\"sampleCount\":%d,\"validSampleCount\":%d,"
+                 "\"averageVoltageMv\":%d,\"minimumVoltageMv\":%d,\"maximumVoltageMv\":%d,"
+                 "\"averageDischargeCurrentMa\":%d,\"minimumDischargeCurrentMa\":%d,\"maximumDischargeCurrentMa\":%d,"
+                 "\"currentRippleMa\":%d,\"voltageMinMv\":%d,\"voltageMaxMv\":%d,"
+                 "\"dischargeCurrentMinMa\":%d,\"dischargeCurrentMaxMa\":%d,\"currentStabilityToleranceMa\":%d}",
+                 status, sample_count, valid_samples, avg_voltage_mv, voltage_min_seen, voltage_max_seen,
+                 avg_current_ma, current_min_seen, current_max_seen, current_ripple_ma, voltage_min_mv, voltage_max_mv,
+                 current_min_ma, current_max_ma, stability_tolerance_ma);
+        return send_report(fd, "battery_management", passed ? "passed" : "failed", code,
+                           passed ? "Battery discharge test passed" : "Battery discharge measurement out of range", data);
     }
 }
 
@@ -1591,10 +1616,12 @@ static int run_manual_observation(int fd, const char *test_id, const char *displ
     snprintf(data, sizeof(data),
              "{\"manualObserved\":true,\"requiresOperatorDecision\":true,\"timeoutMs\":%d,\"expectedAction\":\"Observe %s output and confirm pass or fail\"}",
              timeout_ms, display_name);
+    fprintf(stderr, "[HDMI] waiting decision fd=%d test=%s timeoutMs=%d\n", fd, test_id, timeout_ms);
     send_report(fd, test_id, "running", 0, "Waiting for operator decision", data);
 
     switch (wait_operator_decision(fd, test_id, timeout_ms, &passed)) {
     case 1:
+        fprintf(stderr, "[HDMI] decision received fd=%d test=%s passed=%s\n", fd, test_id, passed ? "true" : "false");
         snprintf(data, sizeof(data),
                  "{\"manualObserved\":true,\"operatorConfirmed\":%s}",
                  passed ? "true" : "false");
@@ -1603,12 +1630,14 @@ static int run_manual_observation(int fd, const char *test_id, const char *displ
                            passed ? "Operator confirmed pass" : "Operator confirmed fail",
                            data) == 0 && passed ? 0 : -1;
     case 0:
+        fprintf(stderr, "[HDMI] decision timeout fd=%d test=%s timeoutMs=%d\n", fd, test_id, timeout_ms);
         snprintf(data, sizeof(data),
                  "{\"manualObserved\":true,\"operatorConfirmed\":false,\"timeoutMs\":%d}",
                  timeout_ms);
         send_report(fd, test_id, "failed", 3911, "Operator decision timed out", data);
         return -1;
     default:
+        fprintf(stderr, "[HDMI] decision read failed fd=%d test=%s errno=%d\n", fd, test_id, errno);
         send_report(fd, test_id, "failed", 3912, "Unable to read operator decision", "{}");
         return -1;
     }
@@ -1850,6 +1879,9 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
     int speed_wait_timeout_ms = param_int(test_start, test_end, "speedWaitTimeoutMs", 10000);
     int cycle_count = param_int(test_start, test_end, "cycleCount", 2);
     int timeout_ms = param_int(test_start, test_end, "manualDecisionTimeoutMs", 15000);
+    int reconnect_delay_ms = param_int(test_start, test_end, "reconnectDelayMs", 25000);
+    int pre_disconnect_delay_ms = param_int(test_start, test_end, "preDisconnectDelayMs", 1000);
+    int resume_after_reconnect = param_bool(test_start, test_end, "resumeAfterReconnect", 0);
     int wait_cable_elapsed_ms = 0;
     int disconnected = 0;
     int passed = 0;
@@ -1866,6 +1898,25 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
     if (cycle_count <= 0) cycle_count = 2;
     if (cycle_count > 10) cycle_count = 10;
     if (timeout_ms <= 0) timeout_ms = 15000;
+    if (reconnect_delay_ms < 1000) reconnect_delay_ms = 25000;
+    if (pre_disconnect_delay_ms < 0) pre_disconnect_delay_ms = 0;
+
+    if (resume_after_reconnect) {
+        if (!ethernet_led_resume_pending) {
+            return send_report(fd, "ethernet_led", "failed", 4814,
+                               "No pending Ethernet LED reconnect checkpoint", "{}");
+        }
+        if (ethernet_led_resume_code != 0) {
+            int pending_code = ethernet_led_resume_code;
+            ethernet_led_resume_pending = 0;
+            ethernet_led_resume_code = 0;
+            return send_report(fd, "ethernet_led", "failed", pending_code,
+                               pending_code == 4812 ? "Unable to switch Ethernet LED speed mode" :
+                                                      "Ethernet LED speed mode did not become stable",
+                               "{\"phase\":\"failed_during_disconnect\"}");
+        }
+        goto wait_for_decision;
+    }
 
     snprintf(data, sizeof(data),
              "{\"interfaceName\":\"%s\",\"phase\":\"wait_cable\",\"ethernetLinkUp\":false,"
@@ -1892,6 +1943,19 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
         return -1;
     }
 
+    snprintf(data, sizeof(data),
+             "{\"interfaceName\":\"%s\",\"phase\":\"prepare_disconnect\",\"reconnectRequired\":true,"
+             "\"resumeAfterReconnect\":true,\"reconnectDelayMs\":%d,\"cycleCount\":%d}",
+             interface_name, reconnect_delay_ms, cycle_count);
+    if (send_report(fd, "ethernet_led", "running", 0,
+                    "Ethernet LED switching will temporarily disconnect the control link", data) != 0) {
+        return -2;
+    }
+    if (pre_disconnect_delay_ms > 0) sleep_ms_local(pre_disconnect_delay_ms);
+    ethernet_led_resume_pending = 1;
+    ethernet_led_resume_code = 0;
+    (void)shutdown(fd, SHUT_RDWR);
+
     for (cycle = 1; cycle <= cycle_count; ++cycle) {
         for (phase = 0; phase < 2; ++phase) {
             const int gigabit = phase == 1;
@@ -1907,7 +1971,8 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
                          "\"expectedLed\":\"%s\",\"expectedSpeedMbps\":%d,\"failureReason\":\"ethtool_command_failed\"}",
                          interface_name, phase_name, cycle, cycle_count, expected_led, expected_speed_mbps);
                 send_report(fd, "ethernet_led", "failed", 4812, "Unable to switch Ethernet LED speed mode", data);
-                return -1;
+                ethernet_led_resume_code = 4812;
+                return -2;
             }
 
             if (settle_ms > 0) sleep_ms_local(settle_ms);
@@ -1922,7 +1987,8 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
                          interface_name, phase_name, cycle, cycle_count, expected_led,
                          expected_speed_mbps, actual_speed_mbps);
                 send_report(fd, "ethernet_led", "failed", 4813, "Ethernet LED speed mode did not become stable", data);
-                return -1;
+                ethernet_led_resume_code = 4813;
+                return -2;
             }
 
             snprintf(data, sizeof(data),
@@ -1940,10 +2006,15 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
         }
     }
 
+    restore_ethernet_led_autoneg(interface_name);
+    return -2;
+
+wait_for_decision:
     snprintf(data, sizeof(data),
              "{\"manualObserved\":true,\"requiresOperatorDecision\":true,\"interfaceName\":\"%s\","
-             "\"displayMode\":\"100m_1000m_led_sequence\",\"cycleCount\":%d,\"timeoutMs\":%d}",
-             interface_name, cycle_count, timeout_ms);
+             "\"displayMode\":\"100m_1000m_led_sequence\",\"cycleCount\":%d,\"timeoutMs\":%d,"
+             "\"phase\":\"waiting_decision_after_reconnect\",\"resumedAfterReconnect\":%s}",
+             interface_name, cycle_count, timeout_ms, resume_after_reconnect ? "true" : "false");
     send_report(fd, "ethernet_led", "running", 0,
                 "Waiting for operator decision after Ethernet LED sequence",
                 data);
@@ -1955,6 +2026,8 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
                  "{\"manualObserved\":true,\"operatorConfirmed\":%s,\"interfaceName\":\"%s\","
                  "\"displayMode\":\"100m_1000m_led_sequence\",\"timeoutMs\":%d}",
                  passed ? "true" : "false", interface_name, timeout_ms);
+        ethernet_led_resume_pending = 0;
+        ethernet_led_resume_code = 0;
         return send_report(fd, "ethernet_led", passed ? "passed" : "failed",
                            passed ? 0 : 3910,
                            passed ? "Operator confirmed Ethernet LEDs pass" :
@@ -1962,6 +2035,8 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
                            data) == 0 && passed ? 0 : -1;
     case 0:
         restore_ethernet_led_autoneg(interface_name);
+        ethernet_led_resume_pending = 0;
+        ethernet_led_resume_code = 0;
         snprintf(data, sizeof(data),
                  "{\"manualObserved\":true,\"operatorConfirmed\":false,\"interfaceName\":\"%s\","
                  "\"displayMode\":\"100m_1000m_led_sequence\",\"timeoutMs\":%d}",
@@ -1973,6 +2048,8 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
         return -2;
     default:
         restore_ethernet_led_autoneg(interface_name);
+        ethernet_led_resume_pending = 0;
+        ethernet_led_resume_code = 0;
         send_report(fd, "ethernet_led", "failed", 3912, "Unable to read operator decision", "{}");
         return -1;
     }

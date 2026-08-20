@@ -1,93 +1,67 @@
 <Window x:Class="SpaceTestPC.App.EnvironmentSettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="测试设置"
-        Width="760"
-        Height="760"
-        WindowStartupLocation="CenterOwner"
-        ResizeMode="NoResize"
-        FontFamily="Microsoft YaHei UI"
-        Background="#EEF2F6">
-    <Grid Margin="28">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
-
-        <TextBlock FontSize="24" FontWeight="Bold" Text="测试设置" />
-        <TextBlock Grid.Row="1" Margin="0,6,0,20" Foreground="#667085" Text="设备通信固定使用选定的物理网卡，保存后重启应用生效。" />
-
-        <Grid Grid.Row="2" Margin="0,0,0,14">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-            <TextBlock VerticalAlignment="Center" Text="当前工作模式" />
-            <ComboBox x:Name="ModeComboBox" Grid.Column="1" Height="34">
-                <ComboBoxItem Tag="finished_product" Content="整机测试" />
-                <ComboBoxItem Tag="pcba" Content="PCBA 测试" />
-            </ComboBox>
-        </Grid>
-
-        <Grid Grid.Row="3" Margin="0,0,0,14">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /><ColumnDefinition Width="90" /></Grid.ColumnDefinitions>
-            <TextBlock VerticalAlignment="Center" Text="设备通信网卡" />
-            <ComboBox x:Name="AdapterComboBox" Grid.Column="1" Height="34" Margin="0,0,8,0" DisplayMemberPath="DisplayText" SelectionChanged="AdapterComboBox_OnSelectionChanged" />
-            <Button Grid.Column="2" Content="刷新网卡" Click="RefreshAdapters_Click" />
-        </Grid>
-
-        <Grid Grid.Row="4" Margin="0,0,0,14">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /><ColumnDefinition Width="90" /></Grid.ColumnDefinitions>
-            <TextBlock VerticalAlignment="Center" Text="设备地址" />
-            <TextBox x:Name="ConnectionHostTextBox" Grid.Column="1" Height="34" Margin="0,0,8,0" ToolTip="填写 auto 自动扫描选定网卡，或填写同网段固定 IP" />
-            <Button x:Name="ProbeDeviceButton" Grid.Column="2" Content="探测设备" Click="ProbeDevice_Click" />
-        </Grid>
-
-        <Grid Grid.Row="5" Margin="0,0,0,14">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-            <TextBlock VerticalAlignment="Center" Text="设备端口" />
-            <TextBox x:Name="ConnectionPortTextBox" Grid.Column="1" Height="34" />
-        </Grid>
-
-        <Grid Grid.Row="6" Margin="0,0,0,14">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-            <TextBlock VerticalAlignment="Center" Text="蓝牙串口" />
-            <ComboBox x:Name="PortComboBox" Grid.Column="1" Height="34" IsEditable="True" />
-        </Grid>
-
-        <Grid Grid.Row="7" Margin="0,0,0,14">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-            <TextBlock VerticalAlignment="Center" Text="蓝牙目标名称" />
-            <TextBox x:Name="TargetNameTextBox" Grid.Column="1" Height="34" />
-        </Grid>
-
-        <Grid Grid.Row="8" Margin="0,0,0,14">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-            <TextBlock VerticalAlignment="Center" Text="Wi-Fi SSID" />
-            <TextBox x:Name="WifiSsidTextBox" Grid.Column="1" Height="34" />
-        </Grid>
-
-        <Grid Grid.Row="9" Margin="0,0,0,14">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /><ColumnDefinition Width="90" /></Grid.ColumnDefinitions>
-            <TextBlock VerticalAlignment="Center" Text="固件路径" />
-            <TextBox x:Name="FirmwarePathTextBox" Grid.Column="1" Height="34" Margin="0,0,8,0" />
-            <Button Grid.Column="2" Content="选择文件" Click="BrowseFirmwarePath_Click" />
-        </Grid>
-
-        <Border Grid.Row="10" Padding="14" Background="#F8FAFC" BorderBrush="#D8E0EA" BorderThickness="1" CornerRadius="6">
-            <TextBlock x:Name="SummaryTextBlock" Foreground="#667085" TextWrapping="Wrap" />
-        </Border>
-
-        <StackPanel Grid.Row="11" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
-            <Button Width="90" Margin="0,0,10,0" Content="取消" Click="Cancel_Click" />
-            <Button Width="120" Background="#175CD3" Foreground="White" Content="保存并应用" Click="Save_Click" />
+        Title="测试设置" Width="900" Height="760" MinWidth="820" MinHeight="680"
+        WindowStartupLocation="CenterOwner" FontFamily="Microsoft YaHei UI" Background="#EEF2F6">
+    <Window.Resources>
+        <Style TargetType="TextBox"><Setter Property="Height" Value="32"/><Setter Property="Margin" Value="0,3"/><Setter Property="VerticalContentAlignment" Value="Center"/></Style>
+        <Style TargetType="ComboBox"><Setter Property="Height" Value="32"/><Setter Property="Margin" Value="0,3"/></Style>
+        <Style x:Key="LabelStyle" TargetType="TextBlock"><Setter Property="VerticalAlignment" Value="Center"/><Setter Property="Margin" Value="0,3,12,3"/></Style>
+        <Style x:Key="SectionStyle" TargetType="TextBlock"><Setter Property="FontSize" Value="16"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Foreground" Value="#344054"/><Setter Property="Margin" Value="0,8,0,10"/></Style>
+    </Window.Resources>
+    <Grid Margin="24">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,14">
+            <TextBlock FontSize="24" FontWeight="Bold" Text="测试设置"/>
+            <TextBlock Margin="0,5,0,0" Foreground="#667085" Text="按类别维护测试环境；保存后重启应用使全部配置生效。"/>
         </StackPanel>
+        <TabControl Grid.Row="1" Padding="12">
+            <TabItem Header="基本设置">
+                <Grid Margin="12"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <TextBlock Style="{StaticResource LabelStyle}" Text="当前工作模式"/><ComboBox x:Name="ModeComboBox" Grid.Column="1"><ComboBoxItem Tag="finished_product" Content="整机测试"/><ComboBoxItem Tag="pcba" Content="PCBA 测试"/></ComboBox>
+                    <TextBlock Grid.Row="1" Style="{StaticResource LabelStyle}" Text="蓝牙串口"/><ComboBox x:Name="PortComboBox" Grid.Row="1" Grid.Column="1" IsEditable="True"/>
+                    <TextBlock Grid.Row="2" Style="{StaticResource LabelStyle}" Text="蓝牙目标名称"/><TextBox x:Name="TargetNameTextBox" Grid.Row="2" Grid.Column="1"/>
+                    <TextBlock Grid.Row="3" Style="{StaticResource LabelStyle}" Text="Wi-Fi SSID"/><TextBox x:Name="WifiSsidTextBox" Grid.Row="3" Grid.Column="1"/>
+                </Grid>
+            </TabItem>
+            <TabItem Header="设备通信">
+                <Grid Margin="12"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/><ColumnDefinition Width="100"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <TextBlock Style="{StaticResource LabelStyle}" Text="设备通信网卡"/><ComboBox x:Name="AdapterComboBox" Grid.Column="1" Margin="0,3,8,3" DisplayMemberPath="DisplayText" SelectionChanged="AdapterComboBox_OnSelectionChanged"/><Button Grid.Column="2" Content="刷新网卡" Click="RefreshAdapters_Click"/>
+                    <TextBlock Grid.Row="1" Style="{StaticResource LabelStyle}" Text="设备地址"/><TextBox x:Name="ConnectionHostTextBox" Grid.Row="1" Grid.Column="1" Margin="0,3,8,3" ToolTip="auto 自动扫描选定网卡，或填写同网段固定 IP"/><Button x:Name="ProbeDeviceButton" Grid.Row="1" Grid.Column="2" Content="探测设备" Click="ProbeDevice_Click"/>
+                    <TextBlock Grid.Row="2" Style="{StaticResource LabelStyle}" Text="设备端口"/><TextBox x:Name="ConnectionPortTextBox" Grid.Row="2" Grid.Column="1"/>
+                    <Border Grid.Row="3" Grid.ColumnSpan="3" Margin="0,14,0,0" Padding="14" Background="#F8FAFC" BorderBrush="#D8E0EA" BorderThickness="1" CornerRadius="6"><TextBlock x:Name="SummaryTextBlock" Foreground="#667085" TextWrapping="Wrap"/></Border>
+                </Grid>
+            </TabItem>
+            <TabItem Header="放电参数">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="12">
+                    <TextBlock Foreground="#667085" TextWrapping="Wrap" Text="板端只读取充电状态和电池电压/电流，不会主动关闭充电。检测到非放电状态时，上位机会提示操作员拔除充电器及外设；网线保持连接。"/>
+                    <Expander Header="整机测试" IsExpanded="True" Margin="0,10,0,4"><Grid Margin="16,8"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                        <TextBlock Visibility="Collapsed" Style="{StaticResource LabelStyle}" Text="充电状态节点"/><TextBox Visibility="Collapsed" x:Name="FinishedChargerStatusPathTextBox" Grid.Column="1" Grid.ColumnSpan="3"/>
+                        <TextBlock Visibility="Collapsed" Grid.Row="1" Style="{StaticResource LabelStyle}" Text="电流节点"/><TextBox Visibility="Collapsed" x:Name="FinishedCurrentPathTextBox" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3"/>
+                        <TextBlock Visibility="Collapsed" Grid.Row="2" Style="{StaticResource LabelStyle}" Text="电压节点"/><TextBox Visibility="Collapsed" x:Name="FinishedVoltagePathTextBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3"/>
+                        <TextBlock Visibility="Collapsed" Grid.Row="3" Style="{StaticResource LabelStyle}" Text="要求状态"/><TextBox Visibility="Collapsed" x:Name="FinishedRequiredStatusTextBox" Grid.Row="3" Grid.Column="1"/><TextBlock Grid.Row="3" Grid.Column="2" Style="{StaticResource LabelStyle}" Text="电压范围 (mV)"/><StackPanel Grid.Row="3" Grid.Column="3" Orientation="Horizontal"><TextBox x:Name="FinishedVoltageMinTextBox" Width="80"/><TextBlock Margin="8" VerticalAlignment="Center" Text="至"/><TextBox x:Name="FinishedVoltageMaxTextBox" Width="80"/></StackPanel>
+                        <TextBlock Grid.Row="4" Style="{StaticResource LabelStyle}" Text="放电电流范围 (mA)"/><StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="FinishedCurrentMinTextBox" Width="80"/><TextBlock Margin="8" VerticalAlignment="Center" Text="至"/><TextBox x:Name="FinishedCurrentMaxTextBox" Width="80"/></StackPanel><TextBox Visibility="Collapsed" x:Name="FinishedToleranceTextBox" Grid.Row="4" Grid.Column="3"/>
+                        <TextBlock Grid.Row="5" Style="{StaticResource LabelStyle}" Text="采样时长 (ms)"/><TextBox x:Name="FinishedSamplingDurationTextBox" Grid.Row="5" Grid.Column="1"/><TextBlock Grid.Row="5" Grid.Column="2" Style="{StaticResource LabelStyle}" Text="采样间隔 (ms)"/><TextBox x:Name="FinishedSampleIntervalTextBox" Grid.Row="5" Grid.Column="3"/>
+                        <TextBlock Grid.Row="6" Style="{StaticResource LabelStyle}" Text="最少有效样本"/><TextBox x:Name="FinishedMinimumSamplesTextBox" Grid.Row="6" Grid.Column="1"/><TextBlock Grid.Row="6" Grid.Column="2" Style="{StaticResource LabelStyle}" Text="确认超时 (ms)"/><TextBox x:Name="FinishedConfirmationTimeoutTextBox" Grid.Row="6" Grid.Column="3"/>
+                    </Grid></Expander>
+                    <Expander Header="PCBA 测试" IsExpanded="False" Margin="0,4"><Grid Margin="16,8"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                        <TextBlock Style="{StaticResource LabelStyle}" Text="充电状态节点"/><TextBox x:Name="PcbaChargerStatusPathTextBox" Grid.Column="1" Grid.ColumnSpan="3"/>
+                        <TextBlock Grid.Row="1" Style="{StaticResource LabelStyle}" Text="电流节点"/><TextBox x:Name="PcbaCurrentPathTextBox" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3"/>
+                        <TextBlock Grid.Row="2" Style="{StaticResource LabelStyle}" Text="电压节点"/><TextBox x:Name="PcbaVoltagePathTextBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3"/>
+                        <TextBlock Grid.Row="3" Style="{StaticResource LabelStyle}" Text="要求状态"/><TextBox x:Name="PcbaRequiredStatusTextBox" Grid.Row="3" Grid.Column="1"/><TextBlock Grid.Row="3" Grid.Column="2" Style="{StaticResource LabelStyle}" Text="电压范围 (mV)"/><StackPanel Grid.Row="3" Grid.Column="3" Orientation="Horizontal"><TextBox x:Name="PcbaVoltageMinTextBox" Width="80"/><TextBlock Margin="8" VerticalAlignment="Center" Text="至"/><TextBox x:Name="PcbaVoltageMaxTextBox" Width="80"/></StackPanel>
+                        <TextBlock Grid.Row="4" Style="{StaticResource LabelStyle}" Text="放电电流范围 (mA)"/><StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="PcbaCurrentMinTextBox" Width="80"/><TextBlock Margin="8" VerticalAlignment="Center" Text="至"/><TextBox x:Name="PcbaCurrentMaxTextBox" Width="80"/></StackPanel><TextBlock Grid.Row="4" Grid.Column="2" Style="{StaticResource LabelStyle}" Text="电流波动上限 (mA)"/><TextBox x:Name="PcbaToleranceTextBox" Grid.Row="4" Grid.Column="3"/>
+                        <TextBlock Grid.Row="5" Style="{StaticResource LabelStyle}" Text="采样时长 (ms)"/><TextBox x:Name="PcbaSamplingDurationTextBox" Grid.Row="5" Grid.Column="1"/><TextBlock Grid.Row="5" Grid.Column="2" Style="{StaticResource LabelStyle}" Text="采样间隔 (ms)"/><TextBox x:Name="PcbaSampleIntervalTextBox" Grid.Row="5" Grid.Column="3"/>
+                        <TextBlock Grid.Row="6" Style="{StaticResource LabelStyle}" Text="最少有效样本"/><TextBox x:Name="PcbaMinimumSamplesTextBox" Grid.Row="6" Grid.Column="1"/><TextBlock Grid.Row="6" Grid.Column="2" Style="{StaticResource LabelStyle}" Text="确认超时 (ms)"/><TextBox x:Name="PcbaConfirmationTimeoutTextBox" Grid.Row="6" Grid.Column="3"/>
+                    </Grid></Expander>
+                </StackPanel></ScrollViewer>
+            </TabItem>
+            <TabItem Header="升级与日志">
+                <Grid Margin="12"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/><ColumnDefinition Width="100"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <TextBlock Style="{StaticResource LabelStyle}" Text="固件路径"/><TextBox x:Name="FirmwarePathTextBox" Grid.Column="1" Margin="0,3,8,3"/><Button Grid.Column="2" Content="选择文件" Click="BrowseFirmwarePath_Click"/>
+                    <TextBlock Grid.Row="1" Grid.ColumnSpan="3" Margin="0,16,0,0" Foreground="#667085" TextWrapping="Wrap" Text="日志路径由 logging.filePath 配置；当前配置保存到应用输出目录中的 appsettings.json。"/>
+                </Grid>
+            </TabItem>
+        </TabControl>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0"><Button Width="90" Margin="0,0,10,0" Content="取消" Click="Cancel_Click"/><Button Width="120" Background="#175CD3" Foreground="White" Content="保存并应用" Click="Save_Click"/></StackPanel>
     </Grid>
 </Window>

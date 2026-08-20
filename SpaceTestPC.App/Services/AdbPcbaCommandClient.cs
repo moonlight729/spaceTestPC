@@ -519,21 +519,14 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
 
                     if (string.IsNullOrWhiteSpace(line))
                     {
-                        if (!reconnectAttempted &&
-                            string.Equals(lastEventTestId, "ethernet_led", StringComparison.OrdinalIgnoreCase) &&
-                            string.Equals(lastEventStatus, "running", StringComparison.OrdinalIgnoreCase))
+                        var ethernetLedIndex = FindTestIndex(remainingTests, "ethernet_led");
+                        var disconnectCanBeEthernetLedTransition = ethernetLedIndex >= 0 &&
+                            (string.Equals(lastEventTestId, "ethernet_led", StringComparison.OrdinalIgnoreCase) ||
+                             ethernetLedIndex > 0 &&
+                             string.Equals(lastEventTestId, remainingTests[ethernetLedIndex - 1].Id, StringComparison.OrdinalIgnoreCase));
+                        if (!reconnectAttempted && disconnectCanBeEthernetLedTransition)
                         {
-                            Log?.Invoke($"PCBA session stream closed during ethernet_led running; reconnect will be attempted.");
-                            shouldReconnect = true;
-                            break;
-                        }
-
-                        if (!reconnectAttempted &&
-                            string.Equals(lastEventTestId, "ethernet_led", StringComparison.OrdinalIgnoreCase) &&
-                            (string.Equals(lastEventStatus, "passed", StringComparison.OrdinalIgnoreCase) ||
-                             string.Equals(lastEventStatus, "failed", StringComparison.OrdinalIgnoreCase)))
-                        {
-                            Log?.Invoke($"PCBA session stream closed after ethernet_led {lastEventStatus}; reconnect will continue remaining tests.");
+                            Log?.Invoke($"PCBA session stream closed for ethernet_led link switching after {lastEventTestId} ({lastEventStatus}); reconnect will be attempted.");
                             shouldReconnect = true;
                             break;
                         }
@@ -544,6 +537,11 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
 
                     var testEvent = JsonSerializer.Deserialize<TestSessionEvent>(line, JsonOptions)
                         ?? throw new InvalidOperationException("Failed to parse PCBA test-session event.");
+                    if (string.Equals(testEvent.TestId, "hdmi", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(testEvent.Event, "session.completed", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Log?.Invoke($"PCBA RX: event={testEvent.Event}, test={testEvent.TestId}, status={testEvent.Status}, code={testEvent.ResultCode}, message={testEvent.Message}");
+                    }
                     yield return testEvent;
                     lastEventTestId = testEvent.TestId;
                     lastEventStatus = testEvent.Status;
@@ -582,16 +580,13 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
                 yield break;
             }
 
-            var completedIndex = FindTestIndex(remainingTests, lastEventTestId);
-            var resumeIndex = (string.Equals(lastEventStatus, "passed", StringComparison.OrdinalIgnoreCase) ||
-                               string.Equals(lastEventStatus, "failed", StringComparison.OrdinalIgnoreCase))
-                ? completedIndex < 0 ? -1 : completedIndex + 1
-                : FindTestIndex(remainingTests, lastRunningTestId);
+            var resumeIndex = FindTestIndex(remainingTests, "ethernet_led");
             if (resumeIndex < 0)
             {
                 throw new InvalidOperationException("Unable to resume Ethernet LED session after reconnect.");
             }
             remainingTests = remainingTests.Skip(resumeIndex).ToArray();
+            remainingTests[0] = WithParameter(remainingTests[0], "resumeAfterReconnect", true);
             if (remainingTests.Length == 0)
             {
                 yield break;
@@ -627,11 +622,18 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         };
 
         var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(decision, JsonOptions) + "\n");
+        Log?.Invoke($"PCBA HDMI decision preparing: session={sessionId}, test={testId}, passed={passed}, bytes={bytes.Length}, stream={_activeSessionStream.GetHashCode()}");
         await _sessionWriteGate.WaitAsync(cancellationToken);
         try
         {
             await _activeSessionStream.WriteAsync(bytes, cancellationToken);
             await _activeSessionStream.FlushAsync(cancellationToken);
+            Log?.Invoke($"PCBA HDMI decision flushed: session={sessionId}, test={testId}, passed={passed}");
+        }
+        catch (Exception ex)
+        {
+            Log?.Invoke($"PCBA HDMI decision write failed: session={sessionId}, test={testId}, type={ex.GetType().Name}, message={ex.Message}");
+            throw;
         }
         finally
         {
@@ -983,6 +985,21 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         }
 
         return -1;
+    }
+
+    private static TestPlanItem WithParameter(TestPlanItem item, string key, object? value)
+    {
+        var parameters = new Dictionary<string, object?>(item.Parameters, StringComparer.OrdinalIgnoreCase)
+        {
+            [key] = value
+        };
+        return new TestPlanItem
+        {
+            Id = item.Id,
+            Skip = item.Skip,
+            SkipReason = item.SkipReason,
+            Parameters = parameters
+        };
     }
 
     private static int GetEthernetLedReconnectDelayMs(IReadOnlyList<TestPlanItem> tests)

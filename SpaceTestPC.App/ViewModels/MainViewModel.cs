@@ -15,6 +15,7 @@ public sealed class MainViewModel : ObservableObject
     public event EventHandler<TestItemViewModel>? SequenceAdvanceRequested;
     public event EventHandler<TestSessionRecord>? HistoryRecordFound;
     public event EventHandler<string>? ScanValidationFailed;
+    public event EventHandler? BatteryDischargePreparationRequested;
     private const int RequiredSnLength = 20;
     private static bool UseUnifiedSessionProtocol => true;
     private static readonly IReadOnlyList<TestPlanItem> AllTestPlan =
@@ -96,6 +97,7 @@ public sealed class MainViewModel : ObservableObject
     private bool _isMockSession;
     private string _historySummary = string.Empty;
     private string? _manualDecisionTestId;
+    private string? _manualDecisionSessionId;
     private IPcbaCommandClient? _activeSessionClient;
     private readonly HashSet<string> _automaticDecisionTests = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _submittedManualDecisionTests = new(StringComparer.OrdinalIgnoreCase);
@@ -123,9 +125,11 @@ public sealed class MainViewModel : ObservableObject
     private bool _deviceApplicationVersionAvailable;
     private bool _applicationUpgradeCheckCompleted;
     private bool _applicationUpgradeCheckInProgress;
+    private string _connectionStatus = "连接：未连接";
     private string _hostApplicationMd5 = string.Empty;
     private string _localUpgradeBinaryPath = string.Empty;
     private bool _upgradePackageReady;
+    private bool _batteryPreparationPromptActive;
 
     public MainViewModel(
         IScannerService scannerService,
@@ -395,6 +399,7 @@ public sealed class MainViewModel : ObservableObject
     }
     public string StatusBarDatabase => "数据库：正常";
     public string StatusBarLog => "日志：正常";
+    public string StatusBarConnection => _connectionStatus;
     public string StatusBarCurrentTime => DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss");
     public int TestOverviewColumns { get; }
     public string SnPolicyModeName => _allowSnMismatchForDebug ? "开发模式" : "生产模式";
@@ -512,7 +517,7 @@ public sealed class MainViewModel : ObservableObject
             OperatorInstruction = BuildInstructionForSelectedResult(result);
         }
     }
-    public bool IsManualDecisionVisible => _manualDecisionTestId == SelectedTestResult?.TestId;
+    public bool IsManualDecisionVisible => !string.IsNullOrWhiteSpace(_manualDecisionTestId);
     public bool IsKeyTestDetailVisible => SelectedTestResult?.TestId == "keys";
     public string ManualDecisionPrompt => _manualDecisionTestId switch
     {
@@ -1067,6 +1072,7 @@ public sealed class MainViewModel : ObservableObject
         var client = _pcbaCommandClientFactory.Create(_connectionMode);
         _activeSessionClient = client;
         var finalVerdict = "Fail";
+        var communicationInterrupted = false;
         BoardState? state = null;
 
         try
@@ -1113,8 +1119,9 @@ public sealed class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            communicationInterrupted = true;
             LastResult = "Stage 1 failed";
-            OperatorInstruction = "通信异常，当前记录将保存。请重新连接 OTG/ADB 后继续扫描下一块。";
+            OperatorInstruction = "设备通信中断，正在保存当前记录。请检查网线连接；本次无法继续时请重新测试。";
             AppendLog($"Session exception: {ex.GetType().Name}: {ex.Message}");
         }
         finally
@@ -1124,7 +1131,10 @@ public sealed class MainViewModel : ObservableObject
 
         finalVerdict = ResolveFinalVerdict(finalVerdict);
         LastResult = finalVerdict == "Pass" ? "Stage 1 passed" : "Stage 1 failed";
-        OperatorInstruction = BuildSessionCompletionInstruction(finalVerdict);
+        if (!communicationInterrupted)
+        {
+            OperatorInstruction = BuildSessionCompletionInstruction(finalVerdict);
+        }
 
         var record = new TestSessionRecord
         {
@@ -1565,6 +1575,10 @@ public sealed class MainViewModel : ObservableObject
         }
 
         var result = TestResults.FirstOrDefault(item => item.TestId == testEvent.TestId);
+        if (testEvent.TestId == "hdmi")
+        {
+            AppendLog($"HDMI event applied: status={testEvent.Status}, code={testEvent.ResultCode}, message={testEvent.Message}, session={SessionId}, activeClient={_activeSessionClient?.GetType().Name ?? "null"}");
+        }
         result?.Apply(testEvent);
         if (result is not null && ShouldSelectTestResult(testEvent, result))
         {
@@ -1611,6 +1625,13 @@ public sealed class MainViewModel : ObservableObject
             _submittedManualDecisionTests.Remove(testEvent.TestId);
         }
 
+        if (testEvent.Status == "running" &&
+            (testEvent.TestId is "hdmi" or "lcd" or "ethernet_led" or "reset_button" ||
+             testEvent.TestId == "indicator_led" && _testProfileMode == "finished_product"))
+        {
+            _manualDecisionSessionId = SessionId;
+        }
+
         _manualDecisionTestId = testEvent.Status == "running" &&
             !_submittedManualDecisionTests.Contains(testEvent.TestId) &&
             (testEvent.TestId is "hdmi" or "lcd" or "ethernet_led" or "reset_button" ||
@@ -1619,6 +1640,10 @@ public sealed class MainViewModel : ObservableObject
             : testEvent.Status is "passed" or "failed" && testEvent.TestId == _manualDecisionTestId
                     ? null
                     : _manualDecisionTestId;
+        if (_manualDecisionTestId is null)
+        {
+            _manualDecisionSessionId = null;
+        }
         RaisePropertyChanged(nameof(IsManualDecisionVisible));
         RaisePropertyChanged(nameof(ManualDecisionPrompt));
         RaisePropertyChanged(nameof(ManualPassButtonText));
@@ -2518,154 +2543,37 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    private async void HandleBatteryDischargeReport(TestSessionEvent testEvent)
+    private void HandleBatteryDischargeReport(TestSessionEvent testEvent)
     {
-        if (_activeSessionClient is null || !GetDataBoolean(testEvent.Data, "readyForHostDecision") || !_automaticDecisionTests.Add(testEvent.TestId)) return;
-        var parameters = _testPlan.First(item => item.Id == testEvent.TestId).Parameters;
-        var sampleIntervalMs = Math.Max(100, GetParameterInt(parameters, "sampleIntervalMs", 500));
-        var samplingDurationMs = Math.Max(sampleIntervalMs, GetParameterInt(parameters, "samplingDurationMs", 10000));
-        var stabilityToleranceMa = Math.Max(0, GetParameterInt(parameters, "stabilityToleranceMa", 80));
-        var voltageMinMv = GetParameterInt(parameters, "dischargeVoltageMinMv", 0);
-        var voltageMaxMv = GetParameterInt(parameters, "dischargeVoltageMaxMv", int.MaxValue);
-        var currentMinMv = GetParameterInt(parameters, "dischargeCurrentMinMa", 0);
-        var currentMaxMv = GetParameterInt(parameters, "dischargeCurrentMaxMa", int.MaxValue);
-
-        if (_jk5506Service is null || !GetDataBoolean(testEvent.Data, "chargeControlOk"))
+        var phase = GetDataString(testEvent.Data, "phase", string.Empty);
+        if (phase == "wait_unplug_charger" && GetDataBoolean(testEvent.Data, "requiresOperatorConfirmation"))
         {
-            var reason = _jk5506Service is null ? "battery_simulator_not_configured" : "charge_disable_failed";
-            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, false, reason);
-            AppendLog($"Battery discharge automatic decision: FAIL ({reason})");
+            if (_batteryPreparationPromptActive) return;
+            _batteryPreparationPromptActive = true;
+            OperatorInstruction = "请拔掉充电器、相机、HDMI、USB 等外设，网线保持连接，然后在弹窗中确认。";
+            AppendLog($"Battery discharge preparation required: chargerStatus={GetDataString(testEvent.Data, "chargerStatus", "unknown")}");
+            BatteryDischargePreparationRequested?.Invoke(this, EventArgs.Empty);
             return;
         }
 
-        AppendLog("Battery discharge ready. JK5506 will sample voltage/current for 10 seconds and then return host decision.");
+        if (phase == "sampling")
+        {
+            OperatorInstruction = $"板放电自动检测中：{GetDataInt(testEvent.Data, "voltageMv")}mV / {GetDataInt(testEvent.Data, "dischargeCurrentMa")}mA";
+        }
+    }
 
-        var deadline = DateTimeOffset.Now.AddMilliseconds(samplingDurationMs);
-        var samples = new List<(int VoltageMv, int CurrentMa)>();
-
+    public async Task ConfirmBatteryDischargePreparationAsync()
+    {
         try
         {
-            while (DateTimeOffset.Now < deadline)
-            {
-                var voltageMv = await _jk5506Service.ReadOutputVoltageMvAsync();
-                var currentMa = await _jk5506Service.ReadOutputCurrentMaAsync();
-                samples.Add((voltageMv, currentMa));
-
-                var elapsedMs = Math.Min(samplingDurationMs, (int)(DateTimeOffset.Now - testEvent.Timestamp).TotalMilliseconds);
-                _hostDecisionData[testEvent.TestId] = new Dictionary<string, object?>
-                {
-                    ["phase"] = "sampling",
-                    ["chargeControlCommand"] = GetDataString(testEvent.Data, "chargeControlCommand", "disable_charge"),
-                    ["chargeControlOk"] = GetDataBoolean(testEvent.Data, "chargeControlOk"),
-                    ["pmicCommunicationOk"] = GetDataBoolean(testEvent.Data, "pmicCommunicationOk"),
-                    ["readyForHostDecision"] = GetDataBoolean(testEvent.Data, "readyForHostDecision"),
-                    ["samplingDurationMs"] = samplingDurationMs,
-                    ["elapsedMs"] = elapsedMs,
-                    ["sampleCount"] = samples.Count,
-                    ["dischargeVoltageMv"] = voltageMv,
-                    ["dischargeCurrentMa"] = currentMa,
-                    ["dischargeVoltageMinMv"] = voltageMinMv,
-                    ["dischargeVoltageMaxMv"] = voltageMaxMv,
-                    ["dischargeCurrentMinMa"] = currentMinMv,
-                    ["dischargeCurrentMaxMa"] = currentMaxMv,
-                    ["stabilityToleranceMa"] = stabilityToleranceMa
-                };
-                ApplyTestReport(new TestSessionEvent
-                {
-                    Event = "test.report",
-                    TestId = testEvent.TestId,
-                    Status = "running",
-                    ResultCode = 0,
-                    Message = $"板放电测试进行中，已采样 {samples.Count} 次",
-                    Timestamp = testEvent.Timestamp,
-                    Data = new Dictionary<string, object?>
-                    {
-                        ["chargeControlCommand"] = GetDataString(testEvent.Data, "chargeControlCommand", "disable_charge"),
-                        ["chargeControlOk"] = GetDataBoolean(testEvent.Data, "chargeControlOk"),
-                        ["pmicCommunicationOk"] = GetDataBoolean(testEvent.Data, "pmicCommunicationOk"),
-                        ["samplingDurationMs"] = samplingDurationMs,
-                        ["elapsedMs"] = elapsedMs,
-                        ["sampleCount"] = samples.Count,
-                        ["dischargeVoltageMv"] = voltageMv,
-                        ["dischargeCurrentMa"] = currentMa,
-                        ["dischargeVoltageMinMv"] = voltageMinMv,
-                        ["dischargeVoltageMaxMv"] = voltageMaxMv,
-                        ["dischargeCurrentMinMa"] = currentMinMv,
-                        ["dischargeCurrentMaxMa"] = currentMaxMv,
-                        ["stabilityToleranceMa"] = stabilityToleranceMa
-                    }
-                });
-
-                await Task.Delay(sampleIntervalMs);
-            }
-
-            var avgVoltageMv = (int)Math.Round(samples.Average(item => item.VoltageMv));
-            var rawCurrents = samples.Select(item => item.CurrentMa).OrderBy(value => value).ToArray();
-            var filteredCurrents = FilterStableCurrentSamples(rawCurrents);
-            var medianCurrentMa = filteredCurrents[filteredCurrents.Length / 2];
-
-            var avgCurrentMa = (int)Math.Round(filteredCurrents.Average());
-            var measuredCurrentMin = filteredCurrents.Min();
-            var measuredCurrentMax = filteredCurrents.Max();
-            var rippleMa = measuredCurrentMax - measuredCurrentMin;
-            var outlierCount = rawCurrents.Length - filteredCurrents.Length;
-
-            var passed = avgVoltageMv >= voltageMinMv &&
-                avgVoltageMv <= voltageMaxMv &&
-                avgCurrentMa >= currentMinMv &&
-                avgCurrentMa <= currentMaxMv;
-
-            var failureReason = passed
-                ? "discharge_current_in_range"
-                : avgVoltageMv < voltageMinMv ? "discharge_voltage_too_low"
-                : avgVoltageMv > voltageMaxMv ? "discharge_voltage_too_high"
-                : avgCurrentMa < currentMinMv ? "discharge_current_too_low"
-                : avgCurrentMa > currentMaxMv ? "discharge_current_too_high"
-                : "discharge_current_out_of_range";
-
-            _hostDecisionData[testEvent.TestId] = new Dictionary<string, object?>
-            {
-                ["phase"] = "sampling_completed",
-                ["chargeControlCommand"] = GetDataString(testEvent.Data, "chargeControlCommand", "disable_charge"),
-                ["chargeControlOk"] = GetDataBoolean(testEvent.Data, "chargeControlOk"),
-                ["pmicCommunicationOk"] = GetDataBoolean(testEvent.Data, "pmicCommunicationOk"),
-                ["readyForHostDecision"] = GetDataBoolean(testEvent.Data, "readyForHostDecision"),
-                ["samplingDurationMs"] = samplingDurationMs,
-                ["elapsedMs"] = samplingDurationMs,
-                ["sampleCount"] = samples.Count,
-                ["validSampleCount"] = filteredCurrents.Length,
-                ["outlierSampleCount"] = outlierCount,
-                ["dischargeVoltageMv"] = avgVoltageMv,
-                ["dischargeCurrentMa"] = avgCurrentMa,
-                ["measuredCurrentMinMa"] = measuredCurrentMin,
-                ["measuredCurrentMaxMa"] = measuredCurrentMax,
-                ["currentRippleMa"] = rippleMa,
-                ["rawCurrentMedianMa"] = medianCurrentMa,
-                ["dischargeVoltageMinMv"] = voltageMinMv,
-                ["dischargeVoltageMaxMv"] = voltageMaxMv,
-                ["dischargeCurrentMinMa"] = currentMinMv,
-                ["dischargeCurrentMaxMa"] = currentMaxMv,
-                ["stabilityToleranceMa"] = stabilityToleranceMa,
-                ["failureReason"] = failureReason
-            };
-
-            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, passed, failureReason);
-            AppendLog($"Battery discharge automatic decision: {(passed ? "PASS" : "FAIL")} ({failureReason}), voltage={avgVoltageMv}mV, current={avgCurrentMa}mA, ripple={rippleMa}mA, outliers={outlierCount}");
+            if (_activeSessionClient is null) return;
+            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, "battery_management", true, "operator_confirmed_external_devices_removed");
+            AppendLog("Battery discharge preparation confirmed; board will recheck charger status.");
+            OperatorInstruction = "正在重新检查充电状态，确认进入放电后将自动采样。";
         }
-        catch (Exception ex)
+        finally
         {
-            _hostDecisionData[testEvent.TestId] = new Dictionary<string, object?>
-            {
-                ["phase"] = "sampling_failed",
-                ["chargeControlCommand"] = GetDataString(testEvent.Data, "chargeControlCommand", "disable_charge"),
-                ["chargeControlOk"] = GetDataBoolean(testEvent.Data, "chargeControlOk"),
-                ["pmicCommunicationOk"] = GetDataBoolean(testEvent.Data, "pmicCommunicationOk"),
-                ["readyForHostDecision"] = GetDataBoolean(testEvent.Data, "readyForHostDecision"),
-                ["samplingDurationMs"] = samplingDurationMs,
-                ["failureReason"] = "jk5506_read_error"
-            };
-            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, false, "jk5506_read_error");
-            AppendLog($"Battery discharge measurement failed: {ex.Message}");
+            _batteryPreparationPromptActive = false;
         }
     }
 
@@ -2885,7 +2793,29 @@ public sealed class MainViewModel : ObservableObject
         if (IsQueryPage) await RefreshQueryRecordsAsync();
     }
 
-    public void AppendExternalLog(string message) => AppendLog(message);
+    public void AppendExternalLog(string message)
+    {
+        if (message.Contains("stream closed", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("connect failed", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("connection", StringComparison.OrdinalIgnoreCase) && message.Contains("failed", StringComparison.OrdinalIgnoreCase))
+        {
+            _connectionStatus = "连接：已断开";
+            RaisePropertyChanged(nameof(StatusBarConnection));
+        }
+        else if (message.Contains("reconnect scheduled", StringComparison.OrdinalIgnoreCase) ||
+                 message.Contains("connect attempt", StringComparison.OrdinalIgnoreCase))
+        {
+            _connectionStatus = "连接：重连中";
+            RaisePropertyChanged(nameof(StatusBarConnection));
+        }
+        else if (message.Contains("TCP connect ok", StringComparison.OrdinalIgnoreCase) ||
+                 message.Contains("connected", StringComparison.OrdinalIgnoreCase))
+        {
+            _connectionStatus = "连接：已连接";
+            RaisePropertyChanged(nameof(StatusBarConnection));
+        }
+        AppendLog(message);
+    }
 
     public void ClearScannerInput() => ScannerInput = string.Empty;
 
@@ -3031,6 +2961,14 @@ public sealed class MainViewModel : ObservableObject
         var result = configuration.TestPlan.TestParameters.TryGetValue(testId, out var parameters)
             ? parameters.ToDictionary(pair => pair.Key, pair => (object?)pair.Value, StringComparer.OrdinalIgnoreCase)
             : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        if (configuration.TestModes.TryGetValue(mode, out var modeConfiguration) &&
+            modeConfiguration.TestParameters.TryGetValue(testId, out var modeParameters))
+        {
+            foreach (var parameter in modeParameters)
+            {
+                result[parameter.Key] = parameter.Value;
+            }
+        }
         result["mode"] = mode;
         if (testId == "bluetooth" && !string.IsNullOrWhiteSpace(configuration.BluetoothBroadcaster.BroadcastName))
         {
@@ -3090,6 +3028,7 @@ public sealed class MainViewModel : ObservableObject
     private void ResetTestItems()
     {
         _manualDecisionTestId = null;
+        _manualDecisionSessionId = null;
         _automaticDecisionTests.Clear();
         _submittedManualDecisionTests.Clear();
         _hostDecisionData.Clear();
@@ -3126,17 +3065,21 @@ public sealed class MainViewModel : ObservableObject
     {
         if (!IsManualDecisionVisible || _activeSessionClient is null)
         {
+            AppendLog($"HDMI decision ignored: visible={IsManualDecisionVisible}, test={_manualDecisionTestId ?? "null"}, client={_activeSessionClient?.GetType().Name ?? "null"}, session={SessionId}");
             return;
         }
 
         var testId = _manualDecisionTestId!;
+        var decisionSessionId = _manualDecisionSessionId ?? SessionId;
         var displayName = GetTestDisplayName(testId);
         OperatorInstruction = passed ? $"{displayName} 已确认通过，继续后续测试。" : $"{displayName} 已确认失败，记录失败并继续后续测试。";
         AppendLog($"{testId} manual decision: {(passed ? "PASS" : "FAIL")}");
 
         try
         {
-            await _activeSessionClient.SubmitOperatorDecisionAsync(SessionId, testId, passed);
+            AppendLog($"{testId} operator decision sending: session={decisionSessionId}, passed={passed}");
+            await _activeSessionClient.SubmitOperatorDecisionAsync(decisionSessionId, testId, passed);
+            AppendLog($"{testId} operator decision written: session={decisionSessionId}");
             _manualDecisionTestId = null;
             _submittedManualDecisionTests.Add(testId);
             RaisePropertyChanged(nameof(IsManualDecisionVisible));

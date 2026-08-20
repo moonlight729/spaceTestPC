@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 static int send_failure(int fd, const char *session_id, int code, const char *message);
 static int send_ok_response(int fd, const char *session_id, const char *message);
@@ -159,7 +160,12 @@ int session_manager_handle_client(int client_fd, const struct app_config *config
 {
     char line[PROTOCOL_MAX_LINE];
     struct protocol_request request;
-    if (protocol_read_line(client_fd, line, sizeof(line)) <= 0) return -1;
+    int read_rc = protocol_read_line(client_fd, line, sizeof(line));
+    if (read_rc <= 0) {
+        fprintf(stderr, "[SESSION] initial read failed fd=%d rc=%d errno=%d\n", client_fd, read_rc, errno);
+        return -1;
+    }
+    fprintf(stderr, "[SESSION] request fd=%d bytes=%zu\n", client_fd, strlen(line));
     if (protocol_parse_request(line, &request) != 0) {
         return send_failure(client_fd, "", 1000, "Invalid protocol request");
     }
@@ -184,7 +190,9 @@ int session_manager_handle_client(int client_fd, const struct app_config *config
     if (strcmp(request.command_group, "sys") == 0 && strcmp(request.command, "sync_session_summary") == 0) {
         return handle_sync_session_summary(client_fd, &request, line, config);
     }
-    if (strcmp(request.command_group, "session") == 0 && strcmp(request.command, "start") == 0)
+    if (strcmp(request.command_group, "session") == 0 && strcmp(request.command, "start") == 0) {
+        fprintf(stderr, "[SESSION] start session=%s fd=%d\n", request.session_id, client_fd);
         return test_runner_run_plan(client_fd, request.session_id, line, config);
+    }
     return send_failure(client_fd, request.session_id, 1002, "Unsupported command");
 }

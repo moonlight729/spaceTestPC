@@ -1,7 +1,10 @@
 using System.Net;
+using System.IO;
 using System.IO.Ports;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Media3D;
 using Microsoft.Win32;
 using SpaceTestPC.App.Services;
 
@@ -35,6 +38,8 @@ public partial class EnvironmentSettingsWindow : Window
         FirmwarePathTextBox.Text = _current.FirmwarePath;
         ConnectionHostTextBox.Text = string.IsNullOrWhiteSpace(_current.ConnectionHost) ? "auto" : _current.ConnectionHost;
         ConnectionPortTextBox.Text = _current.ConnectionPort.ToString();
+        LoadBatterySettings("Finished", _current.FinishedProductBattery);
+        LoadBatterySettings("Pcba", _current.PcbaBattery);
 
         LoadAdapters(_current.AdapterId, _current.LocalIp);
         UpdateSummary();
@@ -163,6 +168,8 @@ public partial class EnvironmentSettingsWindow : Window
 
         try
         {
+            var finishedBattery = ReadBatterySettings("Finished", "整机");
+            var pcbaBattery = ReadBatterySettings("Pcba", "PCBA");
             _service.Save(
                 mode,
                 PortComboBox.Text,
@@ -171,7 +178,9 @@ public partial class EnvironmentSettingsWindow : Window
                 FirmwarePathTextBox.Text,
                 adapter,
                 host,
-                connectionPort);
+                connectionPort,
+                finishedBattery,
+                pcbaBattery);
             MessageBox.Show(this, "配置已保存。请重启应用，使网卡绑定和探测范围完全生效。", "保存成功", MessageBoxButton.OK, MessageBoxImage.Information);
             DialogResult = true;
         }
@@ -179,5 +188,79 @@ public partial class EnvironmentSettingsWindow : Window
         {
             MessageBox.Show(this, $"保存配置失败：{exception.Message}", "保存失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    private void LoadBatterySettings(string prefix, BatteryDischargeSettings settings)
+    {
+        FindTextBox($"{prefix}ChargerStatusPathTextBox").Text = settings.ChargerStatusPath;
+        FindTextBox($"{prefix}CurrentPathTextBox").Text = settings.CurrentPath;
+        FindTextBox($"{prefix}VoltagePathTextBox").Text = settings.VoltagePath;
+        FindTextBox($"{prefix}RequiredStatusTextBox").Text = settings.RequiredStatus;
+        FindTextBox($"{prefix}VoltageMinTextBox").Text = settings.VoltageMinMv.ToString();
+        FindTextBox($"{prefix}VoltageMaxTextBox").Text = settings.VoltageMaxMv.ToString();
+        FindTextBox($"{prefix}CurrentMinTextBox").Text = settings.CurrentMinMa.ToString();
+        FindTextBox($"{prefix}CurrentMaxTextBox").Text = settings.CurrentMaxMa.ToString();
+        FindTextBox($"{prefix}SamplingDurationTextBox").Text = settings.SamplingDurationMs.ToString();
+        FindTextBox($"{prefix}SampleIntervalTextBox").Text = settings.SampleIntervalMs.ToString();
+        FindTextBox($"{prefix}MinimumSamplesTextBox").Text = settings.MinimumValidSamples.ToString();
+        FindTextBox($"{prefix}ToleranceTextBox").Text = settings.CurrentStabilityToleranceMa.ToString();
+        FindTextBox($"{prefix}ConfirmationTimeoutTextBox").Text = settings.OperatorConfirmationTimeoutMs.ToString();
+    }
+
+    private BatteryDischargeSettings ReadBatterySettings(string prefix, string displayName)
+    {
+        var statusPath = RequiredText(prefix, "ChargerStatusPath", displayName);
+        var currentPath = RequiredText(prefix, "CurrentPath", displayName);
+        var voltagePath = RequiredText(prefix, "VoltagePath", displayName);
+        var requiredStatus = RequiredText(prefix, "RequiredStatus", displayName);
+        var voltageMin = PositiveInt(prefix, "VoltageMin", displayName);
+        var voltageMax = PositiveInt(prefix, "VoltageMax", displayName);
+        var currentMin = PositiveInt(prefix, "CurrentMin", displayName);
+        var currentMax = PositiveInt(prefix, "CurrentMax", displayName);
+        if (voltageMin >= voltageMax || currentMin >= currentMax)
+            throw new InvalidDataException($"{displayName}放电参数的最小值必须小于最大值。");
+
+        return new BatteryDischargeSettings(
+            statusPath, currentPath, voltagePath, requiredStatus,
+            voltageMin, voltageMax, currentMin, currentMax,
+            PositiveInt(prefix, "SamplingDuration", displayName),
+            PositiveInt(prefix, "SampleInterval", displayName),
+            PositiveInt(prefix, "MinimumSamples", displayName),
+            PositiveInt(prefix, "Tolerance", displayName),
+            PositiveInt(prefix, "ConfirmationTimeout", displayName));
+    }
+
+    private string RequiredText(string prefix, string field, string displayName)
+    {
+        var value = FindTextBox($"{prefix}{field}TextBox").Text.Trim();
+        return string.IsNullOrWhiteSpace(value)
+            ? throw new InvalidDataException($"{displayName}放电参数不能为空。")
+            : value;
+    }
+
+    private int PositiveInt(string prefix, string field, string displayName) =>
+        int.TryParse(FindTextBox($"{prefix}{field}TextBox").Text, out var value) && value > 0
+            ? value
+            : throw new InvalidDataException($"{displayName}放电参数必须是正整数。");
+
+    private TextBox FindTextBox(string name) =>
+        FindElement<TextBox>(this, name) ?? throw new InvalidOperationException($"未找到设置控件 {name}。");
+
+    private static T? FindElement<T>(DependencyObject parent, string name) where T : FrameworkElement
+    {
+        if (parent is T current && string.Equals(current.Name, name, StringComparison.Ordinal)) return current;
+        foreach (var logicalChild in LogicalTreeHelper.GetChildren(parent).OfType<DependencyObject>())
+        {
+            var nested = FindElement<T>(logicalChild, name);
+            if (nested is not null) return nested;
+        }
+        if (parent is not Visual && parent is not Visual3D) return null;
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, index);
+            var nested = FindElement<T>(child, name);
+            if (nested is not null) return nested;
+        }
+        return null;
     }
 }

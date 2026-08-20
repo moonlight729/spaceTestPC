@@ -348,6 +348,8 @@
                     <TextBlock Foreground="#667085" Text="{Binding StatusBarSn}" />
                     <TextBlock Margin="14,0" Foreground="#CBD5E1" Text="|" />
                     <TextBlock Foreground="#667085" Text="{Binding StatusBarElapsedTime}" />
+                    <TextBlock Margin="14,0" Foreground="#CBD5E1" Text="|" />
+                    <TextBlock Foreground="#175CD3" FontWeight="SemiBold" Text="{Binding StatusBarConnection}" />
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Foreground="#15803D" Text="{Binding StatusBarDatabase}" />
