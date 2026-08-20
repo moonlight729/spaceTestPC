@@ -885,7 +885,7 @@ static int run_ddr_pattern_test(int stress_mib, int loops, char *failure_reason,
     return 0;
 }
 
-static int run_emmc_ddr(int fd, const char *test_start, const char *test_end)
+static int run_emmc_ddr(int fd, const char *test_id, const char *test_start, const char *test_end)
 {
     char emmc_device[64] = "mmcblk0";
     char emmc_test_dir[160] = "/userdata/factory_test";
@@ -923,12 +923,14 @@ static int run_emmc_ddr(int fd, const char *test_start, const char *test_end)
              "\"emmcTestFileMiB\":%d,\"ddrMinMemTotalMiB\":%d,\"ddrStressMiB\":%d,\"ddrStressLoops\":%d}",
              emmc_device, emmc_min_capacity_mib, emmc_test_file_mib,
              ddr_min_memtotal_mib, ddr_stress_mib, ddr_stress_loops);
-    send_report(fd, "emmc_ddr", "running", 0, "Running eMMC and DDR device test", data);
+    send_report(fd, test_id, "running", 0, strcmp(test_id, "emmc") == 0 ? "Running eMMC device test" : "Running DDR device test", data);
+
+    if (strcmp(test_id, "ddr") == 0) goto ddr_start;
 
     snprintf(path, sizeof(path), "/sys/block/%s/size", emmc_device);
     if (read_ull_file(path, &emmc_sectors) != 0) {
         snprintf(data, sizeof(data), "{\"phase\":\"emmc_info\",\"emmcDevice\":\"%s\",\"failureReason\":\"emmc_device_not_found\"}", emmc_device);
-        send_report(fd, "emmc_ddr", "failed", 5101, "eMMC block device was not found", data);
+        send_report(fd, test_id, "failed", 5101, "eMMC block device was not found", data);
         return -1;
     }
     emmc_capacity_mib = emmc_sectors / 2048ULL;
@@ -945,7 +947,7 @@ static int run_emmc_ddr(int fd, const char *test_start, const char *test_end)
                  "\"emmcManfid\":\"%s\",\"emmcCapacityMiB\":%llu,\"emmcMinCapacityMiB\":%llu,"
                  "\"failureReason\":\"emmc_capacity_too_small\"}",
                  emmc_device, emmc_name, emmc_cid, emmc_manfid, emmc_capacity_mib, emmc_min_capacity_mib);
-        send_report(fd, "emmc_ddr", "failed", 5102, "eMMC capacity is below threshold", data);
+        send_report(fd, test_id, "failed", 5102, "eMMC capacity is below threshold", data);
         return -1;
     }
 
@@ -956,13 +958,19 @@ static int run_emmc_ddr(int fd, const char *test_start, const char *test_end)
                  "{\"phase\":\"emmc_rw\",\"emmcDevice\":\"%s\",\"emmcName\":\"%s\",\"emmcCapacityMiB\":%llu,"
                  "\"emmcTestFile\":\"%s\",\"emmcTestFileMiB\":%d,\"failureReason\":\"%s\"}",
                  emmc_device, emmc_name, emmc_capacity_mib, emmc_test_file, emmc_test_file_mib, failure_reason);
-        send_report(fd, "emmc_ddr", "failed", 5103, "eMMC read/write verify failed", data);
+        send_report(fd, test_id, "failed", 5103, "eMMC read/write verify failed", data);
         return -1;
     }
 
+    if (strcmp(test_id, "emmc") == 0) {
+        snprintf(data, sizeof(data), "{\"phase\":\"completed\",\"emmcDevice\":\"%s\",\"emmcName\":\"%s\",\"emmcCapacityMiB\":%llu,\"emmcTestFileMiB\":%d}", emmc_device, emmc_name, emmc_capacity_mib, emmc_test_file_mib);
+        return send_report(fd, test_id, "passed", 0, "eMMC device test passed", data);
+    }
+
+ddr_start:
     if (read_memtotal_mib(&ddr_memtotal_mib) != 0) {
         snprintf(data, sizeof(data), "{\"phase\":\"ddr_info\",\"failureReason\":\"ddr_meminfo_unavailable\"}");
-        send_report(fd, "emmc_ddr", "failed", 5111, "DDR memory information is unavailable", data);
+        send_report(fd, test_id, "failed", 5111, "DDR memory information is unavailable", data);
         return -1;
     }
     if (ddr_memtotal_mib < (unsigned long long)ddr_min_memtotal_mib) {
@@ -970,7 +978,7 @@ static int run_emmc_ddr(int fd, const char *test_start, const char *test_end)
                  "{\"phase\":\"ddr_capacity\",\"ddrMemTotalMiB\":%llu,\"ddrMinMemTotalMiB\":%d,"
                  "\"failureReason\":\"ddr_capacity_too_small\"}",
                  ddr_memtotal_mib, ddr_min_memtotal_mib);
-        send_report(fd, "emmc_ddr", "failed", 5112, "DDR capacity is below threshold", data);
+        send_report(fd, test_id, "failed", 5112, "DDR capacity is below threshold", data);
         return -1;
     }
 
@@ -983,7 +991,7 @@ static int run_emmc_ddr(int fd, const char *test_start, const char *test_end)
                  "{\"phase\":\"ddr_stress\",\"ddrMemTotalMiB\":%llu,\"ddrStressMiB\":%d,"
                  "\"ddrStressLoops\":%d,\"failureReason\":\"%s\"}",
                  ddr_memtotal_mib, ddr_stress_mib, ddr_stress_loops, failure_reason);
-        send_report(fd, "emmc_ddr", "failed", 5113, "DDR pattern stress test failed", data);
+        send_report(fd, test_id, "failed", 5113, "DDR pattern stress test failed", data);
         return -1;
     }
     if (clock_gettime(CLOCK_MONOTONIC, &ddr_end_ts) == 0 && ddr_start_ts.tv_sec != 0) {
@@ -1004,7 +1012,7 @@ static int run_emmc_ddr(int fd, const char *test_start, const char *test_end)
              emmc_capacity_mib, emmc_min_capacity_mib, emmc_test_file_mib,
              ddr_memtotal_mib, ddr_min_memtotal_mib, ddr_stress_mib, ddr_stress_loops,
              ddr_processed_mib, ddr_elapsed_ms, ddr_throughput_mib_per_sec);
-    return send_report(fd, "emmc_ddr", "passed", 0, "eMMC and DDR device test passed", data);
+    return send_report(fd, test_id, "passed", 0, "DDR device test passed", data);
 }
 
 static int run_bluetooth(int fd, const struct app_config *config, const char *test_start, const char *test_end)
@@ -2262,6 +2270,8 @@ static int run_camera(int fd, const struct app_config *config, const char *test_
     request.require_exposure_interrupt = param_bool(test_start, test_end, "requireExposureInterrupt", request.require_exposure_interrupt);
     request.require_pwm_pulse = param_bool(test_start, test_end, "requirePwmPulse", request.require_pwm_pulse);
     request.pwm_min_pulse_delta = param_int(test_start, test_end, "minPwmPulseDelta", request.pwm_min_pulse_delta);
+    if (request.stream_frame_count <= 0) request.stream_frame_count = 90;
+    if (request.pwm_min_pulse_delta <= 0) request.pwm_min_pulse_delta = 86;
     wait_camera_timeout_ms = param_int(test_start, test_end, "waitCameraTimeoutMs", wait_camera_timeout_ms);
     progress_report_interval_ms = param_int(test_start, test_end, "progressReportIntervalMs", progress_report_interval_ms);
     if (progress_report_interval_ms <= 0) progress_report_interval_ms = 1000;
@@ -2380,7 +2390,7 @@ static int run_one_test(int fd, const char *test_id, const struct app_config *co
     char test_mode[32] = "pcba";
     param_string(test_start, test_end, "mode", test_mode, sizeof(test_mode));
     if (strcmp(test_id, "board_state") == 0) return run_board_state(fd);
-    if (strcmp(test_id, "emmc_ddr") == 0) return run_emmc_ddr(fd, test_start, test_end);
+    if (strcmp(test_id, "emmc") == 0 || strcmp(test_id, "ddr") == 0) return run_emmc_ddr(fd, test_id, test_start, test_end);
     if (strcmp(test_id, "hdmi") == 0) return run_manual_observation(fd, "hdmi", "HDMI", test_start, test_end);
     if (strcmp(test_id, "lcd") == 0) return run_manual_observation(fd, "lcd", "LCD", test_start, test_end);
     if (strcmp(test_id, "reset_button") == 0) return run_manual_observation(fd, "reset_button", "Reset button and LCD off state", test_start, test_end);
@@ -2411,7 +2421,8 @@ static int run_one_test(int fd, const char *test_id, const struct app_config *co
 static int failure_code_for_test(const char *test_id)
 {
     if (strcmp(test_id, "board_state") == 0) return 3001;
-    if (strcmp(test_id, "emmc_ddr") == 0) return 3016;
+    if (strcmp(test_id, "emmc") == 0) return 3016;
+    if (strcmp(test_id, "ddr") == 0) return 3017;
     if (strcmp(test_id, "fingerprint") == 0) return 3002;
     if (strcmp(test_id, "ethernet") == 0) return 3011;
     if (strcmp(test_id, "ethernet_led") == 0) return 3015;
