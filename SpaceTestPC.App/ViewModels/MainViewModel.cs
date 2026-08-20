@@ -2759,7 +2759,7 @@ public sealed class MainViewModel : ObservableObject
             return PcbaConnectionMode.Tcp;
         }
 
-        return PcbaConnectionMode.AdbForward;
+        return PcbaConnectionMode.Tcp;
     }
 
     public async Task InitializeAsync()

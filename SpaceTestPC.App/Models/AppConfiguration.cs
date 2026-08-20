@@ -17,9 +17,13 @@ public sealed class AppConfiguration
 
 public sealed class PcbaConnectionConfiguration
 {
-    public string Mode { get; set; } = "adbForward";
+    public string Mode { get; set; } = "tcp";
     public string Host { get; set; } = "auto";
     public int Port { get; set; } = 19001;
+    public bool EthernetOnly { get; set; } = true;
+    public string AdapterId { get; set; } = string.Empty;
+    public string AdapterName { get; set; } = string.Empty;
+    public string LocalIp { get; set; } = string.Empty;
     public string AdbPath { get; set; } = "adb";
     public string AdbDeviceSerial { get; set; } = string.Empty;
     public PcbaDiscoveryConfiguration Discovery { get; set; } = new();
@@ -28,6 +32,7 @@ public sealed class PcbaConnectionConfiguration
 public sealed class PcbaDiscoveryConfiguration
 {
     public bool Enabled { get; set; } = true;
+    public string Mode { get; set; } = "selectedAdapter";
     public string Subnet { get; set; } = "auto";
     public string StartIp { get; set; } = string.Empty;
     public string EndIp { get; set; } = string.Empty;

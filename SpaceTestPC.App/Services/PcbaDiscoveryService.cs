@@ -17,6 +17,7 @@ public sealed class PcbaDiscoveryService
     private static readonly Regex Ipv4Regex = new(@"\b(?:\d{1,3}\.){3}\d{1,3}\b", RegexOptions.Compiled);
     private readonly PcbaConnectionConfiguration _configuration;
     private string? _resolvedHost;
+    private EthernetAdapterInfo? _selectedAdapter;
     public event Action<string>? Log;
 
     public PcbaDiscoveryService(PcbaConnectionConfiguration configuration)
@@ -26,9 +27,11 @@ public sealed class PcbaDiscoveryService
 
     public async Task<string> ResolveHostAsync(CancellationToken cancellationToken = default)
     {
+        var adapter = ResolveSelectedAdapter();
         if (!string.IsNullOrWhiteSpace(_configuration.Host) &&
             !string.Equals(_configuration.Host, "auto", StringComparison.OrdinalIgnoreCase))
         {
+            ValidateHostUsesSelectedAdapter(_configuration.Host.Trim(), adapter);
             Log?.Invoke($"PCBA discovery skipped: configured host={_configuration.Host.Trim()}.");
             return _configuration.Host.Trim();
         }
@@ -62,6 +65,13 @@ public sealed class PcbaDiscoveryService
             if (!string.IsNullOrWhiteSpace(result))
             {
                 await linkedCancellation.CancelAsync();
+                try
+                {
+                    await Task.WhenAll(tasks.Where(task => !ReferenceEquals(task, completed)));
+                }
+                catch (OperationCanceledException)
+                {
+                }
                 _resolvedHost = result;
                 Log?.Invoke($"PCBA discovery verified: host={result}.");
                 return result;
@@ -78,13 +88,18 @@ public sealed class PcbaDiscoveryService
         await gate.WaitAsync(cancellationToken);
         try
         {
-            var pingReachable = await IsPingReachableAsync(host, cancellationToken);
+            var pingReachable = ResolveSelectedAdapter() is null && await IsPingReachableAsync(host, cancellationToken);
 
             using var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             connectTimeout.CancelAfter(Math.Max(100, _configuration.Discovery.ConnectTimeoutMs));
             using var client = new TcpClient();
+            if (ResolveSelectedAdapter() is { } adapter)
+            {
+                client.Client.Bind(new IPEndPoint(adapter.Address, 0));
+            }
             await client.ConnectAsync(host, _configuration.Port, connectTimeout.Token);
-            Log?.Invoke($"PCBA discovery candidate: host={host}, ping={(pingReachable ? "ok" : "no_reply")}, tcp=connected.");
+            var pingStatus = ResolveSelectedAdapter() is null ? (pingReachable ? "ok" : "no_reply") : "disabled_ethernet_only";
+            Log?.Invoke($"PCBA discovery candidate: host={host}, local={client.Client.LocalEndPoint}, ping={pingStatus}, tcp=connected.");
 
             await using var stream = client.GetStream();
             var command = new HostCommand
@@ -160,9 +175,24 @@ public sealed class PcbaDiscoveryService
 
     private IEnumerable<string> GetCandidateAddresses()
     {
-        foreach (var address in GetArpCandidateAddresses())
+        var adapter = ResolveSelectedAdapter();
+        foreach (var address in GetArpCandidateAddresses(adapter))
         {
             yield return address;
+        }
+
+        if (adapter is not null)
+        {
+            Log?.Invoke($"PCBA discovery restricted to Ethernet adapter: name={adapter.Name}, id={adapter.Id}, localIp={adapter.Address}, subnet={adapter.Cidr}.");
+            foreach (var address in EnumerateCidr(adapter.Cidr))
+            {
+                if (!address.Equals(adapter.Address.ToString(), StringComparison.OrdinalIgnoreCase))
+                {
+                    yield return address;
+                }
+            }
+
+            yield break;
         }
 
         if (!string.IsNullOrWhiteSpace(_configuration.Discovery.StartIp) &&
@@ -198,10 +228,10 @@ public sealed class PcbaDiscoveryService
         }
     }
 
-    private IEnumerable<string> GetArpCandidateAddresses()
+    private IEnumerable<string> GetArpCandidateAddresses(EthernetAdapterInfo? selectedAdapter)
     {
-        var localSubnets = GetLocalIpv4Subnets().ToArray();
-        if (localSubnets.Length == 0)
+        var localSubnets = selectedAdapter is null ? GetLocalIpv4Subnets().ToArray() : [];
+        if (selectedAdapter is null && localSubnets.Length == 0)
         {
             yield break;
         }
@@ -246,7 +276,8 @@ public sealed class PcbaDiscoveryService
 
         var candidates = Ipv4Regex.Matches(output)
             .Select(match => match.Value)
-            .Where(value => IPAddress.TryParse(value, out var address) && IsInAnyLocalSubnet(address, localSubnets))
+            .Where(value => IPAddress.TryParse(value, out var address) &&
+                            (selectedAdapter?.Contains(address) ?? IsInAnyLocalSubnet(address, localSubnets)))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
@@ -258,6 +289,32 @@ public sealed class PcbaDiscoveryService
         foreach (var candidate in candidates)
         {
             yield return candidate;
+        }
+    }
+
+    public IPAddress? ResolveLocalAddress() => ResolveSelectedAdapter()?.Address;
+
+    private EthernetAdapterInfo? ResolveSelectedAdapter()
+    {
+        if (!_configuration.EthernetOnly)
+        {
+            return null;
+        }
+
+        _selectedAdapter ??= EthernetAdapterService.Resolve(_configuration);
+        return _selectedAdapter;
+    }
+
+    private static void ValidateHostUsesSelectedAdapter(string host, EthernetAdapterInfo? adapter)
+    {
+        if (adapter is null)
+        {
+            return;
+        }
+
+        if (!IPAddress.TryParse(host, out var address) || !adapter.Contains(address))
+        {
+            throw new InvalidOperationException($"设备地址 {host} 不在指定以太网卡网段 {adapter.Cidr} 内，已拒绝通过其他网卡通信。");
         }
     }
 

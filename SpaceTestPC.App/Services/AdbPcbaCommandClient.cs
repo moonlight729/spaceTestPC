@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
@@ -942,8 +943,19 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         var client = new TcpClient();
         try
         {
+            var requiredLocalAddress = !_useAdbForward ? _discoveryService?.ResolveLocalAddress() : null;
+            if (requiredLocalAddress is not null)
+            {
+                client.Client.Bind(new IPEndPoint(requiredLocalAddress, 0));
+            }
             Log?.Invoke($"PCBA TCP connect start: mode={(_useAdbForward ? "adb-forward" : "tcp")}, host={host}, port={port}.");
             await client.ConnectAsync(host, port, cancellationToken);
+            if (requiredLocalAddress is not null &&
+                client.Client.LocalEndPoint is IPEndPoint localEndPoint &&
+                !requiredLocalAddress.Equals(localEndPoint.Address.MapToIPv4()))
+            {
+                throw new InvalidOperationException($"TCP 连接未使用指定以太网卡：expected={requiredLocalAddress}, actual={localEndPoint.Address}.");
+            }
             Log?.Invoke($"PCBA TCP connect ok: host={host}, port={port}, local={client.Client.LocalEndPoint}.");
             return client;
         }
