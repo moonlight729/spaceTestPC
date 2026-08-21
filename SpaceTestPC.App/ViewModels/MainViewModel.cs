@@ -98,6 +98,7 @@ public sealed class MainViewModel : ObservableObject
     private string _historySummary = string.Empty;
     private string? _manualDecisionTestId;
     private string? _manualDecisionSessionId;
+    private string _manualDecisionPhase = string.Empty;
     private IPcbaCommandClient? _activeSessionClient;
     private readonly HashSet<string> _automaticDecisionTests = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _submittedManualDecisionTests = new(StringComparer.OrdinalIgnoreCase);
@@ -533,7 +534,8 @@ public sealed class MainViewModel : ObservableObject
         "hdmi" => "请观察 HDMI 输出是否正常，然后手动选择通过或失败。",
         "keys" => "请依次按下上、下、左、右方向键和确认键，再按下 Recovery 实体键；六键全部识别后自动通过。",
         "lcd" => "请观察 LCD：背光正常、RGB 测试图案完整且稳定，无花屏、缺线、闪烁或明显亮暗异常后再判定。",
-        "ethernet_led" => "请观察网口灯：看到黄色和绿色灯亮即可选择 PASS，否则选择 FAIL。",
+        "ethernet_led" when _manualDecisionPhase == "operator_confirm_sequence" => "请确认刚才百兆、千兆两个阶段的网口灯均按提示点亮。",
+        "ethernet_led" => "请等待网口灯切换完成后再判定。",
         "indicator_led" => "请依次观察红灯、绿灯、蓝灯各亮 2 秒，最后确认绿灯正常后选择 PASS 或 FAIL。",
         "reset_button" => "请按下设备复位键，确认 LCD 屏幕已经息屏后选择 PASS 或 FAIL。",
         "fan" => "风扇正在自动检测，请等待下位机读取 tach_rpm 并返回结果。",
@@ -1639,14 +1641,24 @@ public sealed class MainViewModel : ObservableObject
             _submittedManualDecisionTests.Remove(testEvent.TestId);
         }
 
-        if (testEvent.Status == "running" &&
+        var eventPhase = GetDataString(testEvent.Data, "phase", string.Empty);
+        var requiresManualDecision = testEvent.Status == "running" &&
+            (testEvent.TestId != "ethernet_led" || eventPhase == "operator_confirm_sequence");
+
+        if (requiresManualDecision &&
             (testEvent.TestId is "hdmi" or "lcd" or "ethernet_led" or "reset_button" ||
              testEvent.TestId == "indicator_led" && _testProfileMode == "finished_product"))
         {
             _manualDecisionSessionId = SessionId;
         }
 
-        _manualDecisionTestId = testEvent.Status == "running" &&
+        if (testEvent.TestId == "ethernet_led" && eventPhase == "operator_confirm_sequence")
+        {
+            _submittedManualDecisionTests.Remove(testEvent.TestId);
+            _manualDecisionPhase = eventPhase;
+        }
+
+        _manualDecisionTestId = requiresManualDecision &&
             !_submittedManualDecisionTests.Contains(testEvent.TestId) &&
             (testEvent.TestId is "hdmi" or "lcd" or "ethernet_led" or "reset_button" ||
              testEvent.TestId == "indicator_led" && _testProfileMode == "finished_product")
@@ -1861,6 +1873,18 @@ public sealed class MainViewModel : ObservableObject
 
         if (testEvent.Status == "running")
         {
+            var expectedLed = GetDataString(testEvent.Data, "expectedLed", string.Empty);
+            var expectedSpeed = GetDataInt(testEvent.Data, "expectedSpeedMbps");
+            var actualSpeed = GetDataInt(testEvent.Data, "actualSpeedMbps");
+            var phaseIndex = GetDataInt(testEvent.Data, "phaseIndex");
+            var phaseCount = GetDataInt(testEvent.Data, "phaseCount");
+            var speedText = expectedSpeed > 0 ? $"目标 {expectedSpeed} Mbps" : string.Empty;
+            var actualText = actualSpeed > 0 ? $"，当前 {actualSpeed} Mbps" : string.Empty;
+            if (expectedLed.Length > 0)
+            {
+                var progress = phaseIndex > 0 && phaseCount > 0 ? $"（第 {phaseIndex}/{phaseCount} 阶段）" : string.Empty;
+                return $"请观察{expectedLed}色网口灯是否亮起，{speedText}{actualText}{progress}。确认后选择 PASS/FAIL。";
+            }
             return phase switch
             {
                 "wait_remove_before_start" => $"开始 {version} 测试前，请先拔出所有 USB U 盘。",
@@ -1945,6 +1969,7 @@ public sealed class MainViewModel : ObservableObject
                 "wait_cable" => elapsedSeconds > 0
                     ? $"请插入网线，系统正在等待网口灯测试。已等待 {elapsedSeconds} 秒。"
                     : "请插入网线，系统正在等待网口灯测试。",
+                "prepare_disconnect" => BuildEthernetLedSequenceInstruction(testEvent.Data),
                 "show_100m" => $"正在切换 {iface} 到百兆模式，请观察绿色网口灯是否亮起。",
                 "show_1000m" => $"正在切换 {iface} 到千兆模式，请观察黄色网口灯是否亮起。",
                 "awaiting_operator" => "网口灯切换已完成，正在等待人工判定。",
@@ -1958,6 +1983,14 @@ public sealed class MainViewModel : ObservableObject
         }
 
         return "网口灯测试失败，请检查网线、网口灯和 ethtool 切速率是否正常。";
+    }
+
+    private static string BuildEthernetLedSequenceInstruction(IReadOnlyDictionary<string, object?> data)
+    {
+        var led100m = GetDataString(data, "led100mColor", "green");
+        var led1000m = GetDataString(data, "led1000mColor", "yellow");
+        var phaseSeconds = Math.Max(1, GetDataInt(data, "phaseDurationMs") / 1000);
+        return $"网口即将暂时断开并自动切速：先观察百兆 {led100m} 色灯，再观察千兆 {led1000m} 色灯；每阶段约 {phaseSeconds} 秒。闪灯完成并重新连接后再分别确认。";
     }
 
     private static string BuildFastChargeWaitingInstruction(IReadOnlyDictionary<string, object?> data)
