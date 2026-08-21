@@ -6,10 +6,35 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+struct client_context {
+    int client_fd;
+    const struct app_config *config;
+};
+
+static pthread_mutex_t active_client_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int active_client_fd = -1;
+
+static void *handle_client(void *argument)
+{
+    struct client_context *context = argument;
+    int client_fd = context->client_fd;
+    const struct app_config *config = context->config;
+    free(context);
+    session_manager_handle_client(client_fd, config);
+    fprintf(stderr, "[SESSION] client closing fd=%d\n", client_fd);
+    pthread_mutex_lock(&active_client_mutex);
+    if (active_client_fd == client_fd) active_client_fd = -1;
+    pthread_mutex_unlock(&active_client_mutex);
+    close(client_fd);
+    return NULL;
+}
 
 static int create_listener(const struct app_config *config)
 {
@@ -31,7 +56,7 @@ static int create_listener(const struct app_config *config)
         close(fd);
         return -1;
     }
-    if (listen(fd, 1) != 0) {
+    if (listen(fd, 8) != 0) {
         close(fd);
         return -1;
     }
@@ -53,13 +78,33 @@ int main(void)
     printf("spaceTest3576 listening on %s:%d\n", config.bind_address, config.port);
     for (;;) {
         int client = accept(listener, NULL, NULL);
+        struct client_context *context;
+        pthread_t thread;
         if (client < 0) {
             perror("accept");
             continue;
         }
         fprintf(stderr, "[SESSION] client accepted fd=%d\n", client);
-        session_manager_handle_client(client, &config);
-        fprintf(stderr, "[SESSION] client closing fd=%d\n", client);
-        close(client);
+        pthread_mutex_lock(&active_client_mutex);
+        if (active_client_fd >= 0) {
+            fprintf(stderr, "[SESSION] superseding active client fd=%d with fd=%d\n", active_client_fd, client);
+            shutdown(active_client_fd, SHUT_RDWR);
+        }
+        active_client_fd = client;
+        pthread_mutex_unlock(&active_client_mutex);
+
+        context = malloc(sizeof(*context));
+        if (context == NULL) {
+            close(client);
+            continue;
+        }
+        context->client_fd = client;
+        context->config = &config;
+        if (pthread_create(&thread, NULL, handle_client, context) != 0) {
+            free(context);
+            close(client);
+            continue;
+        }
+        pthread_detach(thread);
     }
 }

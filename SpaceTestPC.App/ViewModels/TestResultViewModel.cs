@@ -72,6 +72,7 @@ public sealed class TestResultViewModel : ObservableObject
         TestItemState.Passed => "PASS",
         TestItemState.Failed => "FAIL",
         TestItemState.Skipped => "SKIPPED",
+        TestItemState.Aborted => "ABORTED",
         _ => "PENDING"
     };
 
@@ -81,6 +82,7 @@ public sealed class TestResultViewModel : ObservableObject
         TestItemState.Passed => "#16A34A",
         TestItemState.Failed => "#DC2626",
         TestItemState.Skipped => "#64748B",
+        TestItemState.Aborted => "#B54708",
         _ => "#94A3B8"
     };
 

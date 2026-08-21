@@ -6,5 +6,6 @@ public enum TestItemState
     Running,
     Passed,
     Failed,
-    Skipped
+    Skipped,
+    Aborted
 }

@@ -1131,8 +1131,27 @@ public sealed class MainViewModel : ObservableObject
         catch (Exception ex)
         {
             communicationInterrupted = true;
-            LastResult = "Stage 1 failed";
-            OperatorInstruction = "设备通信中断，正在保存当前记录。请检查网线连接；本次无法继续时请重新测试。";
+            finalVerdict = "Aborted";
+            foreach (var result in TestResults)
+            {
+                if (result.State == TestItemState.Running)
+                {
+                    result.ApplyLocalResult(TestItemState.Aborted, "测试因上位机连接中断而终止。", new Dictionary<string, object?>
+                    {
+                        ["reason"] = "host_disconnected",
+                        ["resultCode"] = 3998
+                    });
+                }
+                else if (result.State == TestItemState.Pending)
+                {
+                    result.ApplyLocalResult(TestItemState.Skipped, "测试会话中断，尚未执行。", new Dictionary<string, object?>
+                    {
+                        ["reason"] = "session_interrupted"
+                    });
+                }
+            }
+            LastResult = "Stage 1 aborted";
+            OperatorInstruction = "测试已中断，记录为 ABORTED；请重新扫描后开始新的测试。";
             AppendLog($"Session exception: {ex.GetType().Name}: {ex.Message}");
         }
         finally
@@ -1141,7 +1160,7 @@ public sealed class MainViewModel : ObservableObject
         }
 
         finalVerdict = ResolveFinalVerdict(finalVerdict);
-        LastResult = finalVerdict == "Pass" ? "Stage 1 passed" : "Stage 1 failed";
+        LastResult = finalVerdict == "Pass" ? "Stage 1 passed" : finalVerdict == "Aborted" ? "Stage 1 aborted" : "Stage 1 failed";
         if (!communicationInterrupted)
         {
             OperatorInstruction = BuildSessionCompletionInstruction(finalVerdict);
@@ -3163,6 +3182,7 @@ public sealed class MainViewModel : ObservableObject
     {
         _manualDecisionTestId = null;
         _manualDecisionSessionId = null;
+        _manualDecisionPhase = string.Empty;
         _automaticDecisionTests.Clear();
         _submittedManualDecisionTests.Clear();
         _hostDecisionData.Clear();
