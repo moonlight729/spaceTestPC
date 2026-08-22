@@ -31,10 +31,12 @@ public partial class EnvironmentSettingsWindow : Window
         ModeComboBox.SelectedItem = ModeComboBox.Items.OfType<ComboBoxItem>()
             .FirstOrDefault(item => Equals(item.Tag, _current.Mode));
         if (ModeComboBox.SelectedIndex < 0) ModeComboBox.SelectedIndex = 0;
+        ModeComboBox.SelectionChanged += ModeComboBox_OnSelectionChanged;
 
         PortComboBox.Text = _current.Port;
         TargetNameTextBox.Text = _current.TargetName;
         WifiSsidTextBox.Text = _current.WifiSsid;
+        LoadRssiSettings();
         EthernetPingIpTextBox.Text = _current.EthernetPingIp;
         EthernetLedObservationTextBox.Text = _current.EthernetLedObservationMs.ToString();
         FirmwarePathTextBox.Text = _current.FirmwarePath;
@@ -61,6 +63,15 @@ public partial class EnvironmentSettingsWindow : Window
     }
 
     private void AdapterComboBox_OnSelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateSummary();
+
+    private void ModeComboBox_OnSelectionChanged(object sender, SelectionChangedEventArgs e) => LoadRssiSettings();
+
+    private void LoadRssiSettings()
+    {
+        var isPcba = string.Equals((ModeComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString(), "pcba", StringComparison.OrdinalIgnoreCase);
+        WifiMinRssiTextBox.Text = (isPcba ? _current.PcbaWifiMinRssi : _current.FinishedProductWifiMinRssi).ToString();
+        BluetoothMinRssiTextBox.Text = (isPcba ? _current.PcbaBluetoothMinRssi : _current.FinishedProductBluetoothMinRssi).ToString();
+    }
 
     private void RefreshAdapters_Click(object sender, RoutedEventArgs e)
     {
@@ -190,6 +201,9 @@ public partial class EnvironmentSettingsWindow : Window
             var pcbaBattery = ReadBatterySettings("Pcba", "PCBA");
             var finishedFastCharge = ReadFastChargeSettings("Finished", "整机");
             var pcbaFastCharge = ReadFastChargeSettings("Pcba", "PCBA");
+            var wifiMinRssi = RssiValue(WifiMinRssiTextBox, "Wi-Fi");
+            var bluetoothMinRssi = RssiValue(BluetoothMinRssiTextBox, "蓝牙");
+            var isPcba = string.Equals(mode, "pcba", StringComparison.OrdinalIgnoreCase);
             _service.Save(
                 mode,
                 PortComboBox.Text,
@@ -201,6 +215,10 @@ public partial class EnvironmentSettingsWindow : Window
                 adapter,
                 host,
                 connectionPort,
+                isPcba ? _current.FinishedProductWifiMinRssi : wifiMinRssi,
+                isPcba ? wifiMinRssi : _current.PcbaWifiMinRssi,
+                isPcba ? _current.FinishedProductBluetoothMinRssi : bluetoothMinRssi,
+                isPcba ? bluetoothMinRssi : _current.PcbaBluetoothMinRssi,
                 finishedBattery,
                 pcbaBattery,
                 finishedFastCharge,
@@ -266,6 +284,11 @@ public partial class EnvironmentSettingsWindow : Window
         int.TryParse(FindTextBox($"{prefix}{field}TextBox").Text, out var value) && value > 0
             ? value
             : throw new InvalidDataException($"{displayName}放电参数必须是正整数。");
+
+    private static int RssiValue(TextBox textBox, string displayName) =>
+        int.TryParse(textBox.Text, out var value) && value is >= -127 and <= 0
+            ? value
+            : throw new InvalidDataException($"{displayName} RSSI 必须是 -127 到 0 之间的整数。");
 
     private TextBox FindTextBox(string name) =>
         FindElement<TextBox>(this, name) ?? throw new InvalidOperationException($"未找到设置控件 {name}。");

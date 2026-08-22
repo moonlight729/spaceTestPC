@@ -18,6 +18,10 @@ public sealed record EnvironmentSettingsData(
     string AdapterName,
     string LocalIp,
     int TestCount,
+    int FinishedProductWifiMinRssi,
+    int PcbaWifiMinRssi,
+    int FinishedProductBluetoothMinRssi,
+    int PcbaBluetoothMinRssi,
     BatteryDischargeSettings FinishedProductBattery,
     BatteryDischargeSettings PcbaBattery,
     FastChargeSettings FinishedProductFastCharge,
@@ -70,6 +74,10 @@ public sealed class EnvironmentConfigurationService
             connection?["adapterName"]?.GetValue<string>() ?? string.Empty,
             connection?["localIp"]?.GetValue<string>() ?? string.Empty,
             testPlan?["enabledTests"]?.AsArray().Count ?? 0,
+            ReadRssi(root, "finished_product", "wifi", -40),
+            ReadRssi(root, "pcba", "wifi", -40),
+            ReadRssi(root, "finished_product", "bluetooth", -60),
+            ReadRssi(root, "pcba", "bluetooth", -60),
             ReadBattery(root, "finished_product", 7600, 80),
             ReadBattery(root, "pcba", 7000, 100),
             ReadFastCharge(root, "finished_product"),
@@ -87,6 +95,10 @@ public sealed class EnvironmentConfigurationService
         EthernetAdapterInfo adapter,
         string connectionHost,
         int connectionPort,
+        int finishedProductWifiMinRssi,
+        int pcbaWifiMinRssi,
+        int finishedProductBluetoothMinRssi,
+        int pcbaBluetoothMinRssi,
         BatteryDischargeSettings finishedProductBattery,
         BatteryDischargeSettings pcbaBattery,
         FastChargeSettings finishedProductFastCharge,
@@ -137,6 +149,11 @@ public sealed class EnvironmentConfigurationService
         testPlan["testParameters"] = parameters;
         root["testPlan"] = testPlan;
 
+        WriteRssi(root, "finished_product", "wifi", finishedProductWifiMinRssi);
+        WriteRssi(root, "pcba", "wifi", pcbaWifiMinRssi);
+        WriteRssi(root, "finished_product", "bluetooth", finishedProductBluetoothMinRssi);
+        WriteRssi(root, "pcba", "bluetooth", pcbaBluetoothMinRssi);
+
         WriteBattery(root, "finished_product", finishedProductBattery);
         WriteBattery(root, "pcba", pcbaBattery);
         WriteFastCharge(root, "finished_product", finishedProductFastCharge);
@@ -166,6 +183,23 @@ public sealed class EnvironmentConfigurationService
             battery?["minimumValidSamples"]?.GetValue<int>() ?? 6,
             battery?["currentStabilityToleranceMa"]?.GetValue<int>() ?? defaultToleranceMa,
             battery?["operatorConfirmationTimeoutMs"]?.GetValue<int>() ?? 120000);
+    }
+
+    private static int ReadRssi(JsonObject root, string mode, string testId, int fallback) =>
+        root["testModes"]?[mode]?["testParameters"]?[testId]?["minRssi"]?.GetValue<int>() ??
+        root["testPlan"]?["testParameters"]?[testId]?["minRssi"]?.GetValue<int>() ?? fallback;
+
+    private static void WriteRssi(JsonObject root, string mode, string testId, int value)
+    {
+        var modes = root["testModes"] as JsonObject ?? new JsonObject();
+        var modeNode = modes[mode] as JsonObject ?? new JsonObject();
+        var parameters = modeNode["testParameters"] as JsonObject ?? new JsonObject();
+        var test = parameters[testId] as JsonObject ?? new JsonObject();
+        test["minRssi"] = value;
+        parameters[testId] = test;
+        modeNode["testParameters"] = parameters;
+        modes[mode] = modeNode;
+        root["testModes"] = modes;
     }
 
     private static void WriteBattery(JsonObject root, string mode, BatteryDischargeSettings settings)

@@ -1627,7 +1627,7 @@ public sealed class MainViewModel : ObservableObject
         if (testEvent.TestId == "wifi" && testEvent.Status is "passed" or "failed")
         {
             var attempt = Math.Max(1, GetDataInt(testEvent.Data, "attempt"));
-            if (_hostDecisionData.TryGetValue($"{testEvent.TestId}:{attempt}", out var wifiHostData))
+            if (_hostDecisionData.TryGetValue($"{SessionId}:{testEvent.TestId}:{attempt}", out var wifiHostData))
             {
                 var merged = wifiHostData.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
                 foreach (var pair in testEvent.Data)
@@ -2674,7 +2674,7 @@ public sealed class MainViewModel : ObservableObject
         }
 
         var attempt = Math.Max(1, GetDataInt(testEvent.Data, "attempt"));
-        var decisionKey = $"{testEvent.TestId}:{attempt}";
+        var decisionKey = $"{SessionId}:{testEvent.TestId}:{attempt}";
         if (!_automaticDecisionTests.Add(decisionKey))
         {
             return;
