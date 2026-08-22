@@ -118,6 +118,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly DispatcherTimer _upgradeCountdownTimer;
     private readonly DispatcherTimer _adbUpgradeMonitorTimer;
     private readonly DispatcherTimer _statusBarTimer;
+    private readonly DispatcherTimer _tfRemovalPromptTimer;
     private readonly SemaphoreSlim _upgradeCheckGate = new(1, 1);
     private int _upgradeCountdownSeconds;
     private bool _isUpgradePromptVisible;
@@ -131,6 +132,7 @@ public sealed class MainViewModel : ObservableObject
     private string _localUpgradeBinaryPath = string.Empty;
     private bool _upgradePackageReady;
     private bool _batteryPreparationPromptActive;
+    private bool _isTfRemovalPromptVisible;
 
     public MainViewModel(
         IScannerService scannerService,
@@ -156,6 +158,23 @@ public sealed class MainViewModel : ObservableObject
         _jxTvmService = jxTvmService;
         _bluetoothBroadcasterService = bluetoothBroadcasterService;
         var appConfiguration = configuration ?? new AppConfiguration();
+        if (appConfiguration.TestPlan.TestParameters.TryGetValue("wifi", out var wifiParameters))
+        {
+            if (wifiParameters.TryGetValue("ssid", out var configuredSsid) &&
+                configuredSsid.ValueKind == System.Text.Json.JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(configuredSsid.GetString()))
+            {
+                _wifiRequest.Ssid = configuredSsid.GetString()!;
+            }
+        }
+        if (appConfiguration.TestPlan.TestParameters.TryGetValue("ethernet", out var ethernetParameters) &&
+            ethernetParameters.TryGetValue("routerIp", out var configuredRouterIp) &&
+            configuredRouterIp.ValueKind == System.Text.Json.JsonValueKind.String &&
+            !string.IsNullOrWhiteSpace(configuredRouterIp.GetString()))
+        {
+            _ethernetRequest.RouterIp = configuredRouterIp.GetString()!;
+            _ethernetRequest.TargetIp = configuredRouterIp.GetString()!;
+        }
         _allowSnMismatchForDebug = appConfiguration.TestPlan.AllowSnMismatchForDebug;
         _keyTestTimeoutMs = GetConfiguredKeyTimeoutMs(appConfiguration);
         _upgradeConfiguration = appConfiguration.Upgrade;
@@ -210,6 +229,12 @@ public sealed class MainViewModel : ObservableObject
             RaisePropertyChanged(nameof(StatusBarCurrentTime));
         };
         _statusBarTimer.Start();
+        _tfRemovalPromptTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _tfRemovalPromptTimer.Tick += (_, _) =>
+        {
+            _tfRemovalPromptTimer.Stop();
+            IsTfRemovalPromptVisible = false;
+        };
         _isContinuousTestEnabled = appConfiguration.TestPlan.Continuous.EnabledByDefault;
         _testPlan = BuildActiveTestPlan(appConfiguration);
         _testItemIndexes = _testPlan
@@ -232,6 +257,7 @@ public sealed class MainViewModel : ObservableObject
         EndFailedBoardCommand = new RelayCommand(EndFailedBoardLifecycle, () => _isRetestLifecycleActive && !_isRetestRunning);
 
         Logs = new ObservableCollection<string>();
+        LogStartupConfiguration(appConfiguration);
         RecentSessions = new ObservableCollection<string>();
         QuerySessions = new ObservableCollection<TestSessionRecord>();
         TestItems = new ObservableCollection<TestItemViewModel>(new[]
@@ -399,6 +425,19 @@ public sealed class MainViewModel : ObservableObject
                 : TimeSpan.Zero;
             return $"已用时：{(int)elapsed.TotalMinutes:00}:{elapsed.Seconds:00}";
         }
+    }
+
+    public bool IsTfRemovalPromptVisible
+    {
+        get => _isTfRemovalPromptVisible;
+        private set => SetProperty(ref _isTfRemovalPromptVisible, value);
+    }
+
+    private void ShowTfRemovalPrompt()
+    {
+        _tfRemovalPromptTimer.Stop();
+        IsTfRemovalPromptVisible = true;
+        _tfRemovalPromptTimer.Start();
     }
     public string StatusBarDatabase => "数据库：正常";
     public string StatusBarLog => "日志：正常";
@@ -1558,6 +1597,11 @@ public sealed class MainViewModel : ObservableObject
 
     private void ApplyTestReport(TestSessionEvent testEvent)
     {
+        if (string.Equals(testEvent.Event, "session.completed", StringComparison.OrdinalIgnoreCase))
+        {
+            ShowTfRemovalPrompt();
+        }
+
         if (testEvent.TestId == "battery_management" &&
             testEvent.Status is "passed" or "failed" &&
             _hostDecisionData.TryGetValue(testEvent.TestId, out var hostData))
@@ -2530,6 +2574,7 @@ public sealed class MainViewModel : ObservableObject
         var samplingDurationMs = Math.Max(100, GetParameterInt(parameters, "timeoutMs", 10000));
         var currentMinMa = GetParameterInt(parameters, "chargeCurrentMinMa", 0);
         var currentMaxMa = GetParameterInt(parameters, "chargeCurrentMaxMa", int.MaxValue);
+        AppendLog($"TYPE-C charging parameters: currentMinMa={currentMinMa}, currentMaxMa={currentMaxMa}");
 
         var rawCurrents = GetIntValues(testEvent.Data, "rawCurrentSamplesMa");
         var rawVoltages = GetIntValues(testEvent.Data, "rawVoltageSamplesMv");
@@ -2636,15 +2681,16 @@ public sealed class MainViewModel : ObservableObject
         }
 
         var parameters = _testPlan.First(item => item.Id == testEvent.TestId).Parameters;
-        var minRssi = GetParameterInt(parameters, "minRssi", -75);
+        var minRssi = GetParameterInt(parameters, "minRssi", -40);
         var ssid = GetDataString(testEvent.Data, "ssid", string.Empty);
         var iface = GetDataString(testEvent.Data, "interfaceName", string.Empty);
         var found = GetDataBoolean(testEvent.Data, "found");
         var rssi = GetDataInt(testEvent.Data, "rssi");
-        var passed = found && rssi >= minRssi;
+        var validRssi = rssi > -127;
+        var passed = found && validRssi && rssi >= minRssi;
         var reason = !found
-            ? GetDataString(testEvent.Data, "failureReason", "ssid_not_found")
-            : rssi < minRssi ? "rssi_too_low" : "rssi_in_range";
+            ? "ssid_not_found"
+            : !validRssi ? "ssid_not_found" : rssi < minRssi ? "rssi_too_low" : "rssi_in_range";
 
         _hostDecisionData[decisionKey] = new Dictionary<string, object?>
         {
@@ -2985,6 +3031,29 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public void ClearScannerInput() => ScannerInput = string.Empty;
+
+    private void LogStartupConfiguration(AppConfiguration configuration)
+    {
+        try
+        {
+            var settings = new EnvironmentConfigurationService().Load();
+            var connection = configuration.PcbaConnection;
+            var upgrade = configuration.Upgrade;
+            var logging = configuration.Logging;
+            AppendLog("Startup configuration loaded: path=" + EnvironmentConfigurationService.ResolvePath());
+            AppendLog($"Startup basic settings: mode={settings.Mode}, bluetoothPort={settings.Port}, bluetoothTarget={settings.TargetName}, wifiSsid={settings.WifiSsid}, ethernetPingIp={settings.EthernetPingIp}, ethernetLedObservationMs={settings.EthernetLedObservationMs}");
+            AppendLog($"Startup device communication: mode={connection.Mode}, host={connection.Host}, port={connection.Port}, ethernetOnly={connection.EthernetOnly}, adapterId={connection.AdapterId}, adapterName={connection.AdapterName}, localIp={connection.LocalIp}, discoveryEnabled={connection.Discovery.Enabled}, discoveryMode={connection.Discovery.Mode}, subnet={connection.Discovery.Subnet}, connectTimeoutMs={connection.Discovery.ConnectTimeoutMs}, maxParallel={connection.Discovery.MaxParallel}");
+            AppendLog($"Startup discharge settings: finished voltage={settings.FinishedProductBattery.VoltageMinMv}-{settings.FinishedProductBattery.VoltageMaxMv}mV, current={settings.FinishedProductBattery.CurrentMinMa}-{settings.FinishedProductBattery.CurrentMaxMa}mA; pcba voltage={settings.PcbaBattery.VoltageMinMv}-{settings.PcbaBattery.VoltageMaxMv}mV, current={settings.PcbaBattery.CurrentMinMa}-{settings.PcbaBattery.CurrentMaxMa}mA");
+            AppendLog($"Startup fast-charge settings: finished voltage={settings.FinishedProductFastCharge.VoltageMinMv}-{settings.FinishedProductFastCharge.VoltageMaxMv}mV, current={settings.FinishedProductFastCharge.CurrentMinMa}-{settings.FinishedProductFastCharge.CurrentMaxMa}mA; pcba voltage={settings.PcbaFastCharge.VoltageMinMv}-{settings.PcbaFastCharge.VoltageMaxMv}mV, current={settings.PcbaFastCharge.CurrentMinMa}-{settings.PcbaFastCharge.CurrentMaxMa}mA");
+            AppendLog($"Startup upgrade settings: enabled={upgrade.Enabled}, transport={upgrade.Transport}, localPath={upgrade.LocalBinaryPath}, remotePath={upgrade.RemoteBinaryPath}, service={upgrade.ServiceName}, applicationVersion={upgrade.ApplicationVersion}, sshUser={upgrade.SshUser}, sshPort={upgrade.SshPort}");
+            AppendLog($"Startup logging settings: fileEnabled={logging.FileEnabled}, filePath={logging.FilePath}");
+            AppendLog($"Startup test plan: activeMode={_testProfileMode}, testCount={_testPlan.Count}, tests={string.Join(",", _testPlan.Select(item => item.Id))}");
+        }
+        catch (Exception exception)
+        {
+            AppendLog($"Startup configuration snapshot failed: {exception.GetType().Name}: {exception.Message}");
+        }
+    }
 
     private void AppendLog(string message)
     {
@@ -3345,6 +3414,11 @@ public sealed class MainViewModel : ObservableObject
     {
         try
         {
+            var currentEnvironment = new EnvironmentConfigurationService().Load();
+            if (!string.IsNullOrWhiteSpace(currentEnvironment.WifiSsid))
+            {
+                _wifiRequest.Ssid = currentEnvironment.WifiSsid.Trim();
+            }
             SetTestItemState(WifiItemName, TestItemState.Running);
             AppendLog($"Running WiFi test: ssid={_wifiRequest.Ssid}, targetIp={_wifiRequest.TargetIp}");
             var result = await client.ConnectWifiAndPingAsync(SessionId, CurrentSn, BoardId, _wifiRequest);
@@ -3368,6 +3442,17 @@ public sealed class MainViewModel : ObservableObject
     {
         try
         {
+            // Reload the persisted environment settings immediately before each
+            // Ethernet test. The settings dialog can save while this view model
+            // is alive; retaining the constructor-time request would otherwise
+            // keep using the old/default router IP.
+            var currentEnvironment = new EnvironmentConfigurationService().Load();
+            if (System.Net.IPAddress.TryParse(currentEnvironment.EthernetPingIp, out var configuredRouterIp) &&
+                configuredRouterIp.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+            {
+                _ethernetRequest.RouterIp = configuredRouterIp.ToString();
+                _ethernetRequest.TargetIp = configuredRouterIp.ToString();
+            }
             SetTestItemState(EthernetItemName, TestItemState.Running);
             AppendLog($"Running ethernet test: routerIp={_ethernetRequest.RouterIp}, targetIp={_ethernetRequest.TargetIp}");
             var result = await client.ConnectEthernetAndPingAsync(SessionId, CurrentSn, BoardId, _ethernetRequest);

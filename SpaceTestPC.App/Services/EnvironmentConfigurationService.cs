@@ -201,8 +201,8 @@ public sealed class EnvironmentConfigurationService
         return new FastChargeSettings(
             ReadModeOrGlobalInt(modeSettings, globalSettings, "chargeVoltageMinMv", 7400),
             ReadModeOrGlobalInt(modeSettings, globalSettings, "chargeVoltageMaxMv", 8400),
-            ReadModeOrGlobalInt(modeSettings, globalSettings, "chargeCurrentMinMa", 425),
-            ReadModeOrGlobalInt(modeSettings, globalSettings, "chargeCurrentMaxMa", 650));
+            ReadModeOrGlobalInt(modeSettings, globalSettings, "chargeCurrentMinMa", 1800),
+            ReadModeOrGlobalInt(modeSettings, globalSettings, "chargeCurrentMaxMa", 2300));
     }
 
     private static int ReadModeOrGlobalInt(JsonObject? modeSettings, JsonObject? globalSettings, string name, int fallback) =>

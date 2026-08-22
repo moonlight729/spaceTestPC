@@ -395,5 +395,8 @@
                 </StackPanel>
             </Grid>
         </Border>
+        <Border Panel.ZIndex="20" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="34,22" Background="#FFF1F2" BorderBrush="#DC2626" BorderThickness="3" CornerRadius="8" Visibility="{Binding IsTfRemovalPromptVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+            <TextBlock FontSize="30" FontWeight="Bold" Foreground="#DC2626" Text="请拔掉 TF 卡" />
+        </Border>
     </Grid>
 </Window>

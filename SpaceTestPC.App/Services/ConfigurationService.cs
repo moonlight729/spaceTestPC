@@ -61,7 +61,40 @@ public sealed class ConfigurationService
         var modeConfiguration = JsonSerializer.Deserialize<AppConfiguration>(File.ReadAllText(modePath), JsonOptions);
         if (modeConfiguration?.TestModes.TryGetValue(mode, out var selectedMode) == true)
         {
-            configuration.TestModes[mode] = selectedMode;
+            if (!configuration.TestModes.TryGetValue(mode, out var currentMode))
+            {
+                configuration.TestModes[mode] = selectedMode;
+                return;
+            }
+
+            // Mode files define the authoritative test sequence and skipped
+            // items. Preserve explicit values saved in appsettings.json, but
+            // fill them from the mode template when they are missing.
+            if (currentMode.TestOrder.Length == 0 && selectedMode.TestOrder.Length > 0)
+            {
+                currentMode.TestOrder = selectedMode.TestOrder;
+            }
+
+            if (currentMode.SkippedTests.Count == 0 && selectedMode.SkippedTests.Count > 0)
+            {
+                currentMode.SkippedTests = new Dictionary<string, string>(selectedMode.SkippedTests, StringComparer.OrdinalIgnoreCase);
+            }
+
+            // The mode file is a template. Values saved through the settings
+            // dialog in the active appsettings.json must take precedence.
+            foreach (var parameterGroup in selectedMode.TestParameters)
+            {
+                if (!currentMode.TestParameters.TryGetValue(parameterGroup.Key, out var currentParameters))
+                {
+                    currentMode.TestParameters[parameterGroup.Key] = parameterGroup.Value;
+                    continue;
+                }
+
+                foreach (var parameter in parameterGroup.Value)
+                {
+                    currentParameters.TryAdd(parameter.Key, parameter.Value);
+                }
+            }
         }
     }
 
