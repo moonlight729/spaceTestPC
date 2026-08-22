@@ -1354,6 +1354,15 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
      */
     elapsed_ms = 0;
     while (elapsed_ms < manual_insert_wait_ms) {
+        /* Keep the safety wait for OTG false positives, but do not make an
+         * already-inserted charger wait the full 30 seconds. Poll the PMIC
+         * during the preparation window and continue immediately once an
+         * external charger type is confirmed. */
+        if (read_charge_status_bits(&pmic_status0, &pmic_status1, &vbus_present,
+                                    &pg_stat, &chg_stat, &vbus_stat, &bc12_done) == 0 &&
+            vbus_present && pg_stat && is_external_charger_type(vbus_stat)) {
+            break;
+        }
         snprintf(data, sizeof(data),
                  "{\"phase\":\"wait_manual_charger_insert\",\"chargeControlCommand\":\"enable_charge\",\"chargeControlOk\":true,"
                  "\"pmicCommunicationOk\":true,\"chargerConnected\":false,\"charging\":false,\"chargeStage\":\"not_charging\","
