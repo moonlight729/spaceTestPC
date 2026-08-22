@@ -144,7 +144,7 @@
         "manualInsertWaitMs": 15000,
         "waitChargerTimeoutMs": 15000,
         "progressReportIntervalMs": 1000,
-        "timeoutMs": 20000
+        "timeoutMs": 4000
       },
       "battery_management": {
         "batterySimulationVoltageMv": 7400,

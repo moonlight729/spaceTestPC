@@ -1273,7 +1273,7 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
         .current_max_ma = config->fast_charge_current_max_ma,
         .stable_sample_count = 1,
         .sample_interval_ms = 200,
-        .timeout_ms = 1000,
+        .timeout_ms = 4000,
     };
     struct fast_charge_result result;
     char data[1024];

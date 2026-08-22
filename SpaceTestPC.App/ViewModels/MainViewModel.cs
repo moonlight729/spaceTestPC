@@ -2571,7 +2571,7 @@ public sealed class MainViewModel : ObservableObject
         }
 
         var parameters = _testPlan.First(item => item.Id == testEvent.TestId).Parameters;
-        var samplingDurationMs = Math.Max(100, GetParameterInt(parameters, "timeoutMs", 10000));
+        var samplingDurationMs = Math.Max(100, GetParameterInt(parameters, "timeoutMs", 4000));
         var currentMinMa = GetParameterInt(parameters, "chargeCurrentMinMa", 0);
         var currentMaxMa = GetParameterInt(parameters, "chargeCurrentMaxMa", int.MaxValue);
         AppendLog($"TYPE-C charging parameters: currentMinMa={currentMinMa}, currentMaxMa={currentMaxMa}");
