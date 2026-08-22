@@ -25,12 +25,13 @@
                 </Grid>
             </TabItem>
             <TabItem Header="设备通信">
-                <Grid Margin="12"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/><ColumnDefinition Width="100"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <Grid Margin="12"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/><ColumnDefinition Width="100"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                     <TextBlock Style="{StaticResource LabelStyle}" Text="设备通信网卡"/><ComboBox x:Name="AdapterComboBox" Grid.Column="1" Margin="0,3,8,3" DisplayMemberPath="DisplayText" SelectionChanged="AdapterComboBox_OnSelectionChanged"/><Button Grid.Column="2" Content="刷新网卡" Click="RefreshAdapters_Click"/>
                     <TextBlock Grid.Row="1" Style="{StaticResource LabelStyle}" Text="设备地址"/><TextBox x:Name="ConnectionHostTextBox" Grid.Row="1" Grid.Column="1" Margin="0,3,8,3" ToolTip="auto 自动扫描选定网卡，或填写同网段固定 IP"/><Button x:Name="ProbeDeviceButton" Grid.Row="1" Grid.Column="2" Content="探测设备" Click="ProbeDevice_Click"/>
                     <TextBlock Grid.Row="2" Style="{StaticResource LabelStyle}" Text="设备端口"/><TextBox x:Name="ConnectionPortTextBox" Grid.Row="2" Grid.Column="1"/>
                     <TextBlock Grid.Row="3" Style="{StaticResource LabelStyle}" Text="网口 Ping 地址"/><TextBox x:Name="EthernetPingIpTextBox" Grid.Row="3" Grid.Column="1" Margin="0,3,8,3" ToolTip="网口测试时由设备 Ping 的目标 IPv4 地址，例如路由器地址"/>
-                    <Border Grid.Row="4" Grid.ColumnSpan="3" Margin="0,14,0,0" Padding="14" Background="#F8FAFC" BorderBrush="#D8E0EA" BorderThickness="1" CornerRadius="6"><TextBlock x:Name="SummaryTextBlock" Foreground="#667085" TextWrapping="Wrap"/></Border>
+                    <TextBlock Grid.Row="4" Style="{StaticResource LabelStyle}" Text="网口灯观察时间 (ms)"/><TextBox x:Name="EthernetLedObservationTextBox" Grid.Row="4" Grid.Column="1" Margin="0,3,8,3" ToolTip="100M 和 1000M 每种灯状态的保持时间；测试固定只切换一组"/>
+                    <Border Grid.Row="5" Grid.ColumnSpan="3" Margin="0,14,0,0" Padding="14" Background="#F8FAFC" BorderBrush="#D8E0EA" BorderThickness="1" CornerRadius="6"><TextBlock x:Name="SummaryTextBlock" Foreground="#667085" TextWrapping="Wrap"/></Border>
                 </Grid>
             </TabItem>
             <TabItem Header="放电参数">

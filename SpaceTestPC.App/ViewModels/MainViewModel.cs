@@ -1664,6 +1664,19 @@ public sealed class MainViewModel : ObservableObject
         var requiresManualDecision = testEvent.Status == "running" &&
             (testEvent.TestId != "ethernet_led" || eventPhase == "operator_confirm_sequence");
 
+        // Ethernet LED testing has several running phases before the operator can
+        // make a decision (most importantly wait_cable). Do not retain a stale
+        // manual decision from a previous event while the cable is disconnected
+        // or the speed sequence is still running.
+        if (testEvent.TestId == "ethernet_led" &&
+            testEvent.Status == "running" &&
+            eventPhase != "operator_confirm_sequence")
+        {
+            _manualDecisionTestId = null;
+            _manualDecisionSessionId = null;
+            _manualDecisionPhase = string.Empty;
+        }
+
         if (requiresManualDecision &&
             (testEvent.TestId is "hdmi" or "lcd" or "ethernet_led" or "reset_button" ||
              testEvent.TestId == "indicator_led" && _testProfileMode == "finished_product"))
@@ -1673,6 +1686,7 @@ public sealed class MainViewModel : ObservableObject
 
         if (testEvent.TestId == "ethernet_led" && eventPhase == "operator_confirm_sequence")
         {
+            AppendLog($"ETHERNET_LED_PASS_VISIBLE utc={DateTimeOffset.UtcNow:O}");
             _submittedManualDecisionTests.Remove(testEvent.TestId);
             _manualDecisionPhase = eventPhase;
         }
@@ -3147,7 +3161,7 @@ public sealed class MainViewModel : ObservableObject
             result.TryAdd("speedWaitTimeoutMs", 10000);
             result.TryAdd("manualDecisionTimeoutMs", 15000);
             result.TryAdd("timeoutMs", 15000);
-            result.TryAdd("reconnectDelayMs", 8000);
+            result.TryAdd("reconnectDelayMs", 3000);
         }
         if (testId == "emmc")
         {

@@ -10,6 +10,7 @@ public sealed record EnvironmentSettingsData(
     string TargetName,
     string WifiSsid,
     string EthernetPingIp,
+    int EthernetLedObservationMs,
     string FirmwarePath,
     string ConnectionHost,
     int ConnectionPort,
@@ -61,6 +62,7 @@ public sealed class EnvironmentConfigurationService
             broadcaster?["broadcastName"]?.GetValue<string>() ?? string.Empty,
             parameters?["wifi"]?["ssid"]?.GetValue<string>() ?? string.Empty,
             parameters?["ethernet"]?["routerIp"]?.GetValue<string>() ?? "192.168.31.1",
+            parameters?["ethernet_led"]?["phaseDurationMs"]?.GetValue<int>() ?? 2000,
             upgrade?["localBinaryPath"]?.GetValue<string>() ?? string.Empty,
             connection?["host"]?.GetValue<string>() ?? "auto",
             connection?["port"]?.GetValue<int>() ?? 19001,
@@ -80,6 +82,7 @@ public sealed class EnvironmentConfigurationService
         string targetName,
         string wifiSsid,
         string ethernetPingIp,
+        int ethernetLedObservationMs,
         string firmwarePath,
         EthernetAdapterInfo adapter,
         string connectionHost,
@@ -127,6 +130,10 @@ public sealed class EnvironmentConfigurationService
         var ethernet = parameters["ethernet"] as JsonObject ?? new JsonObject();
         ethernet["routerIp"] = ethernetPingIp.Trim();
         parameters["ethernet"] = ethernet;
+        var ethernetLed = parameters["ethernet_led"] as JsonObject ?? new JsonObject();
+        ethernetLed["cycleCount"] = 1;
+        ethernetLed["phaseDurationMs"] = ethernetLedObservationMs;
+        parameters["ethernet_led"] = ethernetLed;
         testPlan["testParameters"] = parameters;
         root["testPlan"] = testPlan;
 

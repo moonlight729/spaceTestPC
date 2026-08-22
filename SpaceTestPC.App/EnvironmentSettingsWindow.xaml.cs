@@ -36,6 +36,7 @@ public partial class EnvironmentSettingsWindow : Window
         TargetNameTextBox.Text = _current.TargetName;
         WifiSsidTextBox.Text = _current.WifiSsid;
         EthernetPingIpTextBox.Text = _current.EthernetPingIp;
+        EthernetLedObservationTextBox.Text = _current.EthernetLedObservationMs.ToString();
         FirmwarePathTextBox.Text = _current.FirmwarePath;
         ConnectionHostTextBox.Text = string.IsNullOrWhiteSpace(_current.ConnectionHost) ? "auto" : _current.ConnectionHost;
         ConnectionPortTextBox.Text = _current.ConnectionPort.ToString();
@@ -154,6 +155,13 @@ public partial class EnvironmentSettingsWindow : Window
             return;
         }
 
+        if (!int.TryParse(EthernetLedObservationTextBox.Text, out var ethernetLedObservationMs) ||
+            ethernetLedObservationMs is < 500 or > 10000)
+        {
+            MessageBox.Show(this, "网口灯观察时间必须是 500 至 10000 毫秒之间的整数。", "配置校验", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(PortComboBox.Text) ||
             string.IsNullOrWhiteSpace(TargetNameTextBox.Text) ||
             string.IsNullOrWhiteSpace(WifiSsidTextBox.Text))
@@ -188,6 +196,7 @@ public partial class EnvironmentSettingsWindow : Window
                 TargetNameTextBox.Text,
                 WifiSsidTextBox.Text,
                 EthernetPingIpTextBox.Text,
+                ethernetLedObservationMs,
                 FirmwarePathTextBox.Text,
                 adapter,
                 host,

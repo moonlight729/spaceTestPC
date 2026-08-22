@@ -468,7 +468,8 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var remainingTests = testPlan.ToArray();
-        var reconnectAttempted = false;
+        var reconnectAttempts = 0;
+        var resumeCandidateTestId = string.Empty;
         var reconnectDelayMs = GetEthernetLedReconnectDelayMs(remainingTests);
 
         while (remainingTests.Length > 0)
@@ -498,6 +499,7 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
             var lastEventTestId = string.Empty;
             var lastEventStatus = string.Empty;
             var shouldReconnect = false;
+            var reconnectTransitionStartedAt = DateTimeOffset.UtcNow;
 
             try
             {
@@ -524,9 +526,11 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
                             (string.Equals(lastEventTestId, "ethernet_led", StringComparison.OrdinalIgnoreCase) ||
                              ethernetLedIndex > 0 &&
                              string.Equals(lastEventTestId, remainingTests[ethernetLedIndex - 1].Id, StringComparison.OrdinalIgnoreCase));
-                        if (!reconnectAttempted && disconnectCanBeEthernetLedTransition)
+                        if (reconnectAttempts < 6 && (disconnectCanBeEthernetLedTransition || !string.IsNullOrWhiteSpace(lastRunningTestId) || !string.IsNullOrWhiteSpace(resumeCandidateTestId)))
                         {
-                            Log?.Invoke($"PCBA session stream closed for ethernet_led link switching after {lastEventTestId} ({lastEventStatus}); reconnect will be attempted.");
+                            reconnectTransitionStartedAt = DateTimeOffset.UtcNow;
+                            Log?.Invoke($"ETHERNET_LED_RECONNECT_START utc={reconnectTransitionStartedAt:O} lastTest={lastEventTestId}.");
+                            Log?.Invoke($"PCBA session stream closed after {lastEventTestId} ({lastEventStatus}); automatic resume will be attempted.");
                             shouldReconnect = true;
                             break;
                         }
@@ -551,6 +555,7 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
                         !string.IsNullOrWhiteSpace(testEvent.TestId))
                     {
                         lastRunningTestId = testEvent.TestId;
+                        resumeCandidateTestId = testEvent.TestId;
                     }
 
                     if (testEvent.Status is "passed" or "failed" or "skipped" &&
@@ -580,25 +585,45 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
                 yield break;
             }
 
-            var resumeIndex = FindTestIndex(remainingTests, "ethernet_led");
+            var resumeTestId = string.Equals(lastEventTestId, "ethernet_led", StringComparison.OrdinalIgnoreCase)
+                ? "ethernet_led"
+                : !string.IsNullOrWhiteSpace(lastRunningTestId) ? lastRunningTestId : resumeCandidateTestId;
+            var resumeIndex = FindTestIndex(remainingTests, resumeTestId);
             if (resumeIndex < 0)
             {
                 throw new InvalidOperationException("Unable to resume Ethernet LED session after reconnect.");
             }
             remainingTests = remainingTests.Skip(resumeIndex).ToArray();
-            remainingTests[0] = WithParameter(remainingTests[0], "resumeAfterReconnect", true);
+            resumeCandidateTestId = remainingTests[0].Id;
+            if (string.Equals(remainingTests[0].Id, "ethernet_led", StringComparison.OrdinalIgnoreCase))
+            {
+                remainingTests[0] = WithParameter(remainingTests[0], "resumeAfterReconnect", true);
+            }
             if (remainingTests.Length == 0)
             {
                 yield break;
             }
 
-            reconnectAttempted = true;
-            Log?.Invoke($"PCBA session reconnect scheduled: lastTest={lastEventTestId}, lastStatus={lastEventStatus}, resumeTests={string.Join(",", remainingTests.Select(item => item.Id))}, delayMs={reconnectDelayMs}.");
-            if (reconnectDelayMs > 0)
-            {
-                await Task.Delay(reconnectDelayMs, cancellationToken);
-            }
+            reconnectAttempts++;
+            Log?.Invoke($"PCBA session reconnect scheduled: lastTest={lastEventTestId}, lastStatus={lastEventStatus}, resumeTests={string.Join(",", remainingTests.Select(item => item.Id))}, configuredDelayMs={reconnectDelayMs}; probing for service readiness.");
+            var retryDelayMs = Math.Min(4000, 250 * (1 << Math.Min(reconnectAttempts - 1, 4)));
+            var reconnectReadyAt = await WaitForPcbaReconnectAsync(
+                string.Equals(remainingTests[0].Id, "ethernet_led", StringComparison.OrdinalIgnoreCase)
+                    ? reconnectDelayMs
+                    : retryDelayMs,
+                cancellationToken);
+            Log?.Invoke($"ETHERNET_LED_RECONNECT_READY utc={reconnectReadyAt:O} elapsedMs={(reconnectReadyAt - reconnectTransitionStartedAt).TotalMilliseconds:F0}.");
         }
+    }
+
+    private async Task<DateTimeOffset> WaitForPcbaReconnectAsync(int configuredDelayMs, CancellationToken cancellationToken)
+    {
+        // Do not open a probe connection here: the device treats every new
+        // connection as an active session and would supersede the real resume.
+        var graceMs = Math.Clamp(configuredDelayMs, 250, 1500);
+        Log?.Invoke($"PCBA reconnect settle delay={graceMs}ms; opening one authoritative resume connection afterward.");
+        await Task.Delay(graceMs, cancellationToken);
+        return DateTimeOffset.UtcNow;
     }
 
     public async Task SubmitOperatorDecisionAsync(

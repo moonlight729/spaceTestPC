@@ -317,4 +317,33 @@ dmesg | tail -n 100
 3. 上位机是否按 `reconnectDelayMs` 等待。
 4. 重连计划是否给 `ethernet_led` 增加 `resumeAfterReconnect=true`。
 5. 设备是否进入 `waiting_decision_after_reconnect`，并继续执行后续测试。
+## 11. 110.76 当前实际部署方式（直接运行工作目录版本）
 
+设备当前以 `/userdata/work/spaceTest3576` 作为直接开发和运行目录，systemd 服务为
+`spacetest3576.service`，`ExecStart` 指向 `/userdata/work/spaceTest3576/spacetest3576`。
+
+每次设备端 `make` 成功后，执行：
+
+```sh
+cd /userdata/work/spaceTest3576
+echo '<BOARD_PASSWORD>' | sudo -S sh deploy/install_systemd_service.sh
+```
+
+如果旧的 `/vendor/originflow/bin/spacetest3576` 进程仍占用 19001 端口，先停止旧进程，再重启新服务：
+
+```sh
+echo '<BOARD_PASSWORD>' | sudo -S kill <OLD_VENDOR_PID>
+echo '<BOARD_PASSWORD>' | sudo -S systemctl restart spacetest3576.service
+systemctl --no-pager --full status spacetest3576.service
+```
+
+生效检查：
+
+```sh
+systemctl is-enabled spacetest3576.service
+systemctl is-active spacetest3576.service
+pgrep -a spacetest3576
+ss -lntp | grep ':19001'
+```
+
+预期为 `active (running)`，且进程路径为 `/userdata/work/spaceTest3576/spacetest3576`。不要同时运行厂商版本和工作目录版本，否则会因端口占用导致服务反复重启。

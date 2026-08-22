@@ -39,6 +39,17 @@ static int wait_test_decision(int fd, const char *test_id, int timeout_ms, int *
 static int wait_operator_decision_or_disconnect(int fd, const char *test_id, int timeout_ms, int *passed, int *disconnected);
 static int ethernet_led_resume_pending;
 static int ethernet_led_resume_code;
+static int ethernet_led_sequence_complete;
+
+static void ethernet_led_log(const char *phase, const char *detail)
+{
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    fprintf(stderr, "[ETHERNET_LED] ts=%lld.%03ld phase=%s %s\n",
+            (long long)now.tv_sec, now.tv_nsec / 1000000L,
+            phase != NULL ? phase : "unknown", detail != NULL ? detail : "");
+    fflush(stderr);
+}
 
 static int read_sysfs_long(const char *path, long long *value)
 {
@@ -2018,6 +2029,7 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
     int wait_cable_elapsed_ms = 0;
     int disconnected = 0;
     int passed = 0;
+    int resumed_after_reconnect = 0;
     int cycle;
     int phase;
 
@@ -2035,13 +2047,17 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
     if (timeout_ms <= 0) timeout_ms = 15000;
     if (reconnect_delay_ms < 1000) reconnect_delay_ms = 25000;
     if (pre_disconnect_delay_ms < 0) pre_disconnect_delay_ms = 0;
+    ethernet_led_log("start", resume_after_reconnect ? "resumeAfterReconnect=true" : "resumeAfterReconnect=false");
 
     if (resume_after_reconnect) {
+        ethernet_led_log("resume_check", ethernet_led_resume_pending ? "checkpoint_pending=true" : "checkpoint_pending=false");
         if (!ethernet_led_resume_pending) {
+            ethernet_led_log("fail", "missing_reconnect_checkpoint code=4814");
             return send_report(fd, "ethernet_led", "failed", 4814,
                                "No pending Ethernet LED reconnect checkpoint", "{}");
         }
         if (ethernet_led_resume_code != 0) {
+            ethernet_led_log("fail_during_disconnect", "resume_code_nonzero");
             int pending_code = ethernet_led_resume_code;
             ethernet_led_resume_pending = 0;
             ethernet_led_resume_code = 0;
@@ -2049,6 +2065,31 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
                                pending_code == 4812 ? "Unable to switch Ethernet LED speed mode" :
                                                       "Ethernet LED speed mode did not become stable",
                                "{\"phase\":\"failed_during_disconnect\"}");
+        }
+        resumed_after_reconnect = 1;
+        /* The control connection may have dropped during the first LED phase.
+         * Resume the complete LED sequence after reconnecting instead of
+         * jumping straight to operator confirmation; otherwise PASS could be
+         * shown after only the green/100M phase. The existing reconnect flow
+         * remains unchanged and the sequence will establish a fresh checkpoint
+         * before entering the decision phase. */
+        ethernet_led_log("resume_wait", "waiting_for_original_sequence");
+        {
+            int wait_ms = 0;
+            while (!ethernet_led_sequence_complete && ethernet_led_resume_code == 0 && wait_ms < 30000) {
+                sleep_ms_local(250);
+                wait_ms += 250;
+            }
+        }
+        if (ethernet_led_resume_code != 0) {
+            ethernet_led_log("fail_during_disconnect", "original_sequence_failed");
+            return send_report(fd, "ethernet_led", "failed", ethernet_led_resume_code,
+                               "Ethernet LED sequence failed during disconnect", "{\"phase\":\"failed_during_disconnect\"}");
+        }
+        if (!ethernet_led_sequence_complete) {
+            ethernet_led_log("fail", "original_sequence_wait_timeout code=4813");
+            return send_report(fd, "ethernet_led", "failed", 4813,
+                               "Ethernet LED sequence did not complete after reconnect", "{\"phase\":\"resume_wait_timeout\"}");
         }
         goto wait_for_decision;
     }
@@ -2058,6 +2099,7 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
              "\"requiresCableInsert\":true,\"waitCableTimeoutMs\":%d,\"elapsedMs\":0}",
              interface_name, wait_cable_timeout_ms);
     send_report(fd, "ethernet_led", "running", 0, "Insert Ethernet cable for LED test", data);
+    ethernet_led_log("wait_cable", "waiting_for_carrier");
 
     while (wait_cable_elapsed_ms < wait_cable_timeout_ms && !net_carrier_is_up(interface_name)) {
         sleep_ms_local(progress_report_interval_ms);
@@ -2070,6 +2112,7 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
     }
 
     if (!net_carrier_is_up(interface_name)) {
+        ethernet_led_log("fail", "ethernet_insert_timeout code=4811");
         snprintf(data, sizeof(data),
                  "{\"interfaceName\":\"%s\",\"phase\":\"wait_cable\",\"ethernetLinkUp\":false,"
                  "\"requiresCableInsert\":true,\"waitCableTimeoutMs\":%d,\"failureReason\":\"ethernet_insert_timeout\"}",
@@ -2090,8 +2133,10 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
         return -2;
     }
     if (pre_disconnect_delay_ms > 0) sleep_ms_local(pre_disconnect_delay_ms);
+    ethernet_led_log("prepare_disconnect", "saving_checkpoint_and_shutdown");
     ethernet_led_resume_pending = 1;
     ethernet_led_resume_code = 0;
+    ethernet_led_sequence_complete = 0;
     (void)shutdown(fd, SHUT_RDWR);
 
     for (cycle = 1; cycle <= cycle_count; ++cycle) {
@@ -2101,8 +2146,10 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
             const char *phase_name = gigabit ? "show_1000m" : "show_100m";
             const char *expected_led = gigabit ? led_1000m : led_100m;
             int actual_speed_mbps = -1;
+            ethernet_led_log(phase_name, gigabit ? "begin expected=1000Mbps led=yellow" : "begin expected=100Mbps led=green");
 
             if (run_ethernet_led_command(interface_name, gigabit) != 0) {
+                ethernet_led_log("fail", "ethtool_command_failed code=4812");
                 restore_ethernet_led_autoneg(interface_name);
                 snprintf(data, sizeof(data),
                          "{\"interfaceName\":\"%s\",\"phase\":\"%s\",\"cycleIndex\":%d,\"cycleCount\":%d,"
@@ -2115,8 +2162,10 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
 
             if (settle_ms > 0) sleep_ms_local(settle_ms);
             reconnect_ethernet_led_interface(interface_name);
+            ethernet_led_log("link_reconnect", phase_name);
             if (wait_ethernet_led_speed(interface_name, expected_speed_mbps,
                                         speed_wait_timeout_ms, &actual_speed_mbps) != 0) {
+                ethernet_led_log("fail", gigabit ? "yellow_speed_verify_failed code=4813" : "green_speed_verify_failed code=4813");
                 restore_ethernet_led_autoneg(interface_name);
                 snprintf(data, sizeof(data),
                          "{\"interfaceName\":\"%s\",\"phase\":\"%s\",\"cycleIndex\":%d,\"cycleCount\":%d,"
@@ -2140,14 +2189,20 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
                         gigabit ? "Ethernet LED 1000M mode; observe yellow LED" :
                                   "Ethernet LED 100M mode; observe green LED",
                         data);
+            ethernet_led_log("observe", phase_name);
             sleep_ms_local(phase_ms);
+            ethernet_led_log("observe_done", phase_name);
         }
     }
 
     restore_ethernet_led_autoneg(interface_name);
+    ethernet_led_log("sequence_done", resumed_after_reconnect ? "resumed_connection=true" : "initial_disconnect_complete");
+    ethernet_led_sequence_complete = 1;
+    if (resumed_after_reconnect) goto wait_for_decision;
     return -2;
 
 wait_for_decision:
+    ethernet_led_log("operator_confirm_sequence", "PASS_FAIL_now_allowed");
     snprintf(data, sizeof(data),
              "{\"phase\":\"operator_confirm_sequence\",\"led100mColor\":\"%s\","
              "\"led1000mColor\":\"%s\",\"requiresOperatorDecision\":true,\"timeoutMs\":%d}",
@@ -2157,6 +2212,7 @@ wait_for_decision:
     case 1:
         goto ethernet_led_decision_done;
     case 0:
+        ethernet_led_log("fail", "operator_decision_timeout code=3911");
         restore_ethernet_led_autoneg(interface_name);
         ethernet_led_resume_pending = 0;
         ethernet_led_resume_code = 0;
@@ -2171,6 +2227,7 @@ wait_for_decision:
     }
 
 ethernet_led_decision_done:
+        ethernet_led_log("decision", passed ? "PASS" : "FAIL");
         restore_ethernet_led_autoneg(interface_name);
         snprintf(data, sizeof(data),
                  "{\"manualObserved\":true,\"operatorConfirmed\":%s,\"interfaceName\":\"%s\","
