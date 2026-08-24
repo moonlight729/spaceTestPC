@@ -31,6 +31,9 @@ public partial class EnvironmentSettingsWindow : Window
         ModeComboBox.SelectedItem = ModeComboBox.Items.OfType<ComboBoxItem>()
             .FirstOrDefault(item => Equals(item.Tag, _current.Mode));
         if (ModeComboBox.SelectedIndex < 0) ModeComboBox.SelectedIndex = 0;
+        OperationModeComboBox.SelectedItem = OperationModeComboBox.Items.OfType<ComboBoxItem>()
+            .FirstOrDefault(item => Equals(item.Tag, _current.OperationMode));
+        if (OperationModeComboBox.SelectedIndex < 0) OperationModeComboBox.SelectedIndex = 0;
         ModeComboBox.SelectionChanged += ModeComboBox_OnSelectionChanged;
 
         PortComboBox.Text = _current.Port;
@@ -206,6 +209,7 @@ public partial class EnvironmentSettingsWindow : Window
             var isPcba = string.Equals(mode, "pcba", StringComparison.OrdinalIgnoreCase);
             _service.Save(
                 mode,
+                (OperationModeComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "production",
                 PortComboBox.Text,
                 TargetNameTextBox.Text,
                 WifiSsidTextBox.Text,

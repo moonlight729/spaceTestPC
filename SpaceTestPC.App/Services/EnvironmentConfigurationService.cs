@@ -6,6 +6,7 @@ namespace SpaceTestPC.App.Services;
 
 public sealed record EnvironmentSettingsData(
     string Mode,
+    string OperationMode,
     string Port,
     string TargetName,
     string WifiSsid,
@@ -62,6 +63,7 @@ public sealed class EnvironmentConfigurationService
         var parameters = testPlan?["testParameters"]?.AsObject();
         return new EnvironmentSettingsData(
             root["testMode"]?.GetValue<string>() ?? "finished_product",
+            root["operationMode"]?.GetValue<string>() ?? "production",
             broadcaster?["portName"]?.GetValue<string>() ?? string.Empty,
             broadcaster?["broadcastName"]?.GetValue<string>() ?? string.Empty,
             parameters?["wifi"]?["ssid"]?.GetValue<string>() ?? string.Empty,
@@ -86,6 +88,7 @@ public sealed class EnvironmentConfigurationService
 
     public void Save(
         string mode,
+        string operationMode,
         string port,
         string targetName,
         string wifiSsid,
@@ -107,6 +110,7 @@ public sealed class EnvironmentConfigurationService
         var path = ResolvePath();
         var root = ReadRoot(path);
         root["testMode"] = mode.Trim();
+        root["operationMode"] = string.Equals(operationMode, "developer", StringComparison.OrdinalIgnoreCase) ? "developer" : "production";
 
         var broadcaster = root["bluetoothBroadcaster"] as JsonObject ?? new JsonObject();
         broadcaster["portName"] = port.Trim();

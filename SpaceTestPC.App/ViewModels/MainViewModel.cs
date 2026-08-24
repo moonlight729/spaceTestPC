@@ -55,6 +55,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly UpgradeConfiguration _upgradeConfiguration;
     private readonly TestModeConfiguration _testModeConfiguration;
     private readonly string _testProfileMode;
+    private readonly string _operationMode;
     private readonly PcbaConnectionMode _connectionMode;
     private readonly BluetoothScanRequest _bluetoothRequest = new()
     {
@@ -180,6 +181,7 @@ public sealed class MainViewModel : ObservableObject
         _upgradeConfiguration = appConfiguration.Upgrade;
         _connectionMode = ParseConnectionMode(appConfiguration.PcbaConnection.Mode);
         _testProfileMode = string.IsNullOrWhiteSpace(appConfiguration.TestMode) ? "finished_product" : appConfiguration.TestMode.Trim().ToLowerInvariant();
+        _operationMode = string.Equals(appConfiguration.OperationMode, "developer", StringComparison.OrdinalIgnoreCase) ? "developer" : "production";
         _testModeConfiguration = appConfiguration.TestModes.TryGetValue(_testProfileMode, out var modeConfiguration)
             ? modeConfiguration
             : new TestModeConfiguration();
@@ -241,7 +243,11 @@ public sealed class MainViewModel : ObservableObject
             .Select((item, index) => new { item.Id, index })
             .ToDictionary(item => item.Id, item => item.index);
 
-        ScanCommand = new AsyncRelayCommand(() => HandleScanAsync(isMockSession: false), () => !string.IsNullOrWhiteSpace(ScannerInput) && !_isSessionRunning && !_isRetestLifecycleActive);
+        TestSelections = new ObservableCollection<TestSelectionItemViewModel>(_testPlan
+            .Where(item => !item.Skip)
+            .Select(item => new TestSelectionItemViewModel(item.Id, GetTestDisplayName(item.Id), true, OnTestSelectionChanged)));
+
+        ScanCommand = new AsyncRelayCommand(() => HandleScanAsync(isMockSession: false), () => !string.IsNullOrWhiteSpace(ScannerInput) && HasSelectedTests && !_isSessionRunning && !_isRetestLifecycleActive);
         StartMockSessionCommand = new RelayCommand(StartMockSession);
         ToggleContinuousTestCommand = new RelayCommand(ToggleContinuousTest);
         ConfirmManualPassCommand = new RelayCommand(() => SubmitManualDecision(true), () => IsManualDecisionVisible);
@@ -249,7 +255,9 @@ public sealed class MainViewModel : ObservableObject
         UpgradeNowCommand = new RelayCommand(() => _upgradeDecisionSource?.TrySetResult(true), () => IsUpgradePromptVisible);
         SkipUpgradeCommand = new RelayCommand(() => _upgradeDecisionSource?.TrySetResult(false), () => IsUpgradePromptVisible);
         ReadBoardStateCommand = new AsyncRelayCommand(ReadBoardStateAsync, () => !string.IsNullOrWhiteSpace(CurrentSn));
-        StartPhaseOneCommand = new AsyncRelayCommand(StartPhaseOneAsync, () => !string.IsNullOrWhiteSpace(CurrentSn));
+        StartPhaseOneCommand = new AsyncRelayCommand(StartPhaseOneAsync, () => !string.IsNullOrWhiteSpace(CurrentSn) && HasSelectedTests);
+        SelectAllTestsCommand = new RelayCommand(SelectAllTests, () => IsTestSelectionEnabled);
+        SelectWifiOnlyCommand = new RelayCommand(SelectWifiOnly, () => IsTestSelectionEnabled);
         ShowTestPageCommand = new RelayCommand(() => IsQueryPage = false);
         ShowQueryPageCommand = new AsyncRelayCommand(ShowQueryPageAsync);
         QueryRecordsCommand = new AsyncRelayCommand(RefreshQueryRecordsAsync);
@@ -469,6 +477,7 @@ public sealed class MainViewModel : ObservableObject
     public ObservableCollection<TestSessionRecord> QuerySessions { get; }
     public ObservableCollection<TestItemViewModel> TestItems { get; }
     public ObservableCollection<TestResultViewModel> TestResults { get; }
+    public ObservableCollection<TestSelectionItemViewModel> TestSelections { get; }
     public ObservableCollection<DirectionalKeyViewModel> DirectionalKeys { get; }
     public ObservableCollection<UsbTestStepViewModel> Usb2TestSteps { get; }
     public ObservableCollection<UsbTestStepViewModel> Usb3TestSteps { get; }
@@ -515,6 +524,28 @@ public sealed class MainViewModel : ObservableObject
     public AsyncRelayCommand QueryRecordsCommand { get; }
     public AsyncRelayCommand<string> RetestCommand { get; }
     public RelayCommand EndFailedBoardCommand { get; }
+    public RelayCommand SelectAllTestsCommand { get; }
+    public RelayCommand SelectWifiOnlyCommand { get; }
+    public bool HasSelectedTests => TestSelections.Any(item => item.IsSelected);
+    public bool IsDeveloperMode => _operationMode == "developer";
+    public string OperationModeDisplayName => IsDeveloperMode ? "开发者模式" : "生产模式";
+    public string OperationModeBackground => IsDeveloperMode ? "#0B4A8B" : "#166534";
+    public bool IsTestSelectionEnabled => IsDeveloperMode && !_isSessionRunning && !_isRetestLifecycleActive;
+    public string TestSelectionSummary
+    {
+        get
+        {
+            var selected = TestSelections.Where(item => item.IsSelected).ToArray();
+            if (selected.Length == TestSelections.Count)
+            {
+                return $"全流程（{selected.Length} 项）";
+            }
+
+            return selected.Length == 0
+                ? "未选择测试点"
+                : $"已选 {selected.Length} 项：{string.Join("、", selected.Select(item => item.DisplayName))}";
+        }
+    }
     public bool IsRetestLifecycleActive => _isRetestLifecycleActive;
     public bool IsQueryPage
     {
@@ -622,6 +653,62 @@ public sealed class MainViewModel : ObservableObject
         UpdateDebugOutput();
     }
 
+    private void SelectAllTests()
+    {
+        foreach (var item in TestSelections)
+        {
+            item.IsSelected = true;
+        }
+    }
+
+    private void SelectWifiOnly()
+    {
+        foreach (var item in TestSelections)
+        {
+            item.IsSelected = string.Equals(item.TestId, "wifi", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private void OnTestSelectionChanged()
+    {
+        RaisePropertyChanged(nameof(HasSelectedTests));
+        RaisePropertyChanged(nameof(TestSelectionSummary));
+        ScanCommand?.NotifyCanExecuteChanged();
+        StartPhaseOneCommand?.NotifyCanExecuteChanged();
+    }
+
+    private IReadOnlyList<TestPlanItem> GetSelectedTestPlan()
+    {
+        if (!IsDeveloperMode)
+        {
+            return _testPlan.Where(item => !item.Skip).ToArray();
+        }
+        var selectedIds = TestSelections
+            .Where(item => item.IsSelected)
+            .Select(item => item.TestId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return _testPlan.Where(item => selectedIds.Contains(item.Id)).ToArray();
+    }
+
+    private void ApplyTestSelectionToResults(IReadOnlyList<TestPlanItem> selectedPlan)
+    {
+        var selectedIds = selectedPlan.Select(item => item.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in TestItems.Where(item => item.TestId != ApplicationUpgradeItemId && !selectedIds.Contains(item.TestId)))
+        {
+            item.State = TestItemState.Skipped;
+        }
+
+        foreach (var result in TestResults.Where(result => result.TestId != ApplicationUpgradeItemId && !selectedIds.Contains(result.TestId)))
+        {
+            result.ApplyLocalResult(TestItemState.Skipped, "本次未选择该测试点。", new Dictionary<string, object?>
+            {
+                ["reason"] = "not_selected"
+            });
+        }
+
+        RaisePropertyChanged(nameof(StatusBarProgress));
+    }
+
     private async Task HandleScanAsync(bool isMockSession)
     {
         AppendLog($"Scan validation entered: rawLength={ScannerInput.Length}, raw={ScannerInput.Replace("\r", "<CR>").Replace("\n", "<LF>")}");
@@ -680,6 +767,9 @@ public sealed class MainViewModel : ObservableObject
         IsHistoryLoaded = false;
         HistorySummary = string.Empty;
         _isSessionRunning = true;
+        RaisePropertyChanged(nameof(IsTestSelectionEnabled));
+        SelectAllTestsCommand.NotifyCanExecuteChanged();
+        SelectWifiOnlyCommand.NotifyCanExecuteChanged();
         _sessionStartedAt = DateTimeOffset.Now;
         _sessionEndedAt = null;
         ScanCommand.NotifyCanExecuteChanged();
@@ -1115,7 +1205,16 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task RunUnifiedSessionAsync()
     {
-        AppendLog($"Session start requested: mode={_connectionMode}, session={SessionId}, sn={CurrentSn}, tests={string.Join(",", _testPlan.Select(item => item.Id))}");
+        var selectedTestPlan = GetSelectedTestPlan();
+        if (selectedTestPlan.Count == 0)
+        {
+            LastResult = "No tests selected";
+            OperatorInstruction = "请至少选择一个测试点后再开始测试。";
+            return;
+        }
+
+        ApplyTestSelectionToResults(selectedTestPlan);
+        AppendLog($"Session start requested: mode={_connectionMode}, session={SessionId}, sn={CurrentSn}, tests={string.Join(",", selectedTestPlan.Select(item => item.Id))}");
         LastResult = "Stage 1 running";
         OperatorInstruction = "正在接收底层测试结果，请勿断开产品连接。";
 
@@ -1137,7 +1236,7 @@ public sealed class MainViewModel : ObservableObject
             SetTestItemState(BoardStateItemName, TestItemState.Passed);
 
             AppendLog("ADB/session.start request sent.");
-            await foreach (var testEvent in client.RunSessionAsync(SessionId, CurrentSn, _testPlan))
+            await foreach (var testEvent in client.RunSessionAsync(SessionId, CurrentSn, selectedTestPlan))
             {
                 if (testEvent.Event == "test.report")
                 {
@@ -1402,6 +1501,9 @@ public sealed class MainViewModel : ObservableObject
         if (_isRetestLifecycleActive == value)
         {
             RefreshRetestAvailability();
+            RaisePropertyChanged(nameof(IsTestSelectionEnabled));
+            SelectAllTestsCommand.NotifyCanExecuteChanged();
+            SelectWifiOnlyCommand.NotifyCanExecuteChanged();
             return;
         }
 
@@ -1411,6 +1513,9 @@ public sealed class MainViewModel : ObservableObject
         EndFailedBoardCommand.NotifyCanExecuteChanged();
         RetestCommand.NotifyCanExecuteChanged();
         ScanCommand.NotifyCanExecuteChanged();
+        RaisePropertyChanged(nameof(IsTestSelectionEnabled));
+        SelectAllTestsCommand.NotifyCanExecuteChanged();
+        SelectWifiOnlyCommand.NotifyCanExecuteChanged();
     }
 
     private void RefreshRetestAvailability()

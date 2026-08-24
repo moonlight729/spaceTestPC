@@ -17,13 +17,14 @@
         </StackPanel>
         <TabControl Grid.Row="1" Padding="12">
             <TabItem Header="基本设置">
-                <Grid Margin="12"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                    <TextBlock Style="{StaticResource LabelStyle}" Text="当前工作模式"/><ComboBox x:Name="ModeComboBox" Grid.Column="1"><ComboBoxItem Tag="finished_product" Content="整机测试"/><ComboBoxItem Tag="pcba" Content="PCBA 测试"/></ComboBox>
-                    <TextBlock Grid.Row="1" Style="{StaticResource LabelStyle}" Text="蓝牙串口"/><ComboBox x:Name="PortComboBox" Grid.Row="1" Grid.Column="1" IsEditable="True"/>
-                    <TextBlock Grid.Row="2" Style="{StaticResource LabelStyle}" Text="蓝牙目标名称"/><TextBox x:Name="TargetNameTextBox" Grid.Row="2" Grid.Column="1"/>
-                    <TextBlock Grid.Row="3" Style="{StaticResource LabelStyle}" Text="Wi-Fi SSID"/><TextBox x:Name="WifiSsidTextBox" Grid.Row="3" Grid.Column="1"/>
-                    <TextBlock Grid.Row="4" Style="{StaticResource LabelStyle}" Text="Wi-Fi 最低 RSSI (dBm)"/><TextBox x:Name="WifiMinRssiTextBox" Grid.Row="4" Grid.Column="1"/>
-                    <TextBlock Grid.Row="5" Style="{StaticResource LabelStyle}" Text="蓝牙最低 RSSI (dBm)"/><TextBox x:Name="BluetoothMinRssiTextBox" Grid.Row="5" Grid.Column="1"/>
+                <Grid Margin="12"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <TextBlock Style="{StaticResource LabelStyle}" Text="当前产品模式"/><ComboBox x:Name="ModeComboBox" Grid.Column="1"><ComboBoxItem Tag="finished_product" Content="整机测试"/><ComboBoxItem Tag="pcba" Content="PCBA 测试"/></ComboBox>
+                    <TextBlock Grid.Row="1" Style="{StaticResource LabelStyle}" Text="操作模式"/><ComboBox x:Name="OperationModeComboBox" Grid.Row="1" Grid.Column="1"><ComboBoxItem Tag="production" Content="生产模式"/><ComboBoxItem Tag="developer" Content="开发者模式"/></ComboBox>
+                    <TextBlock Grid.Row="2" Style="{StaticResource LabelStyle}" Text="蓝牙串口"/><ComboBox x:Name="PortComboBox" Grid.Row="2" Grid.Column="1" IsEditable="True"/>
+                    <TextBlock Grid.Row="3" Style="{StaticResource LabelStyle}" Text="蓝牙目标名称"/><TextBox x:Name="TargetNameTextBox" Grid.Row="3" Grid.Column="1"/>
+                    <TextBlock Grid.Row="4" Style="{StaticResource LabelStyle}" Text="Wi-Fi SSID"/><TextBox x:Name="WifiSsidTextBox" Grid.Row="4" Grid.Column="1"/>
+                    <TextBlock Grid.Row="5" Style="{StaticResource LabelStyle}" Text="Wi-Fi 最低 RSSI (dBm)"/><TextBox x:Name="WifiMinRssiTextBox" Grid.Row="5" Grid.Column="1"/>
+                    <TextBlock Grid.Row="6" Style="{StaticResource LabelStyle}" Text="蓝牙最低 RSSI (dBm)"/><TextBox x:Name="BluetoothMinRssiTextBox" Grid.Row="6" Grid.Column="1"/>
                 </Grid>
             </TabItem>
             <TabItem Header="设备通信">

@@ -80,14 +80,10 @@
                         <TextBlock HorizontalAlignment="Center" Foreground="#B8C7D9" Text="BOARD" />
                         <TextBlock HorizontalAlignment="Center" FontSize="16" FontWeight="SemiBold" Foreground="White" Text="{Binding BoardId}" TextTrimming="CharacterEllipsis" />
                     </StackPanel>
-                    <StackPanel Width="120" Margin="0,0,18,0" HorizontalAlignment="Center">
-                        <TextBlock HorizontalAlignment="Center" Foreground="#B8C7D9" Text="CONNECTION" />
-                        <TextBlock HorizontalAlignment="Center" FontSize="16" FontWeight="SemiBold" Foreground="White" Text="{Binding BoardState}" TextTrimming="CharacterEllipsis" />
-                    </StackPanel>
                     <StackPanel Width="112" HorizontalAlignment="Center">
                         <TextBlock HorizontalAlignment="Center" FontSize="14" Foreground="#B8C7D9" Text="MODE" />
-                        <Border Margin="0,4,0,0" Padding="10,4" Background="{Binding SnPolicyModeBackground}" CornerRadius="12" HorizontalAlignment="Center">
-                            <TextBlock HorizontalAlignment="Center" FontSize="14" FontWeight="SemiBold" Foreground="{Binding SnPolicyModeForeground}" Text="{Binding SnPolicyModeName}" />
+                        <Border Margin="0,4,0,0" Padding="10,4" Background="{Binding OperationModeBackground}" CornerRadius="12" HorizontalAlignment="Center">
+                            <TextBlock HorizontalAlignment="Center" FontSize="14" FontWeight="SemiBold" Foreground="White" Text="{Binding OperationModeDisplayName}" />
                         </Border>
                     </StackPanel>
                 </StackPanel>
@@ -158,14 +154,43 @@
             <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0">
                 <Grid>
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="64" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
-                    <Grid Margin="18,0" VerticalAlignment="Center">
+                    <Grid Margin="18,14,18,10" VerticalAlignment="Center">
                         <TextBlock Style="{StaticResource SectionTitle}" Text="TEST SEQUENCE" />
                         <TextBlock HorizontalAlignment="Right" Foreground="#667085" Text="{Binding TestOverviewColumns, StringFormat={}{0} items}" />
                     </Grid>
-                    <ListBox Grid.Row="1"
+                    <Border Grid.Row="1" Margin="12,0,12,8" Padding="10" Background="#F8FAFC" BorderBrush="#D0D5DD" BorderThickness="1" CornerRadius="6">
+                        <StackPanel>
+                            <Grid>
+                                <TextBlock FontWeight="SemiBold" Text="测试点选择" />
+                                <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+                                    <Button Height="26" Padding="10,0" Command="{Binding SelectAllTestsCommand}" Content="全选" />
+                                    <Button Height="26" Margin="8,0,0,0" Padding="10,0" Background="#175CD3" Foreground="White" Command="{Binding SelectWifiOnlyCommand}" Content="仅 Wi-Fi" />
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Margin="0,7,0,5" Foreground="#475467" Text="{Binding TestSelectionSummary}" TextTrimming="CharacterEllipsis" />
+                            <Expander Header="展开自定义选择">
+                                <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto">
+                                    <ItemsControl ItemsSource="{Binding TestSelections}" IsEnabled="{Binding IsTestSelectionEnabled}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <CheckBox Width="116" Margin="0,5,4,2" IsChecked="{Binding IsSelected}" Content="{Binding DisplayName}" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </Expander>
+                        </StackPanel>
+                    </Border>
+                    <ListBox Grid.Row="2"
                              x:Name="TestSequenceListBox"
                              Margin="8,0,3,8"
                              Background="Transparent"
@@ -223,7 +248,7 @@
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-                    <Border Grid.RowSpan="2" Height="4" VerticalAlignment="Bottom" Background="#DCEBFA" CornerRadius="0,0,7,7" Panel.ZIndex="2" />
+                    <Border Grid.RowSpan="3" Height="4" VerticalAlignment="Bottom" Background="#DCEBFA" CornerRadius="0,0,7,7" Panel.ZIndex="2" />
                 </Grid>
             </Border>
 
