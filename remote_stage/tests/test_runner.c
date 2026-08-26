@@ -1887,7 +1887,7 @@ static int run_finished_product_fan(int fd, const char *test_start, const char *
     char pwm_path[192] = "/sys/class/hwmon/hwmon12/pwm1";
     char tach_path[192] = "/sys/class/hwmon/hwmon12/tach_rpm";
     char data[1024];
-    int start_value = param_int(test_start, test_end, "startValue", 100);
+    int start_value = param_int(test_start, test_end, "startValue", 255);
     int stop_value = param_int(test_start, test_end, "stopValue", 0);
     int settle_ms = param_int(test_start, test_end, "tachSettleMs", 1000);
     int tach_sample_count = param_int(test_start, test_end, "tachSampleCount", 3);
