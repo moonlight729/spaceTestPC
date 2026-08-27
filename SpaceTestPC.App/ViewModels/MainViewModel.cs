@@ -257,6 +257,7 @@ public sealed class MainViewModel : ObservableObject
         ReadBoardStateCommand = new AsyncRelayCommand(ReadBoardStateAsync, () => !string.IsNullOrWhiteSpace(CurrentSn));
         StartPhaseOneCommand = new AsyncRelayCommand(StartPhaseOneAsync, () => !string.IsNullOrWhiteSpace(CurrentSn) && HasSelectedTests);
         SelectAllTestsCommand = new RelayCommand(SelectAllTests, () => IsTestSelectionEnabled);
+        DeselectAllTestsCommand = new RelayCommand(DeselectAllTests, () => IsTestSelectionEnabled);
         SelectWifiOnlyCommand = new RelayCommand(SelectWifiOnly, () => IsTestSelectionEnabled);
         ShowTestPageCommand = new RelayCommand(() => IsQueryPage = false);
         ShowQueryPageCommand = new AsyncRelayCommand(ShowQueryPageAsync);
@@ -525,6 +526,7 @@ public sealed class MainViewModel : ObservableObject
     public AsyncRelayCommand<string> RetestCommand { get; }
     public RelayCommand EndFailedBoardCommand { get; }
     public RelayCommand SelectAllTestsCommand { get; }
+    public RelayCommand DeselectAllTestsCommand { get; }
     public RelayCommand SelectWifiOnlyCommand { get; }
     public bool HasSelectedTests => TestSelections.Any(item => item.IsSelected);
     public bool IsDeveloperMode => _operationMode == "developer";
@@ -669,6 +671,14 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    private void DeselectAllTests()
+    {
+        foreach (var item in TestSelections)
+        {
+            item.IsSelected = false;
+        }
+    }
+
     private void OnTestSelectionChanged()
     {
         RaisePropertyChanged(nameof(HasSelectedTests));
@@ -769,6 +779,7 @@ public sealed class MainViewModel : ObservableObject
         _isSessionRunning = true;
         RaisePropertyChanged(nameof(IsTestSelectionEnabled));
         SelectAllTestsCommand.NotifyCanExecuteChanged();
+        DeselectAllTestsCommand.NotifyCanExecuteChanged();
         SelectWifiOnlyCommand.NotifyCanExecuteChanged();
         _sessionStartedAt = DateTimeOffset.Now;
         _sessionEndedAt = null;
@@ -1503,6 +1514,7 @@ public sealed class MainViewModel : ObservableObject
             RefreshRetestAvailability();
             RaisePropertyChanged(nameof(IsTestSelectionEnabled));
             SelectAllTestsCommand.NotifyCanExecuteChanged();
+            DeselectAllTestsCommand.NotifyCanExecuteChanged();
             SelectWifiOnlyCommand.NotifyCanExecuteChanged();
             return;
         }
@@ -1515,6 +1527,7 @@ public sealed class MainViewModel : ObservableObject
         ScanCommand.NotifyCanExecuteChanged();
         RaisePropertyChanged(nameof(IsTestSelectionEnabled));
         SelectAllTestsCommand.NotifyCanExecuteChanged();
+        DeselectAllTestsCommand.NotifyCanExecuteChanged();
         SelectWifiOnlyCommand.NotifyCanExecuteChanged();
     }
 
@@ -2991,7 +3004,7 @@ public sealed class MainViewModel : ObservableObject
     public async Task InitializeAsync()
     {
         await ValidateUpgradePackageAsync();
-        if (_upgradePackageReady && _connectionMode != PcbaConnectionMode.Mock)
+        if (_upgradePackageReady && _connectionMode != PcbaConnectionMode.Mock && _upgradeConfiguration.Enabled)
         {
             OperatorInstruction = _connectionMode == PcbaConnectionMode.Tcp
                 ? "升级软件已准备，正在通过网线检查设备程序。"
@@ -3008,6 +3021,12 @@ public sealed class MainViewModel : ObservableObject
 
             _adbUpgradeMonitorTimer.Start();
         }
+        else if (!_upgradeConfiguration.Enabled)
+        {
+            _adbUpgradeMonitorTimer.Stop();
+            OperatorInstruction = "升级检查已关闭，请扫描 SN 开始测试。";
+            UpdateDebugOutput();
+        }
         if (_bluetoothBroadcasterService is not null)
         {
             try { await _bluetoothBroadcasterService.ConfigureAsync(); AppendLog("Bluetooth broadcaster configured."); }
@@ -3021,6 +3040,7 @@ public sealed class MainViewModel : ObservableObject
         if (!_upgradeConfiguration.Enabled)
         {
             _upgradePackageReady = true;
+            _applicationUpgradeCheckCompleted = true;
             _localUpgradeBinaryPath = "升级检查已关闭";
             var disabledResult = TestResults.FirstOrDefault(item => item.TestId == ApplicationUpgradeItemId);
             disabledResult?.ApplyLocalResult(TestItemState.Skipped, "升级检查已关闭。", new Dictionary<string, object?>
@@ -3028,6 +3048,7 @@ public sealed class MainViewModel : ObservableObject
                 ["status"] = "disabled"
             });
             SetTestItemState(ApplicationUpgradeItemId, TestItemState.Skipped);
+            RaiseApplicationUpgradeStatusChanged();
         }
         else
         {
