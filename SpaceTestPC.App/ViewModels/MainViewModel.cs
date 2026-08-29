@@ -21,7 +21,7 @@ public sealed class MainViewModel : ObservableObject
     private static readonly IReadOnlyList<TestPlanItem> AllTestPlan =
     [
         new() { Id = "board_state" }, new() { Id = "hdmi" }, new() { Id = "keys" }, new() { Id = "lcd" },
-        new() { Id = "ethernet" }, new() { Id = "wifi" }, new() { Id = "bluetooth" }, new() { Id = "fingerprint" },
+        new() { Id = "wifi" }, new() { Id = "bluetooth" }, new() { Id = "fingerprint" },
         new() { Id = "battery_management" }, new() { Id = "typec_fast_charge" }, new() { Id = "typec_camera" }, new() { Id = "tf" }, new() { Id = "emmc" }, new() { Id = "ddr" }, new() { Id = "usb2" }, new() { Id = "usb3" },
         new() { Id = "pcba_test_points" }, new() { Id = "ethernet_led" }, new() { Id = "indicator_led" }, new() { Id = "fan" }, new() { Id = "otg" }, new() { Id = "reset_button" }
     ];
@@ -87,6 +87,7 @@ public sealed class MainViewModel : ObservableObject
     private string _testMode = "Unknown";
     private string _voltageStatus = "Idle";
     private string _batteryStatus = "Idle";
+    private string _jxTvmStatus = "未启用";
     private string _lastResult = "Waiting";
     private string _operatorInstruction = "请扫描产品 SN，系统将自动按顺序执行检测。";
     private string _debugOutput = "Waiting for scan...";
@@ -284,6 +285,10 @@ public sealed class MainViewModel : ObservableObject
         };
         Usb2TestSteps = CreateUsbTestSteps();
         Usb3TestSteps = CreateUsbTestSteps();
+        PcbaTestPoints = new ObservableCollection<PcbaTestPointViewModel>(Enumerable.Range(1, 32).Select(i => new PcbaTestPointViewModel
+        {
+            Id = $"TP{i:00}", Name = $"TP{i:00}", Channel = i - 1, MinMv = 0, MaxMv = 5000
+        }));
         SelectedTestResult = TestResults.FirstOrDefault();
         TestOverviewColumns = Math.Max(1, TestItems.Count);
 
@@ -436,6 +441,12 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    public string JxTvmStatus
+    {
+        get => _jxTvmStatus;
+        private set => SetProperty(ref _jxTvmStatus, value);
+    }
+
     public bool IsTfRemovalPromptVisible
     {
         get => _isTfRemovalPromptVisible;
@@ -450,6 +461,7 @@ public sealed class MainViewModel : ObservableObject
     }
     public string StatusBarDatabase => "数据库：正常";
     public string StatusBarLog => "日志：正常";
+    public string StatusBarJxTvm => $"电压检测仪：{JxTvmStatus}";
     public string StatusBarConnection => _connectionStatus;
     public string StatusBarCurrentTime => DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss");
     public int TestOverviewColumns { get; }
@@ -482,6 +494,7 @@ public sealed class MainViewModel : ObservableObject
     public ObservableCollection<DirectionalKeyViewModel> DirectionalKeys { get; }
     public ObservableCollection<UsbTestStepViewModel> Usb2TestSteps { get; }
     public ObservableCollection<UsbTestStepViewModel> Usb3TestSteps { get; }
+    public ObservableCollection<PcbaTestPointViewModel> PcbaTestPoints { get; }
     public ObservableCollection<UsbTestStepViewModel> SelectedUsbTestSteps =>
         SelectedTestResult?.TestId == "usb3" ? Usb3TestSteps : Usb2TestSteps;
     public bool IsHistoryLoaded
@@ -505,6 +518,7 @@ public sealed class MainViewModel : ObservableObject
                 RaisePropertyChanged(nameof(ManualDecisionPrompt));
                 RaisePropertyChanged(nameof(IsKeyTestDetailVisible));
                 RaisePropertyChanged(nameof(IsUsbTestDetailVisible));
+                RaisePropertyChanged(nameof(IsPcbaTestPointsDetailVisible));
                 RaisePropertyChanged(nameof(SelectedUsbTestSteps));
                 ConfirmManualPassCommand.NotifyCanExecuteChanged();
                 ConfirmManualFailCommand.NotifyCanExecuteChanged();
@@ -601,12 +615,13 @@ public sealed class MainViewModel : ObservableObject
     public bool IsManualDecisionVisible => !string.IsNullOrWhiteSpace(_manualDecisionTestId);
     public bool IsKeyTestDetailVisible => SelectedTestResult?.TestId == "keys";
     public bool IsUsbTestDetailVisible => SelectedTestResult?.TestId is "usb2" or "usb3";
+    public bool IsPcbaTestPointsDetailVisible => SelectedTestResult?.TestId == "pcba_test_points";
     public string ManualDecisionPrompt => _manualDecisionTestId switch
     {
         "hdmi" => "请观察 HDMI 输出是否正常，然后手动选择通过或失败。",
         "keys" => "请依次按下上、下、左、右方向键和确认键，再按下 Recovery 实体键；六键全部识别后自动通过。",
         "lcd" => "请观察 LCD：背光正常、RGB 测试图案完整且稳定，无花屏、缺线、闪烁或明显亮暗异常后再判定。",
-        "ethernet_led" when _manualDecisionPhase == "operator_confirm_sequence" => "请确认刚才百兆、千兆两个阶段的网口灯均按提示点亮。",
+        "ethernet_led" when _manualDecisionPhase == "operator_confirm_sequence" => "网口已恢复通信，请确认切换到 100M 后绿灯是否正常点亮。",
         "ethernet_led" => "请等待网口灯切换完成后再判定。",
         "indicator_led" => "请依次观察红灯、绿灯、蓝灯各亮 2 秒，最后确认绿灯正常后选择 PASS 或 FAIL。",
         "reset_button" => "请按下设备复位键，确认 LCD 屏幕已经息屏后选择 PASS 或 FAIL。",
@@ -1772,6 +1787,7 @@ public sealed class MainViewModel : ObservableObject
             AppendLog($"HDMI event applied: status={testEvent.Status}, code={testEvent.ResultCode}, message={testEvent.Message}, session={SessionId}, activeClient={_activeSessionClient?.GetType().Name ?? "null"}");
         }
         result?.Apply(testEvent);
+        if (testEvent.TestId == "pcba_test_points") UpdatePcbaTestPoints(testEvent);
         if (result is not null && ShouldSelectTestResult(testEvent, result))
         {
             SelectedTestResult = result;
@@ -2045,6 +2061,22 @@ public sealed class MainViewModel : ObservableObject
             "usb2" or "usb3" => BuildUsbInstruction(testEvent),
             _ => BuildGeneralTestInstruction(testEvent)
         };
+    }
+
+    private void UpdatePcbaTestPoints(TestSessionEvent testEvent)
+    {
+        if (testEvent.Status == "running" && GetDataString(testEvent.Data, "phase", "") is "sampling" or "start")
+            foreach (var point in PcbaTestPoints) point.Reset();
+        if (!testEvent.Data.TryGetValue("points", out var raw) || raw is not JsonElement array || array.ValueKind != JsonValueKind.Array) return;
+        foreach (var item in array.EnumerateArray())
+        {
+            if (!item.TryGetProperty("index", out var idx) || !idx.TryGetInt32(out var index)) continue;
+            var point = PcbaTestPoints.FirstOrDefault(p => p.Channel + 1 == index);
+            if (point is null) continue;
+            double? voltage = item.TryGetProperty("voltageMv", out var value) && value.TryGetDouble(out var v) ? v : null;
+            var passed = item.TryGetProperty("passed", out var ok) && ok.ValueKind == JsonValueKind.True;
+            point.Apply(voltage, testEvent.Status == "running" ? "running" : passed ? "passed" : "failed");
+        }
     }
 
     private static string BuildUsbInstruction(TestSessionEvent testEvent)
@@ -3003,6 +3035,7 @@ public sealed class MainViewModel : ObservableObject
 
     public async Task InitializeAsync()
     {
+        await ProbeJxTvmAsync();
         await ValidateUpgradePackageAsync();
         if (_upgradePackageReady && _connectionMode != PcbaConnectionMode.Mock && _upgradeConfiguration.Enabled)
         {
@@ -3154,6 +3187,26 @@ public sealed class MainViewModel : ObservableObject
             RaisePropertyChanged(nameof(StatusBarConnection));
         }
         AppendLog(message);
+    }
+
+    private async Task ProbeJxTvmAsync()
+    {
+        if (_jxTvmService is null || !_jxTvmService.IsEnabled)
+        {
+            JxTvmStatus = "未启用";
+        }
+        else
+        {
+            try
+            {
+                await _jxTvmService.ProbeAsync();
+                JxTvmStatus = "已连接";
+                AppendLog("JX-TVM probe succeeded.");
+            }
+            catch (UnauthorizedAccessException) { JxTvmStatus = "串口被占用"; }
+            catch (Exception ex) { JxTvmStatus = "通信异常"; AppendLog($"JX-TVM probe failed: {ex.Message}"); }
+        }
+        RaisePropertyChanged(nameof(StatusBarJxTvm));
     }
 
     public void ClearScannerInput() => ScannerInput = string.Empty;

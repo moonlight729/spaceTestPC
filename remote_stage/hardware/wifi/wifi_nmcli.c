@@ -8,10 +8,12 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define WIFI_CMD_OUTPUT 32768
+#define WIFI_CMD_OUTPUT 131072
 #define WIFI_SCAN_BUSY_RETRY_INTERVAL_MS 1000
 #define WIFI_RADIO_ENABLE_TIMEOUT_MS 5000
 #define WIFI_RADIO_POLL_INTERVAL_MS 200
+#define WIFI_SCAN_SETTLE_MS 1000
+#define WIFI_MAX_RSSI_SAMPLES 12
 
 static char *trim_left(char *text);
 
@@ -205,6 +207,32 @@ static int parse_scan_output(const char *scan_output, const char *target_ssid, s
     return 0;
 }
 
+static int parse_link_output(const char *output, const char *target_ssid, int *rssi)
+{
+    char buffer[4096];
+    char ssid[256] = "";
+    int signal = -127;
+    int have_signal = 0;
+    char *line;
+    char *save;
+
+    if (output == NULL || target_ssid == NULL || rssi == NULL) return 0;
+    snprintf(buffer, sizeof(buffer), "%s", output);
+    for (line = strtok_r(buffer, "\n", &save); line != NULL; line = strtok_r(NULL, "\n", &save)) {
+        char *trimmed = trim_left(line);
+        double signal_dbm;
+        if (strncmp(trimmed, "SSID: ", 6) == 0) {
+            snprintf(ssid, sizeof(ssid), "%s", trimmed + 6);
+        } else if (sscanf(trimmed, "signal: %lf dBm", &signal_dbm) == 1) {
+            signal = (int)(signal_dbm < 0 ? signal_dbm - 0.5 : signal_dbm + 0.5);
+            have_signal = 1;
+        }
+    }
+    if (strcmp(ssid, target_ssid) != 0 || !have_signal) return 0;
+    *rssi = signal;
+    return 1;
+}
+
 int wifi_nmcli_open(struct wifi_device *device, const char *interface_name)
 {
     char output[4096];
@@ -249,7 +277,13 @@ int wifi_nmcli_scan_signal(struct wifi_device *device, const struct wifi_request
     char *radio_argv[] = { "nmcli", "radio", "wifi", "on", NULL };
     char *link_argv[] = { "ip", "link", "set", "dev", device != NULL ? device->interface_name : NULL, "up", NULL };
     char *scan_argv[] = { "iw", "dev", device != NULL ? device->interface_name : NULL, "scan", NULL };
+    char *link_status_argv[] = { "iw", "dev", device != NULL ? device->interface_name : NULL, "link", NULL };
     int radio_enabled = 0;
+    int max_scan_attempts;
+    int scan_interval_ms;
+    int target_valid_samples;
+    int elapsed_ms = 0;
+    int attempt;
 
     if (device == NULL || request == NULL || result == NULL ||
         request->ssid == NULL || request->ssid[0] == '\0' || device->interface_name[0] == '\0') {
@@ -288,25 +322,85 @@ int wifi_nmcli_scan_signal(struct wifi_device *device, const struct wifi_request
         return -1;
     }
 
-    {
-        int elapsed_ms = 0;
-        int scan_timeout_ms = request->scan_timeout_ms > 0 ? request->scan_timeout_ms : 10000;
-        int scan_rc = -1;
-        for (;;) {
-            output[0] = '\0';
-            scan_rc = run_command(scan_argv, output, sizeof(output));
-            if (scan_rc == 0) break;
-            if (!output_contains_scan_busy(output) ||
-                elapsed_ms + WIFI_SCAN_BUSY_RETRY_INTERVAL_MS >= scan_timeout_ms) break;
-            result->scan_retry_count++;
-            sleep_ms_wifi(WIFI_SCAN_BUSY_RETRY_INTERVAL_MS);
-            elapsed_ms += WIFI_SCAN_BUSY_RETRY_INTERVAL_MS;
+    max_scan_attempts = request->max_scan_attempts > 0 ? request->max_scan_attempts : 8;
+    if (max_scan_attempts > WIFI_MAX_RSSI_SAMPLES) max_scan_attempts = WIFI_MAX_RSSI_SAMPLES;
+    scan_interval_ms = request->scan_interval_ms >= 0 ? request->scan_interval_ms : 1000;
+    target_valid_samples = request->target_valid_samples > 0 ? request->target_valid_samples : 3;
+    if (target_valid_samples > max_scan_attempts) target_valid_samples = max_scan_attempts;
+
+    sleep_ms_wifi(WIFI_SCAN_SETTLE_MS);
+
+    /* Reading the current association is much more reliable than starting an
+       active scan on drivers that occasionally return an empty scan result.
+       It still reports the real nl80211 dBm value. */
+    for (attempt = 0; attempt < target_valid_samples; ++attempt) {
+        int link_rssi;
+        output[0] = '\0';
+        if (run_command(link_status_argv, output, sizeof(output)) != 0 ||
+            !parse_link_output(output, request->ssid, &link_rssi)) {
+            break;
         }
+        result->rssi_samples[result->valid_sample_count++] = link_rssi;
+        result->used_link_rssi = true;
+        if (result->valid_sample_count < target_valid_samples) sleep_ms_wifi(300);
+    }
+    if (result->valid_sample_count >= target_valid_samples) goto calculate_result;
+
+    for (attempt = 1; attempt <= max_scan_attempts; ++attempt) {
+        struct wifi_result sample;
+        int scan_rc;
+        int scan_timeout_ms = request->scan_timeout_ms > 0 ? request->scan_timeout_ms : 15000;
+
+        memset(&sample, 0, sizeof(sample));
+        sample.rssi = -127;
+        output[0] = '\0';
+        result->scan_attempt_count++;
+        scan_rc = run_command(scan_argv, output, sizeof(output));
         if (scan_rc != 0) {
-            set_error(result, 4101, output[0] ? output : "iw scan command failed", "scan_command_failed");
-            return -1;
+            if (strstr(output, "Operation not permitted") != NULL || strstr(output, "Permission denied") != NULL) {
+                set_error(result, 4101, output, "scan_permission_denied");
+                return -1;
+            }
+            if (output_contains_scan_busy(output)) result->scan_busy_count++;
+            result->scan_retry_count++;
+        } else {
+            (void)parse_scan_output(output, request->ssid, &sample);
+            if (sample.found) {
+                result->rssi_samples[result->valid_sample_count++] = sample.rssi;
+                if (result->valid_sample_count >= target_valid_samples) break;
+            } else if (output[0] == '\0') {
+                result->empty_scan_count++;
+            }
+        }
+
+        if (attempt < max_scan_attempts && elapsed_ms + scan_interval_ms < scan_timeout_ms) {
+            sleep_ms_wifi(scan_interval_ms);
+            elapsed_ms += scan_interval_ms;
+        } else if (attempt < max_scan_attempts) {
+            break;
         }
     }
 
-    return parse_scan_output(output, request->ssid, result);
+calculate_result:
+    if (result->valid_sample_count > 0) {
+        int i;
+        int j;
+        for (i = 0; i < result->valid_sample_count - 1; ++i) {
+            for (j = i + 1; j < result->valid_sample_count; ++j) {
+                if (result->rssi_samples[j] < result->rssi_samples[i]) {
+                    int value = result->rssi_samples[i];
+                    result->rssi_samples[i] = result->rssi_samples[j];
+                    result->rssi_samples[j] = value;
+                }
+            }
+        }
+        result->found = true;
+        result->rssi = result->rssi_samples[result->valid_sample_count / 2];
+        return 0;
+    }
+
+    result->found = false;
+    result->rssi = -127;
+    set_error(result, 4100, "Target SSID not found after repeated scans", "ssid_not_found");
+    return 0;
 }

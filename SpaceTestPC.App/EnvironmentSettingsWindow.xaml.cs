@@ -12,6 +12,7 @@ namespace SpaceTestPC.App;
 
 public partial class EnvironmentSettingsWindow : Window
 {
+    private const string DeveloperModePassword = "yctc__20__26";
     private readonly EnvironmentConfigurationService _service = new();
     private readonly EnvironmentSettingsData _current;
 
@@ -35,8 +36,11 @@ public partial class EnvironmentSettingsWindow : Window
             .FirstOrDefault(item => Equals(item.Tag, _current.OperationMode));
         if (OperationModeComboBox.SelectedIndex < 0) OperationModeComboBox.SelectedIndex = 0;
         ModeComboBox.SelectionChanged += ModeComboBox_OnSelectionChanged;
+        UpdateDeveloperPasswordState();
 
         PortComboBox.Text = _current.Port;
+        JxTvmPortComboBox.ItemsSource = PortComboBox.ItemsSource;
+        JxTvmPortComboBox.Text = _current.JxTvmPort;
         TargetNameTextBox.Text = _current.TargetName;
         WifiSsidTextBox.Text = _current.WifiSsid;
         LoadRssiSettings();
@@ -68,6 +72,15 @@ public partial class EnvironmentSettingsWindow : Window
     private void AdapterComboBox_OnSelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateSummary();
 
     private void ModeComboBox_OnSelectionChanged(object sender, SelectionChangedEventArgs e) => LoadRssiSettings();
+
+    private void OperationModeComboBox_OnSelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateDeveloperPasswordState();
+
+    private void UpdateDeveloperPasswordState()
+    {
+        var developer = string.Equals((OperationModeComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString(), "developer", StringComparison.OrdinalIgnoreCase);
+        DeveloperPasswordBox.IsEnabled = developer;
+        if (!developer) DeveloperPasswordBox.Clear();
+    }
 
     private void LoadRssiSettings()
     {
@@ -156,6 +169,15 @@ public partial class EnvironmentSettingsWindow : Window
     private void Save_Click(object sender, RoutedEventArgs e)
     {
         var mode = (ModeComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "finished_product";
+        var operationMode = (OperationModeComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "production";
+        if (string.Equals(operationMode, "developer", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(DeveloperPasswordBox.Password, DeveloperModePassword, StringComparison.Ordinal))
+        {
+            MessageBox.Show(this, "开发者模式密码错误，无法保存。", "权限验证", MessageBoxButton.OK, MessageBoxImage.Warning);
+            DeveloperPasswordBox.Clear();
+            DeveloperPasswordBox.Focus();
+            return;
+        }
         if (AdapterComboBox.SelectedItem is not EthernetAdapterInfo adapter)
         {
             MessageBox.Show(this, "请选择已连接且具有 IPv4 地址的物理以太网卡。", "配置校验", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -209,8 +231,9 @@ public partial class EnvironmentSettingsWindow : Window
             var isPcba = string.Equals(mode, "pcba", StringComparison.OrdinalIgnoreCase);
             _service.Save(
                 mode,
-                (OperationModeComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "production",
+                operationMode,
                 PortComboBox.Text,
+                JxTvmPortComboBox.Text,
                 TargetNameTextBox.Text,
                 WifiSsidTextBox.Text,
                 EthernetPingIpTextBox.Text,

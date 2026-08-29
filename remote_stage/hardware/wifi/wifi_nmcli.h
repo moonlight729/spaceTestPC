@@ -10,6 +10,9 @@ struct wifi_device {
 struct wifi_request {
     const char *ssid;
     int scan_timeout_ms;
+    int max_scan_attempts;
+    int scan_interval_ms;
+    int target_valid_samples;
 };
 
 struct wifi_result {
@@ -18,6 +21,12 @@ struct wifi_result {
     int rssi;
     int error_code;
     int scan_retry_count;
+    int scan_attempt_count;
+    int valid_sample_count;
+    int scan_busy_count;
+    int empty_scan_count;
+    bool used_link_rssi;
+    int rssi_samples[12];
     char failure_reason[64];
     char error_message[256];
 };

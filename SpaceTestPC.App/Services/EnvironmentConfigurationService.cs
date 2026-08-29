@@ -8,6 +8,7 @@ public sealed record EnvironmentSettingsData(
     string Mode,
     string OperationMode,
     string Port,
+    string JxTvmPort,
     string TargetName,
     string WifiSsid,
     string EthernetPingIp,
@@ -65,6 +66,7 @@ public sealed class EnvironmentConfigurationService
             root["testMode"]?.GetValue<string>() ?? "finished_product",
             root["operationMode"]?.GetValue<string>() ?? "production",
             broadcaster?["portName"]?.GetValue<string>() ?? string.Empty,
+            root["jxTvm"]?["portName"]?.GetValue<string>() ?? "COM6",
             broadcaster?["broadcastName"]?.GetValue<string>() ?? string.Empty,
             parameters?["wifi"]?["ssid"]?.GetValue<string>() ?? string.Empty,
             parameters?["ethernet"]?["routerIp"]?.GetValue<string>() ?? "192.168.31.1",
@@ -90,6 +92,7 @@ public sealed class EnvironmentConfigurationService
         string mode,
         string operationMode,
         string port,
+        string jxTvmPort,
         string targetName,
         string wifiSsid,
         string ethernetPingIp,
@@ -111,6 +114,10 @@ public sealed class EnvironmentConfigurationService
         var root = ReadRoot(path);
         root["testMode"] = mode.Trim();
         root["operationMode"] = string.Equals(operationMode, "developer", StringComparison.OrdinalIgnoreCase) ? "developer" : "production";
+
+        var jxTvm = root["jxTvm"] as JsonObject ?? new JsonObject();
+        jxTvm["portName"] = jxTvmPort.Trim();
+        root["jxTvm"] = jxTvm;
 
         var broadcaster = root["bluetoothBroadcaster"] as JsonObject ?? new JsonObject();
         broadcaster["portName"] = port.Trim();

@@ -605,7 +605,7 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
             }
 
             reconnectAttempts++;
-            Log?.Invoke($"PCBA session reconnect scheduled: lastTest={lastEventTestId}, lastStatus={lastEventStatus}, resumeTests={string.Join(",", remainingTests.Select(item => item.Id))}, configuredDelayMs={reconnectDelayMs}; probing for service readiness.");
+            Log?.Invoke($"PCBA session reconnect scheduled: lastTest={lastEventTestId}, lastStatus={lastEventStatus}, resumeTests={string.Join(",", remainingTests.Select(item => item.Id))}, configuredDelayMs={reconnectDelayMs}; waiting for Ethernet PHY renegotiation.");
             var retryDelayMs = Math.Min(4000, 250 * (1 << Math.Min(reconnectAttempts - 1, 4)));
             var reconnectReadyAt = await WaitForPcbaReconnectAsync(
                 string.Equals(remainingTests[0].Id, "ethernet_led", StringComparison.OrdinalIgnoreCase)
@@ -620,7 +620,10 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
     {
         // Do not open a probe connection here: the device treats every new
         // connection as an active session and would supersede the real resume.
-        var graceMs = Math.Clamp(configuredDelayMs, 250, 1500);
+        // Ethernet LED speed switching drops the control link and the PHY needs
+        // time to renegotiate.  Do not shorten the test-plan delay: doing so
+        // sends the resume session while the board is still unavailable.
+        var graceMs = Math.Clamp(configuredDelayMs, 1000, 30000);
         Log?.Invoke($"PCBA reconnect settle delay={graceMs}ms; opening one authoritative resume connection afterward.");
         await Task.Delay(graceMs, cancellationToken);
         return DateTimeOffset.UtcNow;

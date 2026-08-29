@@ -337,11 +337,6 @@ static const char *map_vbus_type_name(int vbus_stat)
     }
 }
 
-static int is_external_charger_type(int vbus_stat)
-{
-    return vbus_stat == 0x3 || vbus_stat == 0x4 || vbus_stat == 0x5 || vbus_stat == 0x6;
-}
-
 static int run_board_state(int fd)
 {
     struct board_state state;
@@ -370,6 +365,9 @@ static int run_wifi(int fd, const struct app_config *config, const char *test_st
     int retry_interval_ms = 2000;
     int decision_timeout_ms = 5000;
     int scan_timeout_ms = 10000;
+    int scan_attempt_count = 8;
+    int scan_interval_ms = 1000;
+    int target_valid_samples = 3;
     int min_rssi = -55;
     int attempt;
     struct wifi_request request = {
@@ -387,12 +385,18 @@ static int run_wifi(int fd, const struct app_config *config, const char *test_st
     retry_interval_ms = param_int(test_start, test_end, "retryIntervalMs", retry_interval_ms);
     decision_timeout_ms = param_int(test_start, test_end, "decisionTimeoutMs", decision_timeout_ms);
     scan_timeout_ms = param_int(test_start, test_end, "scanTimeoutMs", scan_timeout_ms);
+    scan_attempt_count = param_int(test_start, test_end, "scanAttemptCount", scan_attempt_count);
+    scan_interval_ms = param_int(test_start, test_end, "scanIntervalMs", scan_interval_ms);
+    target_valid_samples = param_int(test_start, test_end, "targetValidSamples", target_valid_samples);
     min_rssi = param_int(test_start, test_end, "minRssi", min_rssi);
     if (max_retry_count <= 0) max_retry_count = 1;
     if (retry_interval_ms < 0) retry_interval_ms = 0;
     if (decision_timeout_ms <= 0) decision_timeout_ms = 5000;
     if (scan_timeout_ms <= 0) scan_timeout_ms = 10000;
     request.scan_timeout_ms = scan_timeout_ms;
+    request.max_scan_attempts = scan_attempt_count;
+    request.scan_interval_ms = scan_interval_ms;
+    request.target_valid_samples = target_valid_samples;
 
     if (wifi_nmcli_open(&device, interface_name[0] != '\0' ? interface_name : NULL) != 0) {
         send_report(fd, "wifi", "failed", 4103, "Unable to open Wi-Fi interface", "{}");
@@ -423,20 +427,26 @@ static int run_wifi(int fd, const struct app_config *config, const char *test_st
                      "{\"ssid\":\"%s\",\"interfaceName\":\"%s\",\"phase\":\"scan_completed\",\"attempt\":%d,"
                      "\"maxRetryCount\":%d,\"scanTimeoutMs\":%d,\"readyForHostDecision\":true,"
                      "\"wifiEnabled\":%s,\"found\":%s,\"rssi\":%d,\"minRssi\":%d,"
+                     "\"scanAttemptCount\":%d,\"validSampleCount\":%d,\"scanBusyCount\":%d,\"emptyScanCount\":%d,\"rssiSource\":\"%s\","
                      "\"failureReason\":\"%s\"}",
                      ssid, device.interface_name, attempt, max_retry_count, scan_timeout_ms,
                      result.wifi_enabled ? "true" : "false",
                      result.found ? "true" : "false",
-                     result.rssi, min_rssi, result.failure_reason);
+                     result.rssi, min_rssi, result.scan_attempt_count, result.valid_sample_count,
+                     result.scan_busy_count, result.empty_scan_count,
+                     result.used_link_rssi ? "iw_link" : "iw_scan", result.failure_reason);
         } else {
             snprintf(data, sizeof(data),
                      "{\"ssid\":\"%s\",\"interfaceName\":\"%s\",\"phase\":\"scan_completed\",\"attempt\":%d,"
                      "\"maxRetryCount\":%d,\"scanTimeoutMs\":%d,\"readyForHostDecision\":true,"
-                     "\"wifiEnabled\":%s,\"found\":%s,\"rssi\":%d,\"minRssi\":%d}",
+                     "\"wifiEnabled\":%s,\"found\":%s,\"rssi\":%d,\"minRssi\":%d,"
+                     "\"scanAttemptCount\":%d,\"validSampleCount\":%d,\"scanBusyCount\":%d,\"emptyScanCount\":%d,\"rssiSource\":\"%s\"}",
                      ssid, device.interface_name, attempt, max_retry_count, scan_timeout_ms,
                      result.wifi_enabled ? "true" : "false",
                      result.found ? "true" : "false",
-                     result.rssi, min_rssi);
+                     result.rssi, min_rssi, result.scan_attempt_count, result.valid_sample_count,
+                     result.scan_busy_count, result.empty_scan_count,
+                     result.used_link_rssi ? "iw_link" : "iw_scan");
         }
         send_report(fd, "wifi", "running", 0, "Wi-Fi scan completed, waiting for host decision", data);
 
@@ -1291,6 +1301,9 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
     int vbus_stat = 0;
     int bc12_done = 0;
     int charger_detected = 0;
+    char charger_status_path[256] = "/sys/class/power_supply/bq2579x-charger/status";
+    char required_charger_status[32] = "Charging";
+    char charger_status[64] = "unknown";
     int last_known_charging = 0;
     int last_known_charge_stage = 0;
     int last_known_pmic_status0 = 0;
@@ -1310,6 +1323,8 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
     wait_ready_timeout_ms = param_int(test_start, test_end, "waitReadyTimeoutMs", wait_ready_timeout_ms);
     wait_charger_timeout_ms = param_int(test_start, test_end, "waitChargerTimeoutMs", wait_charger_timeout_ms);
     progress_report_interval_ms = param_int(test_start, test_end, "progressReportIntervalMs", progress_report_interval_ms);
+    param_string(test_start, test_end, "chargerStatusPath", charger_status_path, sizeof(charger_status_path));
+    param_string(test_start, test_end, "requiredStatus", required_charger_status, sizeof(required_charger_status));
     if (progress_report_interval_ms <= 0) progress_report_interval_ms = 1000;
     memset(&result, 0, sizeof(result));
 
@@ -1358,15 +1373,17 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
          * already-inserted charger wait the full 30 seconds. Poll the PMIC
          * during the preparation window and continue immediately once an
          * external charger type is confirmed. */
-        if (read_charge_status_bits(&pmic_status0, &pmic_status1, &vbus_present,
-                                    &pg_stat, &chg_stat, &vbus_stat, &bc12_done) == 0 &&
-            vbus_present && pg_stat && is_external_charger_type(vbus_stat)) {
+        if (read_sysfs_text(charger_status_path, charger_status, sizeof(charger_status)) == 0 &&
+            strcmp(charger_status, required_charger_status) == 0) {
             break;
         }
         snprintf(data, sizeof(data),
                  "{\"phase\":\"wait_manual_charger_insert\",\"chargeControlCommand\":\"enable_charge\",\"chargeControlOk\":true,"
                  "\"pmicCommunicationOk\":true,\"chargerConnected\":false,\"charging\":false,\"chargeStage\":\"not_charging\","
+                 "\"chargerStatusPath\":\"%s\",\"chargerStatus\":\"%s\",\"requiredStatus\":\"%s\","
+                 "\"detectionSource\":\"power_supply_status\","
                  "\"manualInsertWaitMs\":%d,\"elapsedMs\":%d,\"samplingDurationMs\":%d}",
+                 charger_status_path, charger_status, required_charger_status,
                  manual_insert_wait_ms, elapsed_ms, request.timeout_ms);
         send_report(fd, "typec_fast_charge", "running", 0,
                     "Please insert charger before automatic detection starts", data);
@@ -1389,10 +1406,12 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
      * VBUS source instead of SDP/CDP/OTG-only power.
      */
     while (elapsed_ms <= wait_charger_timeout_ms) {
-        if (read_charge_status_bits(&pmic_status0, &pmic_status1, &vbus_present, &pg_stat, &chg_stat, &vbus_stat, &bc12_done) == 0) {
-            if (vbus_present && pg_stat && is_external_charger_type(vbus_stat)) {
+        int status_read_ok = read_sysfs_text(charger_status_path, charger_status, sizeof(charger_status)) == 0;
+        int pmic_read_ok = read_charge_status_bits(&pmic_status0, &pmic_status1, &vbus_present,
+                                                   &pg_stat, &chg_stat, &vbus_stat, &bc12_done) == 0;
+        if (status_read_ok && strcmp(charger_status, required_charger_status) == 0) {
                 charger_detected = 1;
-                last_known_charging = chg_stat != 0;
+                last_known_charging = 1;
                 last_known_charge_stage = chg_stat;
                 last_known_pmic_status0 = pmic_status0;
                 last_known_pmic_status1 = pmic_status1;
@@ -1400,41 +1419,44 @@ static int run_fast_charge(int fd, const struct app_config *config, const char *
                 last_known_bc12_done = bc12_done;
                 snprintf(data, sizeof(data),
                          "{\"phase\":\"charger_detected\",\"chargeControlCommand\":\"enable_charge\",\"chargeControlOk\":true,"
-                         "\"pmicCommunicationOk\":true,\"chargerConnected\":true,\"charging\":%s,\"chargeStage\":\"%s\","
+                         "\"pmicCommunicationOk\":%s,\"chargerConnected\":true,\"charging\":true,\"chargeStage\":\"%s\","
+                         "\"chargerStatusPath\":\"%s\",\"chargerStatus\":\"%s\",\"requiredStatus\":\"%s\",\"detectionSource\":\"power_supply_status\","
                          "\"pmicStatus0\":%d,\"pmicStatus1\":%d,\"vbusStat\":%d,\"vbusType\":\"%s\",\"bc12Done\":%d,\"elapsedMs\":%d,\"samplingDurationMs\":%d}",
-                         chg_stat != 0 ? "true" : "false",
+                         pmic_read_ok ? "true" : "false",
                          map_charge_stage_name(chg_stat),
+                         charger_status_path, charger_status, required_charger_status,
                          pmic_status0, pmic_status1, vbus_stat, map_vbus_type_name(vbus_stat), bc12_done, elapsed_ms, request.timeout_ms);
                 send_report(fd, "typec_fast_charge", "running", 0, "Charger detected, start sampling", data);
                 break;
-            }
-
+        }
+        if (status_read_ok) {
             snprintf(data, sizeof(data),
                      "{\"phase\":\"wait_charger\",\"chargeControlCommand\":\"enable_charge\",\"chargeControlOk\":true,"
-                     "\"pmicCommunicationOk\":true,\"chargerConnected\":%s,\"charging\":false,\"chargeStage\":\"not_charging\","
+                     "\"pmicCommunicationOk\":%s,\"chargerConnected\":false,\"charging\":false,\"chargeStage\":\"not_charging\","
+                     "\"chargerStatusPath\":\"%s\",\"chargerStatus\":\"%s\",\"requiredStatus\":\"%s\",\"detectionSource\":\"power_supply_status\","
                      "\"pmicStatus0\":%d,\"pmicStatus1\":%d,\"vbusStat\":%d,\"vbusType\":\"%s\",\"bc12Done\":%d,"
                      "\"waitChargerTimeoutMs\":%d,\"elapsedMs\":%d,\"samplingDurationMs\":%d}",
-                     is_external_charger_type(vbus_stat) ? "true" : "false",
+                     pmic_read_ok ? "true" : "false", charger_status_path, charger_status, required_charger_status,
                      pmic_status0, pmic_status1, vbus_stat, map_vbus_type_name(vbus_stat), bc12_done,
                      wait_charger_timeout_ms, elapsed_ms, request.timeout_ms);
-            send_report(fd, "typec_fast_charge", "running", 0,
-                        is_external_charger_type(vbus_stat) ? "Waiting for charger stabilization" : "Waiting for external charger, OTG power does not count",
-                        data);
+            send_report(fd, "typec_fast_charge", "running", 0, "Waiting for charger status Charging", data);
         } else {
             snprintf(data, sizeof(data),
                      "{\"phase\":\"wait_charger\",\"chargeControlCommand\":\"enable_charge\",\"chargeControlOk\":true,"
                      "\"pmicCommunicationOk\":false,\"chargerConnected\":false,\"charging\":false,\"chargeStage\":\"unknown\","
                      "\"vbusType\":\"unknown\",\"waitChargerTimeoutMs\":%d,\"elapsedMs\":%d,\"samplingDurationMs\":%d}",
                      wait_charger_timeout_ms, elapsed_ms, request.timeout_ms);
-            send_report(fd, "typec_fast_charge", "running", 0, "Waiting for charger, PMIC status read retrying", data);
+            send_report(fd, "typec_fast_charge", "running", 0, "Waiting for charger status file read retry", data);
         }
 
         if (elapsed_ms >= wait_charger_timeout_ms) {
             snprintf(data, sizeof(data),
                      "{\"phase\":\"wait_charger\",\"chargeControlCommand\":\"enable_charge\",\"chargeControlOk\":true,"
                      "\"pmicCommunicationOk\":true,\"chargerConnected\":false,\"charging\":false,\"chargeStage\":\"not_charging\","
+                     "\"chargerStatusPath\":\"%s\",\"chargerStatus\":\"%s\",\"requiredStatus\":\"%s\",\"detectionSource\":\"power_supply_status\","
                      "\"vbusStat\":%d,\"vbusType\":\"%s\",\"bc12Done\":%d,"
                      "\"waitChargerTimeoutMs\":%d,\"elapsedMs\":%d,\"samplingDurationMs\":%d,\"failureReason\":\"charger_insert_timeout\"}",
+                     charger_status_path, charger_status, required_charger_status,
                      vbus_stat, map_vbus_type_name(vbus_stat), bc12_done,
                      wait_charger_timeout_ms, elapsed_ms, request.timeout_ms);
             return send_report(fd, "typec_fast_charge", "failed", 4405, "Charger insert timeout", data);
@@ -1957,17 +1979,6 @@ static int run_ethernet_led_shell(const char *command)
     return rc == 0 ? 0 : -1;
 }
 
-static void reconnect_ethernet_led_interface(const char *interface_name)
-{
-    char command[256];
-    snprintf(command, sizeof(command), "ip link set dev %s up >/dev/null 2>&1", interface_name);
-    (void)run_ethernet_led_shell(command);
-    snprintf(command, sizeof(command), "nmcli device reapply %s >/dev/null 2>&1", interface_name);
-    (void)run_ethernet_led_shell(command);
-    snprintf(command, sizeof(command), "nmcli device connect %s >/dev/null 2>&1", interface_name);
-    (void)run_ethernet_led_shell(command);
-}
-
 static int read_ethernet_led_speed_mbps(const char *interface_name)
 {
     char path[160];
@@ -2016,7 +2027,6 @@ static void restore_ethernet_led_autoneg(const char *interface_name)
     }
     (void)run_ethernet_led_shell(command);
 
-    reconnect_ethernet_led_interface(interface_name);
 }
 
 static int run_ethernet_led(int fd, const char *test_start, const char *test_end)
@@ -2027,9 +2037,9 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
     char led_1000m[32] = "yellow";
     int wait_cable_timeout_ms = param_int(test_start, test_end, "waitCableTimeoutMs", 15000);
     int progress_report_interval_ms = param_int(test_start, test_end, "progressReportIntervalMs", 1000);
-    int phase_ms = param_int(test_start, test_end, "phaseDurationMs", 2000);
+    int phase_ms = param_int(test_start, test_end, "phaseDurationMs", 1500);
     int settle_ms = param_int(test_start, test_end, "settleMs", 2000);
-    int speed_wait_timeout_ms = param_int(test_start, test_end, "speedWaitTimeoutMs", 10000);
+    int speed_wait_timeout_ms = param_int(test_start, test_end, "speedWaitTimeoutMs", 3000);
     int cycle_count = param_int(test_start, test_end, "cycleCount", 1);
     int timeout_ms = param_int(test_start, test_end, "manualDecisionTimeoutMs", 15000);
     int reconnect_delay_ms = param_int(test_start, test_end, "reconnectDelayMs", 25000);
@@ -2048,9 +2058,9 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
     timeout_ms = param_int(test_start, test_end, "timeoutMs", timeout_ms);
     if (wait_cable_timeout_ms <= 0) wait_cable_timeout_ms = 15000;
     if (progress_report_interval_ms <= 0) progress_report_interval_ms = 1000;
-    if (phase_ms <= 0) phase_ms = 2000;
+    if (phase_ms <= 0) phase_ms = 1500;
     if (settle_ms < 0) settle_ms = 0;
-    if (speed_wait_timeout_ms <= 0) speed_wait_timeout_ms = 10000;
+    if (speed_wait_timeout_ms <= 0) speed_wait_timeout_ms = 3000;
     if (cycle_count <= 0) cycle_count = 1;
     if (cycle_count > 10) cycle_count = 10;
     if (timeout_ms <= 0) timeout_ms = 15000;
@@ -2148,9 +2158,13 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
     ethernet_led_sequence_complete = 0;
     (void)shutdown(fd, SHUT_RDWR);
 
+    /* Keep the default 1000M/yellow state visible before switching to 100M. */
+    ethernet_led_log("observe_default", "yellow_default_1500ms");
+    sleep_ms_local(1500);
+
     for (cycle = 1; cycle <= cycle_count; ++cycle) {
-        for (phase = 0; phase < 2; ++phase) {
-            const int gigabit = phase == 1;
+        for (phase = 0; phase < 1; ++phase) {
+            const int gigabit = 0;
             const int expected_speed_mbps = gigabit ? 1000 : 100;
             const char *phase_name = gigabit ? "show_1000m" : "show_100m";
             const char *expected_led = gigabit ? led_1000m : led_100m;
@@ -2170,7 +2184,6 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
             }
 
             if (settle_ms > 0) sleep_ms_local(settle_ms);
-            reconnect_ethernet_led_interface(interface_name);
             ethernet_led_log("link_reconnect", phase_name);
             if (wait_ethernet_led_speed(interface_name, expected_speed_mbps,
                                         speed_wait_timeout_ms, &actual_speed_mbps) != 0) {
@@ -2213,9 +2226,9 @@ static int run_ethernet_led(int fd, const char *test_start, const char *test_end
 wait_for_decision:
     ethernet_led_log("operator_confirm_sequence", "PASS_FAIL_now_allowed");
     snprintf(data, sizeof(data),
-             "{\"phase\":\"operator_confirm_sequence\",\"led100mColor\":\"%s\","
-             "\"led1000mColor\":\"%s\",\"requiresOperatorDecision\":true,\"timeoutMs\":%d}",
-             led_100m, led_1000m, timeout_ms);
+             "{\"phase\":\"operator_confirm_sequence\",\"expectedLed\":\"%s\","
+             "\"expectedSpeedMbps\":100,\"requiresOperatorDecision\":true,\"reconnected\":true,\"timeoutMs\":%d}",
+             led_100m, timeout_ms);
     send_report(fd, "ethernet_led", "running", 0, "Confirm the Ethernet LED sequence", data);
     switch (wait_operator_decision_or_disconnect(fd, "ethernet_led", timeout_ms, &passed, &disconnected)) {
     case 1:
@@ -2240,7 +2253,7 @@ ethernet_led_decision_done:
         restore_ethernet_led_autoneg(interface_name);
         snprintf(data, sizeof(data),
                  "{\"manualObserved\":true,\"operatorConfirmed\":%s,\"interfaceName\":\"%s\","
-                 "\"displayMode\":\"100m_1000m_led_sequence\",\"timeoutMs\":%d}",
+                 "\"displayMode\":\"100m_green_after_reconnect\",\"expectedSpeedMbps\":100,\"timeoutMs\":%d}",
                  passed ? "true" : "false", interface_name, timeout_ms);
         ethernet_led_resume_pending = 0;
         ethernet_led_resume_code = 0;

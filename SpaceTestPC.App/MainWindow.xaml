@@ -168,6 +168,7 @@
                                 <TextBlock FontWeight="SemiBold" Text="测试点选择" />
                                 <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
                                     <Button Height="26" Padding="10,0" Command="{Binding SelectAllTestsCommand}" Content="全选" />
+                                    <Button Height="26" Margin="8,0,0,0" Padding="10,0" Command="{Binding DeselectAllTestsCommand}" Content="全不选" />
                                     <Button Height="26" Margin="8,0,0,0" Padding="10,0" Background="#175CD3" Foreground="White" Command="{Binding SelectWifiOnlyCommand}" Content="仅 Wi-Fi" />
                                 </StackPanel>
                             </Grid>
@@ -324,6 +325,20 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
+                            <ItemsControl Margin="0,12,0,8" ItemsSource="{Binding PcbaTestPoints}" Visibility="{Binding IsPcbaTestPointsDetailVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="4" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,10,10" Padding="10" Background="{Binding Background}" CornerRadius="7">
+                                            <StackPanel>
+                                                <Grid><TextBlock FontWeight="Bold" Foreground="{Binding Foreground}" Text="{Binding Id}"/><TextBlock HorizontalAlignment="Right" FontWeight="Bold" Foreground="{Binding Foreground}" Text="{Binding StatusDisplay}"/></Grid>
+                                                <TextBlock Margin="0,7,0,0" FontSize="16" FontWeight="SemiBold" Foreground="{Binding Foreground}" Text="{Binding ValueDisplay}"/>
+                                                <TextBlock Margin="0,3,0,0" FontSize="11" Foreground="{Binding Foreground}" Text="{Binding RangeDisplay}"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
                             <TextBlock Margin="0,12,0,0" FontSize="16" TextWrapping="Wrap" Text="{Binding SelectedTestResult.Message}" />
                             <Grid Margin="0,22,0,0">
                                 <Grid.ColumnDefinitions>
@@ -410,6 +425,8 @@
                     <TextBlock Foreground="#667085" Text="{Binding StatusBarElapsedTime}" />
                     <TextBlock Margin="14,0" Foreground="#CBD5E1" Text="|" />
                     <TextBlock Foreground="#175CD3" FontWeight="SemiBold" Text="{Binding StatusBarConnection}" />
+                    <TextBlock Margin="14,0" Foreground="#CBD5E1" Text="|" />
+                    <TextBlock Foreground="#667085" Text="{Binding StatusBarJxTvm}" />
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Foreground="#15803D" Text="{Binding StatusBarDatabase}" />
