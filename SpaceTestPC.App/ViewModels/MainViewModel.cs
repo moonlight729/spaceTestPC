@@ -283,8 +283,10 @@ public sealed class MainViewModel : ObservableObject
         }.Concat(_testPlan.Select(item => new TestResultViewModel(item.Id, GetTestDisplayName(item.Id)))));
         DirectionalKeys = new ObservableCollection<DirectionalKeyViewModel>
         {
-            new("up", "上"), new("down", "下"), new("left", "左"), new("right", "右"), new("confirm", "确认"), new("recovery", "Recovery")
+            new("up", "上"), new("down", "下"), new("left", "左"), new("right", "右"), new("confirm", "确认")
         };
+        if (_testProfileMode == "finished_product")
+            DirectionalKeys.Add(new DirectionalKeyViewModel("recovery", "Recovery"));
         Usb2TestSteps = CreateUsbTestSteps();
         Usb3TestSteps = CreateUsbTestSteps();
         PcbaTestPoints = new ObservableCollection<PcbaTestPointViewModel>(Enumerable.Range(1, 32).Select(i => new PcbaTestPointViewModel
@@ -494,6 +496,7 @@ public sealed class MainViewModel : ObservableObject
     public ObservableCollection<TestResultViewModel> TestResults { get; }
     public ObservableCollection<TestSelectionItemViewModel> TestSelections { get; }
     public ObservableCollection<DirectionalKeyViewModel> DirectionalKeys { get; }
+    public int KeyGridColumns => DirectionalKeys.Count;
     public ObservableCollection<UsbTestStepViewModel> Usb2TestSteps { get; }
     public ObservableCollection<UsbTestStepViewModel> Usb3TestSteps { get; }
     public ObservableCollection<PcbaTestPointViewModel> PcbaTestPoints { get; }
@@ -551,7 +554,9 @@ public sealed class MainViewModel : ObservableObject
     // Test-item selection is available in both finished-product and PCBA
     // environments.  Operation mode controls permissions/diagnostics, not
     // whether the configured test plan can be edited for the next run.
-    public bool IsTestSelectionEnabled => !_isSessionRunning && !_isRetestLifecycleActive;
+    // Test-point selection is a developer-only capability in both PCBA and
+    // finished-product modes. Production mode always runs the configured plan.
+    public bool IsTestSelectionEnabled => IsDeveloperMode && !_isSessionRunning && !_isRetestLifecycleActive;
     public string TestSelectionSummary
     {
         get
@@ -624,7 +629,9 @@ public sealed class MainViewModel : ObservableObject
     public string ManualDecisionPrompt => _manualDecisionTestId switch
     {
         "hdmi" => "请观察 HDMI 输出是否正常，然后手动选择通过或失败。",
-        "keys" => "请依次按下上、下、左、右方向键和确认键，再按下 Recovery 实体键；六键全部识别后自动通过。",
+        "keys" => _testProfileMode == "finished_product"
+            ? "请依次按下上、下、左、右方向键和确认键，再按下 Recovery 实体键；六键全部识别后自动通过。"
+            : "请依次按下上、下、左、右方向键和确认键；五键全部识别后自动通过。",
         "lcd" => "请观察 LCD：背光正常、RGB 测试图案完整且稳定，无花屏、缺线、闪烁或明显亮暗异常后再判定。",
         "ethernet_led" when _manualDecisionPhase == "operator_confirm_sequence" => "网口已恢复通信，请确认切换到 100M 后绿灯是否正常点亮。",
         "ethernet_led" => "请等待网口灯切换完成后再判定。",
@@ -2385,7 +2392,9 @@ public sealed class MainViewModel : ObservableObject
         var remainingSeconds = GetRemainingKeySeconds(testEvent);
         if (testEvent.Status == "passed")
         {
-            return "六键测试通过：上、下、左、右、确认和 Recovery 均已识别。";
+            return _testProfileMode == "finished_product"
+                ? "六键测试通过：上、下、左、右、确认和 Recovery 均已识别。"
+                : "五键测试通过：上、下、左、右、确认均已识别。";
         }
 
         if (testEvent.Status == "failed")
@@ -2403,7 +2412,9 @@ public sealed class MainViewModel : ObservableObject
         var missing = DirectionalKeys.Where(key => !key.IsDetected).Select(key => key.Label).ToArray();
         var detectedText = detected.Length == 0 ? "无" : string.Join("、", detected);
         var missingText = missing.Length == 0 ? "无" : string.Join("、", missing);
-        return $"六键测试第一阶段：请在 {FormatKeyTimeoutSeconds()} 秒内依次按上、下、左、右、确认键。五键完成后再按 Recovery，底层将通过 ADC 判定。已识别：{detectedText}；剩余：{missingText}；倒计时：{remainingSeconds} 秒。";
+        return _testProfileMode == "finished_product"
+            ? $"六键测试第一阶段：请在 {FormatKeyTimeoutSeconds()} 秒内依次按上、下、左、右、确认键。五键完成后再按 Recovery，底层将通过 ADC 判定。已识别：{detectedText}；剩余：{missingText}；倒计时：{remainingSeconds} 秒。"
+            : $"五键测试：请在 {FormatKeyTimeoutSeconds()} 秒内依次按上、下、左、右、确认键。已识别：{detectedText}；剩余：{missingText}；倒计时：{remainingSeconds} 秒。";
     }
 
     private int GetRemainingKeySeconds(TestSessionEvent testEvent)
@@ -2575,14 +2586,14 @@ public sealed class MainViewModel : ObservableObject
         };
     }
 
-    private static string GetTestDisplayName(string testId) => testId switch
+    private string GetTestDisplayName(string testId) => testId switch
     {
         ApplicationUpgradeItemId => "设备程序升级",
         "board_state" => "板状态",
         "emmc" => "EMMC",
         "ddr" => "DDR",
         "hdmi" => "HDMI",
-        "keys" => "六键测试",
+        "keys" => _testProfileMode == "finished_product" ? "六键测试" : "五键测试",
         "lcd" => "LCD",
         "reset_button" => "复位按键",
         "ethernet" => "网口",
@@ -3304,7 +3315,7 @@ public sealed class MainViewModel : ObservableObject
         return $"检测完成，失败项目：{string.Join("、", failedNames)}。请处理对应异常后重新扫描当前 SN 或继续下一台。";
     }
 
-    private static string BuildSingleFailureInstruction(string testId) => testId switch
+    private string BuildSingleFailureInstruction(string testId) => testId switch
     {
         "board_state" => "检测完成，板状态读取失败。请检查设备连接状态后重新扫描当前 SN。",
         "emmc" => "检测完成，EMMC 测试未通过。请检查存储器件和焊接后重新扫描当前 SN。",
@@ -3459,7 +3470,7 @@ public sealed class MainViewModel : ObservableObject
         return result;
     }
 
-    private static IReadOnlyList<TestItemViewModel> BuildTestItems(IReadOnlyList<TestPlanItem> testPlan)
+    private IReadOnlyList<TestItemViewModel> BuildTestItems(IReadOnlyList<TestPlanItem> testPlan)
     {
         var visibleItems = testPlan
             .Where(item => !item.Skip)

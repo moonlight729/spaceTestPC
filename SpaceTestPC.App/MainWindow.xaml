@@ -288,7 +288,7 @@
                         <StackPanel>
                             <TextBlock Style="{StaticResource SectionTitle}" Text="RESULT DETAIL" />
                             <ItemsControl Margin="0,12,0,4" ItemsSource="{Binding DirectionalKeys}" Visibility="{Binding IsKeyTestDetailVisible, Converter={StaticResource BoolToVisibilityConverter}}">
-                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="6" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="{Binding DataContext.KeyGridColumns, RelativeSource={RelativeSource AncestorType=ItemsControl}}" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate><DataTemplate><Border Margin="0,0,10,0" Padding="12" Background="{Binding Background}" CornerRadius="6"><StackPanel><TextBlock HorizontalAlignment="Center" FontWeight="Bold" Foreground="White" Text="{Binding Label}" /><TextBlock HorizontalAlignment="Center" Margin="0,4,0,0" Foreground="White" Text="{Binding StatusText}" /></StackPanel></Border></DataTemplate></ItemsControl.ItemTemplate>
                             </ItemsControl>
                             <ItemsControl Margin="0,12,0,8" ItemsSource="{Binding SelectedUsbTestSteps}" Visibility="{Binding IsUsbTestDetailVisible, Converter={StaticResource BoolToVisibilityConverter}}">

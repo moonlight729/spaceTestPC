@@ -2471,7 +2471,9 @@ static int run_keys(int fd, const struct app_config *config, const char *test_st
              "{\"expectedKeys\":[\"up\",\"down\",\"left\",\"right\",\"confirm\"],\"detectedMask\":0,\"expectedMask\":%u,\"timeoutMs\":%d,\"remainingMs\":%d}",
              expected, timeout_ms, timeout_ms);
     send_report(fd, "keys", "running", 0,
-                "Press Up, Down, Left, Right, Confirm, then Recovery key",
+                strcmp(test_mode, "finished_product") == 0
+                    ? "Press Up, Down, Left, Right, Confirm, then Recovery key"
+                    : "Press Up, Down, Left, Right, Confirm",
                 data);
     if (key_input_open(&input) != 0) {
         send_report(fd, "keys", "failed", 4000, "Unable to open key input devices", "{}");
@@ -2680,8 +2682,8 @@ static int run_one_test(int fd, const char *test_id, const struct app_config *co
     if (strcmp(test_id, "hdmi") == 0) return run_manual_observation(fd, "hdmi", "HDMI", test_start, test_end);
     if (strcmp(test_id, "lcd") == 0) return run_manual_observation(fd, "lcd", "LCD", test_start, test_end);
     if (strcmp(test_id, "reset_button") == 0) return run_manual_observation(fd, "reset_button", "Reset button and LCD off state", test_start, test_end);
-    if (strcmp(test_id, "fan") == 0 && strcmp(test_mode, "finished_product") == 0) return run_finished_product_fan(fd, test_start, test_end);
-    if (strcmp(test_id, "fan") == 0) return run_skipped_test(fd, "fan", test_start, test_end);
+    /* Fan tach/PWM verification is required in both test modes. */
+    if (strcmp(test_id, "fan") == 0) return run_finished_product_fan(fd, test_start, test_end);
     if (strcmp(test_id, "ethernet_led") == 0) return run_ethernet_led(fd, test_start, test_end);
     /* The RGB indicator test is identical for finished-product and PCBA
        modes.  Keep one implementation and one operator-decision flow so the
