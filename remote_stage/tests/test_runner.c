@@ -2683,7 +2683,10 @@ static int run_one_test(int fd, const char *test_id, const struct app_config *co
     if (strcmp(test_id, "fan") == 0 && strcmp(test_mode, "finished_product") == 0) return run_finished_product_fan(fd, test_start, test_end);
     if (strcmp(test_id, "fan") == 0) return run_skipped_test(fd, "fan", test_start, test_end);
     if (strcmp(test_id, "ethernet_led") == 0) return run_ethernet_led(fd, test_start, test_end);
-    if (strcmp(test_id, "indicator_led") == 0 && strcmp(test_mode, "finished_product") == 0) {
+    /* The RGB indicator test is identical for finished-product and PCBA
+       modes.  Keep one implementation and one operator-decision flow so the
+       two environments cannot diverge. */
+    if (strcmp(test_id, "indicator_led") == 0) {
         return run_finished_product_indicator_led(fd, test_start, test_end);
     }
     if (strcmp(test_id, "fingerprint") == 0) return run_fingerprint(fd);
