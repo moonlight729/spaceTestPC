@@ -1858,8 +1858,7 @@ public sealed class MainViewModel : ObservableObject
             HandleWifiReport(testEvent);
         }
 
-        if (testEvent.TestId is "indicator_led" or "fan" && testEvent.Status == "running" &&
-            !(testEvent.TestId == "indicator_led" && _testProfileMode == "finished_product"))
+        if (testEvent.TestId == "fan" && testEvent.Status == "running")
         {
             HandleVoltageMeasurementReport(testEvent);
         }
@@ -1888,7 +1887,7 @@ public sealed class MainViewModel : ObservableObject
 
         if (requiresManualDecision &&
             (testEvent.TestId is "hdmi" or "lcd" or "ethernet_led" or "reset_button" ||
-             testEvent.TestId == "indicator_led" && _testProfileMode == "finished_product"))
+             testEvent.TestId == "indicator_led"))
         {
             _manualDecisionSessionId = SessionId;
         }
@@ -1903,7 +1902,7 @@ public sealed class MainViewModel : ObservableObject
         _manualDecisionTestId = requiresManualDecision &&
             !_submittedManualDecisionTests.Contains(testEvent.TestId) &&
             (testEvent.TestId is "hdmi" or "lcd" or "ethernet_led" or "reset_button" ||
-             testEvent.TestId == "indicator_led" && _testProfileMode == "finished_product")
+             testEvent.TestId == "indicator_led")
             ? testEvent.TestId
             : testEvent.Status is "passed" or "failed" && testEvent.TestId == _manualDecisionTestId
                     ? null
