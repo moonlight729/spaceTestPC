@@ -55,6 +55,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly UpgradeConfiguration _upgradeConfiguration;
     private readonly TestModeConfiguration _testModeConfiguration;
     private readonly string _testProfileMode;
+    private bool _loadingTestSelection;
     private readonly string _operationMode;
     private readonly PcbaConnectionMode _connectionMode;
     private readonly BluetoothScanRequest _bluetoothRequest = new()
@@ -247,6 +248,7 @@ public sealed class MainViewModel : ObservableObject
         TestSelections = new ObservableCollection<TestSelectionItemViewModel>(_testPlan
             .Where(item => !item.Skip)
             .Select(item => new TestSelectionItemViewModel(item.Id, GetTestDisplayName(item.Id), true, OnTestSelectionChanged)));
+        LoadSavedTestSelection();
 
         ScanCommand = new AsyncRelayCommand(() => HandleScanAsync(isMockSession: false), () => !string.IsNullOrWhiteSpace(ScannerInput) && HasSelectedTests && !_isSessionRunning && !_isRetestLifecycleActive);
         StartMockSessionCommand = new RelayCommand(StartMockSession);
@@ -699,6 +701,7 @@ public sealed class MainViewModel : ObservableObject
 
     private void OnTestSelectionChanged()
     {
+        if (!_loadingTestSelection) SaveTestSelection();
         RaisePropertyChanged(nameof(HasSelectedTests));
         RaisePropertyChanged(nameof(TestSelectionSummary));
         ScanCommand?.NotifyCanExecuteChanged();
@@ -707,15 +710,40 @@ public sealed class MainViewModel : ObservableObject
 
     private IReadOnlyList<TestPlanItem> GetSelectedTestPlan()
     {
-        if (!IsDeveloperMode)
-        {
-            return _testPlan.Where(item => !item.Skip).ToArray();
-        }
         var selectedIds = TestSelections
             .Where(item => item.IsSelected)
             .Select(item => item.TestId)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         return _testPlan.Where(item => selectedIds.Contains(item.Id)).ToArray();
+    }
+
+    private string TestSelectionFilePath => Path.Combine(AppContext.BaseDirectory, $"test-selection-{_testProfileMode}.json");
+
+    private void LoadSavedTestSelection()
+    {
+        try
+        {
+            if (!File.Exists(TestSelectionFilePath)) return;
+            var saved = JsonSerializer.Deserialize<string[]>(File.ReadAllText(TestSelectionFilePath)) ?? Array.Empty<string>();
+            var selected = saved.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            _loadingTestSelection = true;
+            foreach (var item in TestSelections) item.IsSelected = selected.Contains(item.TestId);
+        }
+        catch (Exception exception)
+        {
+            AppendLog($"Saved test selection load failed: {exception.Message}");
+        }
+        finally { _loadingTestSelection = false; }
+    }
+
+    private void SaveTestSelection()
+    {
+        try
+        {
+            var selected = TestSelections.Where(item => item.IsSelected).Select(item => item.TestId).ToArray();
+            File.WriteAllText(TestSelectionFilePath, JsonSerializer.Serialize(selected));
+        }
+        catch (Exception exception) { AppendLog($"Test selection save failed: {exception.Message}"); }
     }
 
     private void ApplyTestSelectionToResults(IReadOnlyList<TestPlanItem> selectedPlan)
