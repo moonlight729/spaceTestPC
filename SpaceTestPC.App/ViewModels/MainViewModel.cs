@@ -289,9 +289,20 @@ public sealed class MainViewModel : ObservableObject
             DirectionalKeys.Add(new DirectionalKeyViewModel("recovery", "Recovery"));
         Usb2TestSteps = CreateUsbTestSteps();
         Usb3TestSteps = CreateUsbTestSteps();
-        PcbaTestPoints = new ObservableCollection<PcbaTestPointViewModel>(Enumerable.Range(1, 32).Select(i => new PcbaTestPointViewModel
+        var pcbaPointSpecs = new (string Name, double Min, double Max)[]
         {
-            Id = $"TP{i:00}", Name = $"TP{i:00}", Channel = i - 1, MinMv = 0, MaxMv = 5000
+            ("VDD_DDR_S0",720,730),("VDDQ_DDR_S0",505,510),("MASKROM",1610,1620),("5V",5000,5100),
+            ("TS",2500,2700),("2V",2200,2300),("VCC5V0_SYS",5000,5100),("VCC_1V8_S3",1800,1800),
+            ("VCC_3V3_S3",3200,3300),("GND",0,0),("VBUS5V0_TYPEC",19000,21000),("VDD2H_DDR_S3",1050,1050),
+            ("RECOVERY",1780,1780),("GND",0,0),("VDD_CPU_LIT_S0",710,710),("VBUS5V0_TYPEC",19000,21000),
+            ("VCC_SYS",6000,8950),("VDD_CPU_BIG_S0",710,710),("VDD_GPU_S0",0,710),("VCC-RTC",3300,3300),
+            ("VDD_LOGIC_S0",750,750),("VDD_NPU_S0",0,750),("VBUSIN_VCC",19000,21000),("RXD",3300,3300),
+            ("TXD",3300,3300),("BLED",0,2500),("RLED",0,1100),("GLED",0,2700),
+            ("LEDVDD",4650,4650),("VBUS1_TYPEC",5000,5000),("FAN-PWM",3300,3300),("FG",0,5000)
+        };
+        PcbaTestPoints = new ObservableCollection<PcbaTestPointViewModel>(pcbaPointSpecs.Select((spec, i) => new PcbaTestPointViewModel
+        {
+            Id = $"TP{i + 1:00}", Name = spec.Name, Channel = i, MinMv = spec.Min, MaxMv = spec.Max
         }));
         SelectedTestResult = TestResults.FirstOrDefault();
         TestOverviewColumns = Math.Max(1, TestItems.Count);
@@ -1826,6 +1837,8 @@ public sealed class MainViewModel : ObservableObject
         }
         result?.Apply(testEvent);
         if (testEvent.TestId == "pcba_test_points") UpdatePcbaTestPoints(testEvent);
+        if (testEvent.TestId == "pcba_test_points" && testEvent.Status == "running" && GetDataBoolean(testEvent.Data, "readyForHostDecision"))
+            _ = HandlePcbaTestPointsMeasurementAsync(testEvent);
         if (result is not null && ShouldSelectTestResult(testEvent, result))
         {
             SelectedTestResult = result;
@@ -2100,6 +2113,33 @@ public sealed class MainViewModel : ObservableObject
         };
     }
 
+    private async Task HandlePcbaTestPointsMeasurementAsync(TestSessionEvent testEvent)
+    {
+        if (_activeSessionClient is null || _jxTvmService is null || !_jxTvmService.IsEnabled) return;
+        try
+        {
+            AppendLog("JX-TVM PCBA measurement start: COM3, registers=1233-1264");
+            var values = await _jxTvmService.ReadAllChannelVoltagesMvAsync();
+            var failed = 0;
+            for (var i = 0; i < values.Length && i < PcbaTestPoints.Count; i++)
+            {
+                var point = PcbaTestPoints[i];
+                var pass = values[i] >= point.MinMv && values[i] <= point.MaxMv;
+                if (!pass) failed++;
+                point.Apply(values[i], pass ? "passed" : "failed");
+                AppendLog($"JX-TVM channel[{i + 1}] {point.Name}: {values[i]}mV, range={point.MinMv}-{point.MaxMv}, {(pass ? "PASS" : "FAIL")}");
+            }
+            AppendLog($"JX-TVM PCBA measurement completed: channels=32 failed={failed}");
+            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, "pcba_test_points", failed == 0,
+                failed == 0 ? "jx_tvm_measurement_passed" : "jx_tvm_voltage_out_of_range");
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"JX-TVM PCBA measurement failed: {ex.GetType().Name}: {ex.Message}");
+            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, "pcba_test_points", false, "jx_tvm_communication_error");
+        }
+    }
+
     private void UpdatePcbaTestPoints(TestSessionEvent testEvent)
     {
         if (testEvent.Status == "running" && GetDataString(testEvent.Data, "phase", "") is "sampling" or "start")
@@ -2112,6 +2152,10 @@ public sealed class MainViewModel : ObservableObject
             if (point is null) continue;
             double? voltage = item.TryGetProperty("voltageMv", out var value) && value.TryGetDouble(out var v) ? v : null;
             var passed = item.TryGetProperty("passed", out var ok) && ok.ValueKind == JsonValueKind.True;
+            var name = item.TryGetProperty("name", out var nameValue) ? nameValue.GetString() : null;
+            var minMv = item.TryGetProperty("minMv", out var minValue) && minValue.TryGetDouble(out var min) ? min : (double?)null;
+            var maxMv = item.TryGetProperty("maxMv", out var maxValue) && maxValue.TryGetDouble(out var max) ? max : (double?)null;
+            point.ApplyMetadata(name, minMv, maxMv);
             point.Apply(voltage, testEvent.Status == "running" ? "running" : passed ? "passed" : "failed");
         }
     }
@@ -3240,9 +3284,10 @@ public sealed class MainViewModel : ObservableObject
         {
             try
             {
-                await _jxTvmService.ProbeAsync();
+                var probe = await _jxTvmService.ReadChannelVoltageMvAsync(1);
+                var modes = await _jxTvmService.ReadConfigurationAsync();
                 JxTvmStatus = "已连接";
-                AppendLog("JX-TVM probe succeeded.");
+                AppendLog($"JX-TVM probe succeeded: register1000={probe}; workMode={modes.WorkMode}, testMode={modes.TestMode}, samplingMode={modes.SamplingMode}, slave=1, baud=9600.");
             }
             catch (UnauthorizedAccessException) { JxTvmStatus = "串口被占用"; }
             catch (Exception ex) { JxTvmStatus = "通信异常"; AppendLog($"JX-TVM probe failed: {ex.Message}"); }

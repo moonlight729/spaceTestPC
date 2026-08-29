@@ -29,6 +29,25 @@ public sealed class JxTvmService
         return await ReadRegisterAsync(1000, cancellationToken);
     }
 
+    public async Task<(int WorkMode, int TestMode, int SamplingMode)> ReadConfigurationAsync(CancellationToken cancellationToken = default)
+    {
+        if (!_configuration.Enabled) return (0, 0, 0);
+        var work = await ReadRegisterAsync(1000, cancellationToken);
+        var test = await ReadRegisterAsync(1001, cancellationToken);
+        var sampling = await ReadRegisterAsync(1050, cancellationToken);
+        return (work, test, sampling);
+    }
+
+    public async Task<int[]> ReadAllChannelVoltagesMvAsync(CancellationToken cancellationToken = default)
+    {
+        var values = new int[32];
+        for (var i = 0; i < values.Length; i++)
+        {
+            values[i] = await ReadChannelVoltageMvAsync(i + 1, cancellationToken);
+        }
+        return values;
+    }
+
     private Task<int> ReadRegisterAsync(ushort register, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
