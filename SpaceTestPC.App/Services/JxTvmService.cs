@@ -11,6 +11,7 @@ public sealed class JxTvmService
     private const int TimeoutMs = 1000;
     private readonly JxTvmConfiguration _configuration;
     public JxTvmService(JxTvmConfiguration configuration) => _configuration = configuration;
+    public Action<string>? Log { get; set; }
     public bool IsEnabled => _configuration.Enabled;
 
     public async Task<int> ReadChannelVoltageMvAsync(int channel, CancellationToken cancellationToken = default)
@@ -54,13 +55,18 @@ public sealed class JxTvmService
         using var port = new SerialPort(_configuration.PortName, BaudRate, Parity.None, 8, StopBits.One) { ReadTimeout = TimeoutMs, WriteTimeout = TimeoutMs };
         port.Open();
         var request = BuildReadFrame(SlaveAddress, register, 1);
+        Log?.Invoke($"JX-TVM TX: {Convert.ToHexString(request)} register={register}");
         port.DiscardInBuffer();
         port.Write(request, 0, request.Length);
         Thread.Sleep(30);
         var response = new byte[7];
         var total = 0;
         while (total < response.Length) { var read = port.Read(response, total, response.Length - total); if (read == 0) throw new TimeoutException("JX-TVM did not return an RS485 Modbus response before the read timeout."); total += read; }
+        var expectedCrc = CalculateCrc(response.AsSpan(0, 5));
+        var actualCrc = (ushort)(response[5] | (response[6] << 8));
+        Log?.Invoke($"JX-TVM RX: {Convert.ToHexString(response)} register={register}");
         if (response[0] != SlaveAddress || response[1] != 0x03 || response[2] != 2) throw new InvalidOperationException("Invalid JX-TVM voltage response.");
+        if (expectedCrc != actualCrc) throw new InvalidOperationException($"JX-TVM CRC mismatch: expected=0x{expectedCrc:X4}, actual=0x{actualCrc:X4}");
         return Task.FromResult((response[3] << 8) | response[4]);
     }
 
@@ -69,5 +75,12 @@ public sealed class JxTvmService
         var frame = new byte[] { slave, 0x03, (byte)(register >> 8), (byte)register, (byte)(count >> 8), (byte)count, 0, 0 };
         ushort crc = 0xFFFF; foreach (var value in frame.AsSpan(0, 6)) { crc ^= value; for (var bit = 0; bit < 8; bit++) crc = (ushort)((crc & 1) != 0 ? (crc >> 1) ^ 0xA001 : crc >> 1); }
         frame[6] = (byte)crc; frame[7] = (byte)(crc >> 8); return frame;
+    }
+
+    private static ushort CalculateCrc(ReadOnlySpan<byte> data)
+    {
+        ushort crc = 0xFFFF;
+        foreach (var value in data) { crc ^= value; for (var bit = 0; bit < 8; bit++) crc = (ushort)((crc & 1) != 0 ? (crc >> 1) ^ 0xA001 : crc >> 1); }
+        return crc;
     }
 }

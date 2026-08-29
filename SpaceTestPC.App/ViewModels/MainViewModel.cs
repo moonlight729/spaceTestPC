@@ -159,6 +159,7 @@ public sealed class MainViewModel : ObservableObject
         _manualTestInteractionService = manualTestInteractionService;
         _jk5506Service = jk5506Service;
         _jxTvmService = jxTvmService;
+        if (_jxTvmService is not null) _jxTvmService.Log = AppendLog;
         _bluetoothBroadcasterService = bluetoothBroadcasterService;
         var appConfiguration = configuration ?? new AppConfiguration();
         if (appConfiguration.TestPlan.TestParameters.TryGetValue("wifi", out var wifiParameters))
@@ -3285,9 +3286,8 @@ public sealed class MainViewModel : ObservableObject
             try
             {
                 var probe = await _jxTvmService.ReadChannelVoltageMvAsync(1);
-                var modes = await _jxTvmService.ReadConfigurationAsync();
                 JxTvmStatus = "已连接";
-                AppendLog($"JX-TVM probe succeeded: register1000={probe}; workMode={modes.WorkMode}, testMode={modes.TestMode}, samplingMode={modes.SamplingMode}, slave=1, baud=9600.");
+                AppendLog($"JX-TVM probe succeeded: register1233={probe}mV, slave=1, baud=9600.");
             }
             catch (UnauthorizedAccessException) { JxTvmStatus = "串口被占用"; }
             catch (Exception ex) { JxTvmStatus = "通信异常"; AppendLog($"JX-TVM probe failed: {ex.Message}"); }
