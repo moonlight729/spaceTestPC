@@ -546,7 +546,10 @@ public sealed class MainViewModel : ObservableObject
     public bool IsDeveloperMode => _operationMode == "developer";
     public string OperationModeDisplayName => IsDeveloperMode ? "开发者模式" : "生产模式";
     public string OperationModeBackground => IsDeveloperMode ? "#0B4A8B" : "#166534";
-    public bool IsTestSelectionEnabled => IsDeveloperMode && !_isSessionRunning && !_isRetestLifecycleActive;
+    // Test-item selection is available in both finished-product and PCBA
+    // environments.  Operation mode controls permissions/diagnostics, not
+    // whether the configured test plan can be edited for the next run.
+    public bool IsTestSelectionEnabled => !_isSessionRunning && !_isRetestLifecycleActive;
     public string TestSelectionSummary
     {
         get
