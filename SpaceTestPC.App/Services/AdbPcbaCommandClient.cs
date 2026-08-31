@@ -32,6 +32,31 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
     private string? _activeSessionId;
     public event Action<string>? Log;
 
+    public async Task EnsureServiceStoppedAsync(string serviceName, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(serviceName)) throw new ArgumentException("Service name is required.", nameof(serviceName));
+        var quoted = ShellQuote(serviceName);
+        if (ShouldUseSshScpUpgrade())
+        {
+            try { await RunSshAsync(BuildPrivilegedRemoteCommand($"systemctl cat {quoted} >/dev/null 2>&1"), cancellationToken); }
+            catch (InvalidOperationException) { return; }
+            var command = $"systemctl stop {quoted}; test \"$(systemctl is-active {quoted} 2>/dev/null || true)\" = inactive";
+            await RunSshAsync(BuildPrivilegedRemoteCommand(command), cancellationToken);
+        }
+        else
+        {
+            try { await RunAdbAsync($"shell sh -c {Quote($"systemctl cat {quoted} >/dev/null 2>&1")}", cancellationToken); }
+            catch (InvalidOperationException) { return; }
+            await RunAdbAsync($"shell sh -c {Quote($"systemctl stop {quoted}; test \\\"$(systemctl is-active {quoted} 2>/dev/null || true)\\\" = inactive")}", cancellationToken);
+        }
+    }
+
+    public async Task ShutdownDeviceAsync(CancellationToken cancellationToken = default)
+    {
+        if (ShouldUseSshScpUpgrade()) await RunSshAsync(BuildPrivilegedRemoteCommand("systemctl poweroff"), cancellationToken);
+        else await RunAdbAsync("shell systemctl poweroff", cancellationToken);
+    }
+
     public AdbPcbaCommandClient(
         string adbPath = "adb",
         int localPort = 19001,

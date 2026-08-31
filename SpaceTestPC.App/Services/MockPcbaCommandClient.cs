@@ -4,6 +4,8 @@ namespace SpaceTestPC.App.Services;
 
 public sealed class MockPcbaCommandClient : IPcbaCommandClient
 {
+    public Task EnsureServiceStoppedAsync(string serviceName, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ShutdownDeviceAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     private readonly string? _failingTestId;
     private readonly MockConfiguration _mockConfiguration;
     private readonly ManualTestInteractionService? _manualTestInteractionService;

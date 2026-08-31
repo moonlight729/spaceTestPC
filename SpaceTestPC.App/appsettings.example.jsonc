@@ -71,6 +71,11 @@
     "sshPath": "ssh",
     "scpPath": "scp"
   },
+  "testLifecycle": {
+    "enabled": true,
+    "serviceName": "gen1-app.service",
+    "poweroffAfterTest": false
+  },
   "testPlan": {
     // Debug only. true allows testing to continue when board SN differs from scanned SN.
     // Production must keep this false to prevent testing the wrong board.

@@ -13,6 +13,7 @@ public sealed class AppConfiguration
     public BluetoothBroadcasterConfiguration BluetoothBroadcaster { get; set; } = new();
     public LoggingConfiguration Logging { get; set; } = new();
     public UpgradeConfiguration Upgrade { get; set; } = new();
+    public TestLifecycleConfiguration TestLifecycle { get; set; } = new();
     public PcbaConnectionConfiguration PcbaConnection { get; set; } = new();
 }
 
@@ -51,6 +52,13 @@ public sealed class TestModeConfiguration
     public string[] TestOrder { get; set; } = [];
     public Dictionary<string, string> SkippedTests { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, Dictionary<string, JsonElement>> TestParameters { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class TestLifecycleConfiguration
+{
+    public bool Enabled { get; set; } = true;
+    public string ServiceName { get; set; } = "gen1-app.service";
+    public bool PoweroffAfterTest { get; set; } = false;
 }
 
 public sealed class UpgradeConfiguration

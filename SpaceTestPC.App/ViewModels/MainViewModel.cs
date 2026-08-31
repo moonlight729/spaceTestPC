@@ -53,6 +53,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly bool _allowSnMismatchForDebug;
     private readonly int _keyTestTimeoutMs;
     private readonly UpgradeConfiguration _upgradeConfiguration;
+    private readonly TestLifecycleConfiguration _testLifecycleConfiguration;
     private readonly TestModeConfiguration _testModeConfiguration;
     private readonly string _testProfileMode;
     private bool _loadingTestSelection;
@@ -182,6 +183,7 @@ public sealed class MainViewModel : ObservableObject
         _allowSnMismatchForDebug = appConfiguration.TestPlan.AllowSnMismatchForDebug;
         _keyTestTimeoutMs = GetConfiguredKeyTimeoutMs(appConfiguration);
         _upgradeConfiguration = appConfiguration.Upgrade;
+        _testLifecycleConfiguration = appConfiguration.TestLifecycle;
         _connectionMode = ParseConnectionMode(appConfiguration.PcbaConnection.Mode);
         _testProfileMode = string.IsNullOrWhiteSpace(appConfiguration.TestMode) ? "finished_product" : appConfiguration.TestMode.Trim().ToLowerInvariant();
         _operationMode = string.Equals(appConfiguration.OperationMode, "developer", StringComparison.OrdinalIgnoreCase) ? "developer" : "production";
@@ -1371,6 +1373,11 @@ public sealed class MainViewModel : ObservableObject
         finally
         {
             _activeSessionClient = null;
+            if (_testLifecycleConfiguration.Enabled && _testLifecycleConfiguration.PoweroffAfterTest && _connectionMode != PcbaConnectionMode.Mock)
+            {
+                try { AppendLog("Test finished; powering off device."); await client.ShutdownDeviceAsync(); }
+                catch (Exception ex) { AppendLog($"Device poweroff failed: {ex.Message}"); }
+            }
         }
 
         finalVerdict = ResolveFinalVerdict(finalVerdict);

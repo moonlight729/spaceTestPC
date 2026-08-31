@@ -4,6 +4,8 @@ namespace SpaceTestPC.App.Services;
 
 public interface IPcbaCommandClient
 {
+    Task EnsureServiceStoppedAsync(string serviceName, CancellationToken cancellationToken = default);
+    Task ShutdownDeviceAsync(CancellationToken cancellationToken = default);
     Task<ApplicationMd5Info> GetApplicationMd5Async(string remoteBinaryPath, CancellationToken cancellationToken = default);
     Task<ApplicationVersionInfo> GetApplicationVersionAsync(CancellationToken cancellationToken = default);
     Task<ApplicationUpgradeResult> UpgradeApplicationAsync(string localBinaryPath, string expectedMd5, string serviceName, string remoteBinaryPath, CancellationToken cancellationToken = default);
