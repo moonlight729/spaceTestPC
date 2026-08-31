@@ -22,7 +22,7 @@ public sealed class MainViewModel : ObservableObject
     [
         new() { Id = "board_state" }, new() { Id = "hdmi" }, new() { Id = "keys" }, new() { Id = "lcd" },
         new() { Id = "wifi" }, new() { Id = "bluetooth" }, new() { Id = "fingerprint" },
-        new() { Id = "battery_management" }, new() { Id = "typec_fast_charge" }, new() { Id = "typec_camera" }, new() { Id = "tf" }, new() { Id = "emmc" }, new() { Id = "ddr" }, new() { Id = "usb2" }, new() { Id = "usb3" },
+        new() { Id = "battery_management" }, new() { Id = "typec_fast_charge" }, new() { Id = "tf" }, new() { Id = "emmc" }, new() { Id = "ddr" }, new() { Id = "typec_camera" }, new() { Id = "usb2" }, new() { Id = "usb3" },
         new() { Id = "pcba_test_points" }, new() { Id = "ethernet_led" }, new() { Id = "indicator_led" }, new() { Id = "fan" }, new() { Id = "otg" }, new() { Id = "reset_button" }
     ];
 
