@@ -3463,15 +3463,16 @@ public sealed class MainViewModel : ObservableObject
     {
         var mode = string.IsNullOrWhiteSpace(configuration.TestMode) ? "finished_product" : configuration.TestMode.Trim();
         var modeConfiguration = configuration.TestModes.TryGetValue(mode, out var configuredMode) ? configuredMode : null;
-        var enabledSource = modeConfiguration is not null && modeConfiguration.EnabledTests.Length > 0
+        var isDeveloperMode = string.Equals(configuration.OperationMode, "developer", StringComparison.OrdinalIgnoreCase);
+        var enabledSource = isDeveloperMode && modeConfiguration is not null && modeConfiguration.EnabledTests.Length > 0
             ? modeConfiguration.EnabledTests
-            : configuration.TestPlan.EnabledTests;
-        var disabledSource = modeConfiguration is not null && modeConfiguration.DisabledTests.Length > 0
+            : isDeveloperMode ? configuration.TestPlan.EnabledTests : Array.Empty<string>();
+        var disabledSource = isDeveloperMode && modeConfiguration is not null && modeConfiguration.DisabledTests.Length > 0
             ? modeConfiguration.DisabledTests
-            : configuration.TestPlan.DisabledTests;
-        var skippedSource = modeConfiguration is not null
+            : isDeveloperMode ? configuration.TestPlan.DisabledTests : new Dictionary<string, string>();
+        var skippedSource = isDeveloperMode && modeConfiguration is not null
             ? modeConfiguration.SkippedTests
-            : configuration.TestPlan.SkippedTests;
+            : isDeveloperMode ? configuration.TestPlan.SkippedTests : new Dictionary<string, string>();
         var enabled = enabledSource
             .Where(id => !string.IsNullOrWhiteSpace(id))
             .Select(id => id.Trim())
