@@ -510,7 +510,16 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
                 Sn = sn,
                 CommandGroup = "session",
                 Command = "start",
-                Parameters = new Dictionary<string, object?> { ["tests"] = remainingTests }
+                Parameters = new Dictionary<string, object?>
+                {
+                    ["tests"] = remainingTests,
+                    ["lcdDisplay"] = new Dictionary<string, object?>
+                    {
+                        ["enabled"] = true,
+                        ["fbPath"] = "/dev/fb0",
+                        ["mode"] = "color_bars"
+                    }
+                }
             };
 
             var requestBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(command, JsonOptions) + "\n");
@@ -797,6 +806,9 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
 
     public Task<CommandResponse> EnterTestModeAsync(string sessionId, string sn, string boardId, CancellationToken cancellationToken = default) =>
         SendSystemCommandAsync(sessionId, sn, boardId, "enter_test_mode", cancellationToken);
+
+    public Task<CommandResponse> StartLcdDisplayAsync(string sessionId, string sn, string boardId, CancellationToken cancellationToken = default) =>
+        SendSystemCommandAsync(sessionId, sn, boardId, "start_lcd_display", cancellationToken);
 
     public Task<CommandResponse> WriteSnAsync(string sessionId, string sn, string boardId, CancellationToken cancellationToken = default) =>
         SendSystemCommandAsync(sessionId, sn, boardId, "write_sn", cancellationToken,

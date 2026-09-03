@@ -1315,6 +1315,17 @@ public sealed class MainViewModel : ObservableObject
             _latestBoardState = state;
             SetTestItemState(BoardStateItemName, TestItemState.Passed);
 
+            try
+            {
+                var lcdResponse = await client.StartLcdDisplayAsync(SessionId, CurrentSn, state.BoardId);
+                AppendLog($"LCD test display start requested: code={lcdResponse.ResultCode}, message={lcdResponse.Message}");
+            }
+            catch (Exception ex)
+            {
+                // LCD display is auxiliary and must not block the test run.
+                AppendLog($"LCD test display start failed (continuing test): {ex.Message}");
+            }
+
             AppendLog("ADB/session.start request sent.");
             await foreach (var testEvent in client.RunSessionAsync(SessionId, CurrentSn, selectedTestPlan))
             {
