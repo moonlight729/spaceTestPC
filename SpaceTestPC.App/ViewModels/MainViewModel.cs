@@ -3469,7 +3469,7 @@ public sealed class MainViewModel : ObservableObject
             : isDeveloperMode ? configuration.TestPlan.EnabledTests : Array.Empty<string>();
         var disabledSource = isDeveloperMode && modeConfiguration is not null && modeConfiguration.DisabledTests.Length > 0
             ? modeConfiguration.DisabledTests
-            : isDeveloperMode ? configuration.TestPlan.DisabledTests : new Dictionary<string, string>();
+            : isDeveloperMode ? configuration.TestPlan.DisabledTests : Array.Empty<string>();
         var skippedSource = isDeveloperMode && modeConfiguration is not null
             ? modeConfiguration.SkippedTests
             : isDeveloperMode ? configuration.TestPlan.SkippedTests : new Dictionary<string, string>();
