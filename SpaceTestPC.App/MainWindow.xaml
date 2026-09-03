@@ -101,6 +101,7 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="280" />
                             <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="400" />
                         </Grid.ColumnDefinitions>
                     <StackPanel VerticalAlignment="Center" Margin="0,0,18,0">
                         <TextBlock Style="{StaticResource SectionTitle}" Text="SCAN SN" />
@@ -118,6 +119,13 @@
                                  TextChanged="ScannerInputTextBox_OnTextChanged"
                                  Text="{Binding ScannerInput, UpdateSourceTrigger=PropertyChanged}" />
                     </StackPanel>
+                    <Border Grid.Column="3" Width="400" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="28,0,0,0" Padding="14,7" Background="White" CornerRadius="6">
+                        <StackPanel HorizontalAlignment="Left">
+                            <TextBlock FontSize="17" FontWeight="SemiBold" Foreground="#175CD3" Text="{Binding UbootVersion, StringFormat='U-Boot  {0}'}" />
+                            <TextBlock FontSize="17" FontWeight="SemiBold" Foreground="#7F56D9" Text="{Binding KernelVersion, StringFormat='Kernel  {0}'}" />
+                            <TextBlock FontSize="17" FontWeight="SemiBold" Foreground="#039855" Text="{Binding RootfsVersion, StringFormat='RootFS  {0}'}" />
+                        </StackPanel>
+                    </Border>
                     <Button Grid.Column="2" Width="116" Height="42" Margin="10,0,0,0" VerticalAlignment="Center" Command="{Binding ScanCommand}" Content="Scan / Query" />
                 </Grid>
             </Border>

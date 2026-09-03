@@ -810,6 +810,13 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
     public Task<CommandResponse> StartLcdDisplayAsync(string sessionId, string sn, string boardId, CancellationToken cancellationToken = default) =>
         SendSystemCommandAsync(sessionId, sn, boardId, "start_lcd_display", cancellationToken);
 
+    public async Task<BoardVersions> GetBoardVersionsAsync(string sessionId, string sn, CancellationToken cancellationToken = default)
+    {
+        var payload = await SendCommandAsync(new HostCommand { SessionId = sessionId, Sn = sn, CommandGroup = "sys", Command = "get_versions" }, cancellationToken);
+        var response = DeserializeEnvelope<BoardVersions>(payload);
+        return response.Data;
+    }
+
     public Task<CommandResponse> WriteSnAsync(string sessionId, string sn, string boardId, CancellationToken cancellationToken = default) =>
         SendSystemCommandAsync(sessionId, sn, boardId, "write_sn", cancellationToken,
             new Dictionary<string, object?> { ["verifyReadBack"] = true });

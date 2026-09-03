@@ -27,6 +27,7 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
         Task.FromResult(new ApplicationUpgradeResult { Success = true, FinalMd5 = expectedMd5, Message = "Mock application upgrade completed." });
     public Task<CommandResponse> StartLcdDisplayAsync(string sessionId, string sn, string boardId, CancellationToken cancellationToken = default) =>
         Task.FromResult(new CommandResponse { SessionId = sessionId, Sn = sn, BoardId = boardId, ResultCode = 0, Message = "Mock LCD display started" });
+    public Task<BoardVersions> GetBoardVersionsAsync(string sessionId, string sn, CancellationToken cancellationToken = default) => Task.FromResult(new BoardVersions { UbootVersion = "v0.0.2-mock", KernelVersion = "v0.0.5-mock", RootfsVersion = "0.0.5-mock" });
 
     public MockPcbaCommandClient(
         string? failingTestId = null,

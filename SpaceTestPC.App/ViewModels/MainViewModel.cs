@@ -354,6 +354,9 @@ public sealed class MainViewModel : ObservableObject
         get => _boardId;
         private set => SetProperty(ref _boardId, value);
     }
+    public string UbootVersion { get; private set; } = "--";
+    public string KernelVersion { get; private set; } = "--";
+    public string RootfsVersion { get; private set; } = "--";
 
     public string BoardState
     {
@@ -919,6 +922,7 @@ public sealed class MainViewModel : ObservableObject
             SetTestItemState(BoardStateItemName, TestItemState.Running);
             var state = await GetBoardStateWithTimeoutAsync(client);
             ApplyBoardState(state);
+            await LoadBoardVersionsAsync(client);
             await EnsureBoardSnAsync(client, state);
             LastResult = "Board state loaded";
             SetTestItemState(BoardStateItemName, TestItemState.Passed);
@@ -1183,9 +1187,10 @@ public sealed class MainViewModel : ObservableObject
             SetTestItemState(BoardStateItemName, TestItemState.Running);
             state = await GetBoardStateWithTimeoutAsync(client);
             ApplyBoardState(state);
+            AppendLog($"Board state ok: {BoardId} / {BoardState} / {TestMode}");
+            await LoadBoardVersionsAsync(client);
             state = await EnsureBoardSnAsync(client, state);
             _latestBoardState = state;
-            AppendLog($"Board state ok: {BoardId} / {BoardState} / {TestMode}");
 
             SetTestItemState(BatteryItemName, TestItemState.Running);
             await _voltageMonitorService.StartAsync(SessionId);
@@ -1311,6 +1316,7 @@ public sealed class MainViewModel : ObservableObject
             state = await GetBoardStateWithTimeoutAsync(client);
             AppendLog($"ADB/sys.get_board_state response: boardId={state.BoardId}, boardSn={state.BoardSn}, mode={state.TestMode}, state={state.CurrentState}");
             ApplyBoardState(state);
+            await LoadBoardVersionsAsync(client);
             state = await EnsureBoardSnAsync(client, state);
             _latestBoardState = state;
             SetTestItemState(BoardStateItemName, TestItemState.Passed);
@@ -1691,6 +1697,28 @@ public sealed class MainViewModel : ObservableObject
         {
             throw new TimeoutException($"板状态读取超时（{BoardStateTimeoutSeconds} 秒）。");
         }
+    }
+
+    private async Task LoadBoardVersionsAsync(IPcbaCommandClient client)
+    {
+        try
+        {
+            AppendLog("ADB/sys.get_versions request sent.");
+            var versions = await client.GetBoardVersionsAsync(SessionId, CurrentSn);
+            UbootVersion = string.IsNullOrWhiteSpace(versions.UbootVersion) ? "--" : versions.UbootVersion;
+            KernelVersion = string.IsNullOrWhiteSpace(versions.KernelVersion) ? "--" : versions.KernelVersion;
+            RootfsVersion = string.IsNullOrWhiteSpace(versions.RootfsVersion) ? "--" : versions.RootfsVersion;
+            AppendLog($"Board versions loaded: U-Boot={UbootVersion}, Kernel={KernelVersion}, RootFS={RootfsVersion}");
+        }
+        catch (Exception ex)
+        {
+            UbootVersion = KernelVersion = RootfsVersion = "--";
+            AppendLog($"Version query failed: {ex.Message}");
+        }
+
+        RaisePropertyChanged(nameof(UbootVersion));
+        RaisePropertyChanged(nameof(KernelVersion));
+        RaisePropertyChanged(nameof(RootfsVersion));
     }
 
     private async Task<BoardState> EnsureBoardSnAsync(IPcbaCommandClient client, BoardState state)

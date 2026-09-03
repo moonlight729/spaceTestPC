@@ -38,6 +38,7 @@ public interface IPcbaCommandClient
         CancellationToken cancellationToken = default);
 
     Task<BoardState> GetBoardStateAsync(string sessionId, string sn, CancellationToken cancellationToken = default);
+    Task<BoardVersions> GetBoardVersionsAsync(string sessionId, string sn, CancellationToken cancellationToken = default);
     Task<CommandResponse> WriteSnAsync(string sessionId, string sn, string boardId, CancellationToken cancellationToken = default);
     Task<CommandResponse> EnterTestModeAsync(string sessionId, string sn, string boardId, CancellationToken cancellationToken = default);
     Task<CommandResponse> StartLcdDisplayAsync(string sessionId, string sn, string boardId, CancellationToken cancellationToken = default);
