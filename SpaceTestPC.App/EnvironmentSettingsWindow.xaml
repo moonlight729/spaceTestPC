@@ -59,21 +59,17 @@
                         <Expander Header="整机测试" IsExpanded="True" Margin="0,10,0,4">
                             <Grid Margin="16,8">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                                <TextBlock Style="{StaticResource LabelStyle}" Text="充电电压范围 (mV)"/>
-                                <StackPanel Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="FinishedFastChargeVoltageMinTextBox" Width="110"/><TextBlock Margin="10,0" VerticalAlignment="Center" Text="至"/><TextBox x:Name="FinishedFastChargeVoltageMaxTextBox" Width="110"/></StackPanel>
-                                <TextBlock Grid.Row="1" Style="{StaticResource LabelStyle}" Text="充电电流范围 (mA)"/>
-                                <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="FinishedFastChargeCurrentMinTextBox" Width="110"/><TextBlock Margin="10,0" VerticalAlignment="Center" Text="至"/><TextBox x:Name="FinishedFastChargeCurrentMaxTextBox" Width="110"/></StackPanel>
+                                <Grid.RowDefinitions><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                <TextBlock Style="{StaticResource LabelStyle}" Text="充电电流范围 (mA)"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="FinishedFastChargeCurrentMinTextBox" Width="110"/><TextBlock Margin="10,0" VerticalAlignment="Center" Text="至"/><TextBox x:Name="FinishedFastChargeCurrentMaxTextBox" Width="110"/></StackPanel>
                             </Grid>
                         </Expander>
                         <Expander Header="PCBA 测试" IsExpanded="True" Margin="0,4">
                             <Grid Margin="16,8">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                                <TextBlock Style="{StaticResource LabelStyle}" Text="充电电压范围 (mV)"/>
-                                <StackPanel Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="PcbaFastChargeVoltageMinTextBox" Width="110"/><TextBlock Margin="10,0" VerticalAlignment="Center" Text="至"/><TextBox x:Name="PcbaFastChargeVoltageMaxTextBox" Width="110"/></StackPanel>
-                                <TextBlock Grid.Row="1" Style="{StaticResource LabelStyle}" Text="充电电流范围 (mA)"/>
-                                <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="PcbaFastChargeCurrentMinTextBox" Width="110"/><TextBlock Margin="10,0" VerticalAlignment="Center" Text="至"/><TextBox x:Name="PcbaFastChargeCurrentMaxTextBox" Width="110"/></StackPanel>
+                                <Grid.RowDefinitions><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                <TextBlock Style="{StaticResource LabelStyle}" Text="充电电流范围 (mA)"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="PcbaFastChargeCurrentMinTextBox" Width="110"/><TextBlock Margin="10,0" VerticalAlignment="Center" Text="至"/><TextBox x:Name="PcbaFastChargeCurrentMaxTextBox" Width="110"/></StackPanel>
                             </Grid>
                         </Expander>
                     </StackPanel>

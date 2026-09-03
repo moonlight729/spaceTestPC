@@ -288,23 +288,17 @@ public partial class EnvironmentSettingsWindow : Window
 
     private void LoadFastChargeSettings(string prefix, FastChargeSettings settings)
     {
-        FindTextBox($"{prefix}FastChargeVoltageMinTextBox").Text = settings.VoltageMinMv.ToString();
-        FindTextBox($"{prefix}FastChargeVoltageMaxTextBox").Text = settings.VoltageMaxMv.ToString();
         FindTextBox($"{prefix}FastChargeCurrentMinTextBox").Text = settings.CurrentMinMa.ToString();
         FindTextBox($"{prefix}FastChargeCurrentMaxTextBox").Text = settings.CurrentMaxMa.ToString();
     }
 
     private FastChargeSettings ReadFastChargeSettings(string prefix, string displayName)
     {
-        var voltageMin = PositiveInt(prefix, "FastChargeVoltageMin", displayName);
-        var voltageMax = PositiveInt(prefix, "FastChargeVoltageMax", displayName);
         var currentMin = PositiveInt(prefix, "FastChargeCurrentMin", displayName);
         var currentMax = PositiveInt(prefix, "FastChargeCurrentMax", displayName);
-        if (voltageMin >= voltageMax)
-            throw new InvalidDataException($"{displayName}板快充电压下限必须小于上限。");
         if (currentMin >= currentMax)
             throw new InvalidDataException($"{displayName}板快充电流下限必须小于上限。");
-        return new FastChargeSettings(voltageMin, voltageMax, currentMin, currentMax);
+        return new FastChargeSettings(currentMin, currentMax);
     }
 
     private int PositiveInt(string prefix, string field, string displayName) =>

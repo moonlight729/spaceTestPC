@@ -30,8 +30,6 @@ public sealed record EnvironmentSettingsData(
     FastChargeSettings PcbaFastCharge);
 
 public sealed record FastChargeSettings(
-    int VoltageMinMv,
-    int VoltageMaxMv,
     int CurrentMinMa,
     int CurrentMaxMa);
 
@@ -244,10 +242,8 @@ public sealed class EnvironmentConfigurationService
         var modeSettings = root["testModes"]?[mode]?["testParameters"]?["typec_fast_charge"] as JsonObject;
         var globalSettings = root["testPlan"]?["testParameters"]?["typec_fast_charge"] as JsonObject;
         return new FastChargeSettings(
-            ReadModeOrGlobalInt(modeSettings, globalSettings, "chargeVoltageMinMv", 7400),
-            ReadModeOrGlobalInt(modeSettings, globalSettings, "chargeVoltageMaxMv", 8400),
             ReadModeOrGlobalInt(modeSettings, globalSettings, "chargeCurrentMinMa", 1800),
-            ReadModeOrGlobalInt(modeSettings, globalSettings, "chargeCurrentMaxMa", 2300));
+            ReadModeOrGlobalInt(modeSettings, globalSettings, "chargeCurrentMaxMa", 4500));
     }
 
     private static int ReadModeOrGlobalInt(JsonObject? modeSettings, JsonObject? globalSettings, string name, int fallback) =>
@@ -259,8 +255,6 @@ public sealed class EnvironmentConfigurationService
         var modeNode = modes[mode] as JsonObject ?? new JsonObject();
         var testParameters = modeNode["testParameters"] as JsonObject ?? new JsonObject();
         var fastCharge = testParameters["typec_fast_charge"] as JsonObject ?? new JsonObject();
-        fastCharge["chargeVoltageMinMv"] = settings.VoltageMinMv;
-        fastCharge["chargeVoltageMaxMv"] = settings.VoltageMaxMv;
         fastCharge["chargeCurrentMinMa"] = settings.CurrentMinMa;
         fastCharge["chargeCurrentMaxMa"] = settings.CurrentMaxMa;
         testParameters["typec_fast_charge"] = fastCharge;

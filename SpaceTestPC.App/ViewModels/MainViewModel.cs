@@ -2880,8 +2880,8 @@ public sealed class MainViewModel : ObservableObject
 
         var parameters = _testPlan.First(item => item.Id == testEvent.TestId).Parameters;
         var samplingDurationMs = Math.Max(100, GetParameterInt(parameters, "timeoutMs", 4000));
-        var currentMinMa = GetParameterInt(parameters, "chargeCurrentMinMa", 0);
-        var currentMaxMa = GetParameterInt(parameters, "chargeCurrentMaxMa", int.MaxValue);
+        var currentMinMa = GetParameterInt(parameters, "chargeCurrentMinMa", 1800);
+        var currentMaxMa = GetParameterInt(parameters, "chargeCurrentMaxMa", 4500);
         AppendLog($"TYPE-C charging parameters: currentMinMa={currentMinMa}, currentMaxMa={currentMaxMa}");
 
         var rawCurrents = GetIntValues(testEvent.Data, "rawCurrentSamplesMa");
@@ -2905,38 +2905,29 @@ public sealed class MainViewModel : ObservableObject
             }
         }
 
-        if (!GetDataBoolean(testEvent.Data, "chargeControlOk"))
-        {
-            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, false, "charge_enable_failed");
-            AppendLog("TYPE-C charging automatic decision: FAIL (charge_enable_failed)");
-            return;
-        }
-
-        if (rawCurrents.Length == 0)
+        if (rawVoltages.Length == 0)
         {
             _hostDecisionData[testEvent.TestId] = new Dictionary<string, object?>
             {
                 ["phase"] = "sampling_failed",
-                ["chargeControlCommand"] = GetDataString(testEvent.Data, "chargeControlCommand", "enable_charge"),
-                ["chargeControlOk"] = GetDataBoolean(testEvent.Data, "chargeControlOk"),
                 ["pmicCommunicationOk"] = GetDataBoolean(testEvent.Data, "pmicCommunicationOk"),
                 ["readyForHostDecision"] = GetDataBoolean(testEvent.Data, "readyForHostDecision"),
                 ["samplingDurationMs"] = samplingDurationMs,
-                ["failureReason"] = "missing_charge_samples"
+                ["failureReason"] = "missing_battery_voltage_sample"
             };
-            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, false, "missing_charge_samples");
-            AppendLog("TYPE-C charging automatic decision: FAIL (missing_charge_samples)");
+            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, testEvent.TestId, false, "missing_battery_voltage_sample");
+            AppendLog("TYPE-C charging automatic decision: FAIL (missing_battery_voltage_sample)");
             return;
         }
 
         var orderedRawCurrents = rawCurrents.OrderBy(value => value).ToArray();
-        var filteredCurrents = FilterStableCurrentSamples(orderedRawCurrents);
-        var medianCurrentMa = filteredCurrents[filteredCurrents.Length / 2];
-        var avgCurrentMa = (int)Math.Round(filteredCurrents.Average());
-        var measuredCurrentMin = filteredCurrents.Min();
-        var measuredCurrentMax = filteredCurrents.Max();
-        var rippleMa = measuredCurrentMax - measuredCurrentMin;
-        var outlierCount = orderedRawCurrents.Length - filteredCurrents.Length;
+        var filteredCurrents = orderedRawCurrents;
+        var medianCurrentMa = filteredCurrents.Length == 0 ? 0 : filteredCurrents[filteredCurrents.Length / 2];
+        var avgCurrentMa = filteredCurrents.Length == 0 ? 0 : (int)Math.Round(filteredCurrents.Average());
+        var measuredCurrentMin = filteredCurrents.Length == 0 ? 0 : filteredCurrents.Min();
+        var measuredCurrentMax = filteredCurrents.Length == 0 ? 0 : filteredCurrents.Max();
+        var rippleMa = filteredCurrents.Length == 0 ? 0 : measuredCurrentMax - measuredCurrentMin;
+        var outlierCount = 0;
         var avgVoltageMv = rawVoltages.Length == 0 ? 0 : (int)Math.Round(rawVoltages.Average());
 
         var passed = avgCurrentMa >= currentMinMa && avgCurrentMa <= currentMaxMa;
@@ -2948,23 +2939,13 @@ public sealed class MainViewModel : ObservableObject
         _hostDecisionData[testEvent.TestId] = new Dictionary<string, object?>
         {
             ["phase"] = "sampling_completed",
-            ["chargeControlCommand"] = GetDataString(testEvent.Data, "chargeControlCommand", "enable_charge"),
-            ["chargeControlOk"] = GetDataBoolean(testEvent.Data, "chargeControlOk"),
-            ["pmicCommunicationOk"] = GetDataBoolean(testEvent.Data, "pmicCommunicationOk"),
             ["readyForHostDecision"] = GetDataBoolean(testEvent.Data, "readyForHostDecision"),
             ["samplingDurationMs"] = GetDataInt(testEvent.Data, "samplingDurationMs") > 0 ? GetDataInt(testEvent.Data, "samplingDurationMs") : samplingDurationMs,
             ["elapsedMs"] = GetDataInt(testEvent.Data, "samplingDurationMs") > 0 ? GetDataInt(testEvent.Data, "samplingDurationMs") : samplingDurationMs,
             ["sampleCount"] = orderedRawCurrents.Length,
-            ["validSampleCount"] = filteredCurrents.Length,
-            ["outlierSampleCount"] = outlierCount,
             ["rawCurrentSamplesMa"] = orderedRawCurrents,
-            ["rawVoltageSamplesMv"] = rawVoltages,
             ["chargeVoltageMv"] = avgVoltageMv,
             ["averageChargeCurrentMa"] = avgCurrentMa,
-            ["measuredCurrentMinMa"] = measuredCurrentMin,
-            ["measuredCurrentMaxMa"] = measuredCurrentMax,
-            ["currentRippleMa"] = rippleMa,
-            ["rawCurrentMedianMa"] = medianCurrentMa,
             ["chargeCurrentMinMa"] = currentMinMa,
             ["chargeCurrentMaxMa"] = currentMaxMa,
             ["failureReason"] = reason
@@ -3381,7 +3362,7 @@ public sealed class MainViewModel : ObservableObject
             AppendLog($"Startup basic settings: mode={settings.Mode}, bluetoothPort={settings.Port}, bluetoothTarget={settings.TargetName}, wifiSsid={settings.WifiSsid}, ethernetPingIp={settings.EthernetPingIp}, ethernetLedObservationMs={settings.EthernetLedObservationMs}");
             AppendLog($"Startup device communication: mode={connection.Mode}, host={connection.Host}, port={connection.Port}, ethernetOnly={connection.EthernetOnly}, adapterId={connection.AdapterId}, adapterName={connection.AdapterName}, localIp={connection.LocalIp}, discoveryEnabled={connection.Discovery.Enabled}, discoveryMode={connection.Discovery.Mode}, subnet={connection.Discovery.Subnet}, connectTimeoutMs={connection.Discovery.ConnectTimeoutMs}, maxParallel={connection.Discovery.MaxParallel}");
             AppendLog($"Startup discharge settings: finished voltage={settings.FinishedProductBattery.VoltageMinMv}-{settings.FinishedProductBattery.VoltageMaxMv}mV, current={settings.FinishedProductBattery.CurrentMinMa}-{settings.FinishedProductBattery.CurrentMaxMa}mA; pcba voltage={settings.PcbaBattery.VoltageMinMv}-{settings.PcbaBattery.VoltageMaxMv}mV, current={settings.PcbaBattery.CurrentMinMa}-{settings.PcbaBattery.CurrentMaxMa}mA");
-            AppendLog($"Startup fast-charge settings: finished voltage={settings.FinishedProductFastCharge.VoltageMinMv}-{settings.FinishedProductFastCharge.VoltageMaxMv}mV, current={settings.FinishedProductFastCharge.CurrentMinMa}-{settings.FinishedProductFastCharge.CurrentMaxMa}mA; pcba voltage={settings.PcbaFastCharge.VoltageMinMv}-{settings.PcbaFastCharge.VoltageMaxMv}mV, current={settings.PcbaFastCharge.CurrentMinMa}-{settings.PcbaFastCharge.CurrentMaxMa}mA");
+            AppendLog($"Startup fast-charge settings: finished current={settings.FinishedProductFastCharge.CurrentMinMa}-{settings.FinishedProductFastCharge.CurrentMaxMa}mA; pcba current={settings.PcbaFastCharge.CurrentMinMa}-{settings.PcbaFastCharge.CurrentMaxMa}mA");
             AppendLog($"Startup upgrade settings: enabled={upgrade.Enabled}, transport={upgrade.Transport}, localPath={upgrade.LocalBinaryPath}, remotePath={upgrade.RemoteBinaryPath}, service={upgrade.ServiceName}, applicationVersion={upgrade.ApplicationVersion}, sshUser={upgrade.SshUser}, sshPort={upgrade.SshPort}");
             AppendLog($"Startup logging settings: fileEnabled={logging.FileEnabled}, filePath={logging.FilePath}");
             AppendLog($"Startup test plan: activeMode={_testProfileMode}, testCount={_testPlan.Count}, tests={string.Join(",", _testPlan.Select(item => item.Id))}");

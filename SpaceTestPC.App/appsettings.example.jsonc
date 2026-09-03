@@ -139,9 +139,6 @@
         "timeoutMs": 3000
       },
       "typec_fast_charge": {
-        "batterySimulationVoltageMv": 7400,
-        "chargeVoltageMinMv": 7400,
-        "chargeVoltageMaxMv": 8400,
         "chargeCurrentMinMa": 1800,
         "chargeCurrentMaxMa": 3000,
         "stableSampleCount": 3,
