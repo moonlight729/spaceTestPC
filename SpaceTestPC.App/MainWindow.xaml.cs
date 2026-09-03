@@ -239,8 +239,8 @@ public partial class MainWindow : Window
     {
         MessageBox.Show(
             this,
-            "指示灯板测试前检查到没有插入充电线。\n\n请插入充电线；插入后当前测试会自动继续，无需重新扫描。",
-            "充电线未接入",
+            "指示灯测试需要接入充电器。\n\n请插入充电器；检测到 Charging 后，当前测试会自动继续，无需重新扫描。",
+            "请插入充电器",
             MessageBoxButton.OK,
             MessageBoxImage.Warning);
     }

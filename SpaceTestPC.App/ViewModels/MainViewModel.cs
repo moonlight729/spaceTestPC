@@ -1952,8 +1952,13 @@ public sealed class MainViewModel : ObservableObject
         {
             OperatorInstruction = "请先插入充电线，系统检测到 Charging 后才开始指示灯观察。";
         }
-        if (testEvent.TestId == "indicator_led" && testEvent.Status == "failed" &&
-            string.Equals(GetDataString(testEvent.Data, "failureReason", string.Empty), "charger_not_connected", StringComparison.OrdinalIgnoreCase) &&
+        var indicatorLedWaitingForCharger = testEvent.TestId == "indicator_led" &&
+            testEvent.Status == "running" &&
+            string.Equals(eventPhase, "wait_charger", StringComparison.OrdinalIgnoreCase);
+        var indicatorLedChargerTimedOut = testEvent.TestId == "indicator_led" &&
+            testEvent.Status == "failed" &&
+            string.Equals(GetDataString(testEvent.Data, "failureReason", string.Empty), "charger_not_connected", StringComparison.OrdinalIgnoreCase);
+        if ((indicatorLedWaitingForCharger || indicatorLedChargerTimedOut) &&
             !_chargerNotConnectedDialogShown)
         {
             _chargerNotConnectedDialogShown = true;
