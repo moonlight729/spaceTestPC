@@ -16,6 +16,7 @@ public sealed class MainViewModel : ObservableObject
     public event EventHandler<TestSessionRecord>? HistoryRecordFound;
     public event EventHandler<string>? ScanValidationFailed;
     public event EventHandler? BatteryDischargePreparationRequested;
+    public event EventHandler? ChargerNotConnectedRequested;
     private const int RequiredSnLength = 20;
     private static bool UseUnifiedSessionProtocol => true;
     private static readonly IReadOnlyList<TestPlanItem> AllTestPlan =
@@ -106,6 +107,7 @@ public sealed class MainViewModel : ObservableObject
     private IPcbaCommandClient? _activeSessionClient;
     private readonly HashSet<string> _automaticDecisionTests = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _submittedManualDecisionTests = new(StringComparer.OrdinalIgnoreCase);
+    private bool _chargerNotConnectedDialogShown;
     private bool _isContinuousTestEnabled;
     private bool _isSessionRunning;
     private bool _isRetestLifecycleActive;
@@ -1897,8 +1899,27 @@ public sealed class MainViewModel : ObservableObject
         }
 
         var eventPhase = GetDataString(testEvent.Data, "phase", string.Empty);
+        // Indicator LED emits preliminary phases while it verifies that the
+        // charger cable is connected.  Those phases must not expose PASS/FAIL
+        // controls or the LED observation dialog yet.
+        var indicatorReadyForManualDecision = testEvent.TestId != "indicator_led" ||
+            eventPhase == "rgb_sequence" ||
+            GetDataBoolean(testEvent.Data, "manualObserved");
         var requiresManualDecision = testEvent.Status == "running" &&
+            indicatorReadyForManualDecision &&
             (testEvent.TestId != "ethernet_led" || eventPhase == "operator_confirm_sequence");
+
+        if (testEvent.TestId == "indicator_led" && testEvent.Status == "running" && !indicatorReadyForManualDecision)
+        {
+            OperatorInstruction = "请先插入充电线，系统检测到 Charging 后才开始指示灯观察。";
+        }
+        if (testEvent.TestId == "indicator_led" && testEvent.Status == "failed" &&
+            string.Equals(GetDataString(testEvent.Data, "failureReason", string.Empty), "charger_not_connected", StringComparison.OrdinalIgnoreCase) &&
+            !_chargerNotConnectedDialogShown)
+        {
+            _chargerNotConnectedDialogShown = true;
+            ChargerNotConnectedRequested?.Invoke(this, EventArgs.Empty);
+        }
 
         // Ethernet LED testing has several running phases before the operator can
         // make a decision (most importantly wait_cable). Do not retain a stale
@@ -3491,6 +3512,10 @@ public sealed class MainViewModel : ObservableObject
             result.TryAdd("redGreenOverlapMs", 200);
             result.TryAdd("i2cTimeoutMs", 3000);
             result.TryAdd("i2cRetryIntervalMs", 100);
+            result.TryAdd("chargerStatusPath", "/sys/class/power_supply/bq2579x-charger/status");
+            result.TryAdd("chargerRequiredStatus", "Charging");
+            result.TryAdd("chargerCheckTimeoutMs", 0);
+            result.TryAdd("chargerCheckPollIntervalMs", 250);
         }
         if (testId == "ethernet_led")
         {
@@ -3540,6 +3565,7 @@ public sealed class MainViewModel : ObservableObject
         _manualDecisionPhase = string.Empty;
         _automaticDecisionTests.Clear();
         _submittedManualDecisionTests.Clear();
+        _chargerNotConnectedDialogShown = false;
         _hostDecisionData.Clear();
         _voltagePhaseResults.Clear();
         _voltageControlCommands.Clear();

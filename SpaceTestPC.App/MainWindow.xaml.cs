@@ -104,6 +104,7 @@ public partial class MainWindow : Window
         _viewModel.HistoryRecordFound += HistoryRecordFound;
         _viewModel.ScanValidationFailed += ScanValidationFailed;
         _viewModel.BatteryDischargePreparationRequested += BatteryDischargePreparationRequested;
+        _viewModel.ChargerNotConnectedRequested += ChargerNotConnectedRequested;
         adbClient.Log += message => Dispatcher.Invoke(() => _viewModel.AppendExternalLog(message));
         tcpClient.Log += message => Dispatcher.Invoke(() => _viewModel.AppendExternalLog(message));
         Loaded += async (_, _) => await _viewModel.InitializeAsync();
@@ -232,6 +233,16 @@ public partial class MainWindow : Window
             MessageBoxButton.OK,
             MessageBoxImage.Warning);
         await _viewModel.ConfirmBatteryDischargePreparationAsync();
+    }
+
+    private void ChargerNotConnectedRequested(object? sender, EventArgs e)
+    {
+        MessageBox.Show(
+            this,
+            "指示灯板测试前检查到没有插入充电线。\n\n请插入充电线；插入后当前测试会自动继续，无需重新扫描。",
+            "充电线未接入",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
     }
 
     private void SubmitScanIfPossible()
