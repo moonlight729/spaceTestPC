@@ -68,7 +68,7 @@ public sealed class UpgradeConfiguration
     public string LocalBinaryPath { get; set; } = "spacetest3576";
     public string RemoteBinaryPath { get; set; } = "/vendor/originflow/bin/spacetest3576";
     public string ServiceName { get; set; } = "pcba-test.service";
-    public int AutoUpgradeDelaySeconds { get; set; } = 5;
+    public int AutoUpgradeDelaySeconds { get; set; } = 1;
     public string ApplicationVersion { get; set; } = string.Empty;
     public string SshUser { get; set; } = "originflow";
     public string SshPassword { get; set; } = string.Empty;

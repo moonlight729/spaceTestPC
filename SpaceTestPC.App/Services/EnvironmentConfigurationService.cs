@@ -80,7 +80,7 @@ public sealed class EnvironmentConfigurationService
             ReadRssi(root, "pcba", "wifi", -40),
             ReadRssi(root, "finished_product", "bluetooth", -60),
             ReadRssi(root, "pcba", "bluetooth", -60),
-            ReadBattery(root, "finished_product", 7600, 80),
+            ReadBattery(root, "finished_product", 7000, 80),
             ReadBattery(root, "pcba", 7000, 100),
             ReadFastCharge(root, "finished_product"),
             ReadFastCharge(root, "pcba"));
@@ -184,7 +184,7 @@ public sealed class EnvironmentConfigurationService
             battery?["voltagePath"]?.GetValue<string>() ?? "/sys/class/power_supply/cw221X-bat/voltage_now",
             battery?["requiredStatus"]?.GetValue<string>() ?? "Discharging",
             battery?["voltageMinMv"]?.GetValue<int>() ?? defaultVoltageMinMv,
-            battery?["voltageMaxMv"]?.GetValue<int>() ?? 8400,
+            battery?["voltageMaxMv"]?.GetValue<int>() ?? 9000,
             battery?["dischargeCurrentMinMa"]?.GetValue<int>() ?? 100,
             battery?["dischargeCurrentMaxMa"]?.GetValue<int>() ?? 500,
             battery?["samplingDurationMs"]?.GetValue<int>() ?? 4000,
