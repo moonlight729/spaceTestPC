@@ -182,13 +182,14 @@ public sealed class MainViewModel : ObservableObject
             _ethernetRequest.RouterIp = configuredRouterIp.GetString()!;
             _ethernetRequest.TargetIp = configuredRouterIp.GetString()!;
         }
-        _allowSnMismatchForDebug = appConfiguration.TestPlan.AllowSnMismatchForDebug;
         _keyTestTimeoutMs = GetConfiguredKeyTimeoutMs(appConfiguration);
         _upgradeConfiguration = appConfiguration.Upgrade;
         _testLifecycleConfiguration = appConfiguration.TestLifecycle;
         _connectionMode = ParseConnectionMode(appConfiguration.PcbaConnection.Mode);
         _testProfileMode = string.IsNullOrWhiteSpace(appConfiguration.TestMode) ? "finished_product" : appConfiguration.TestMode.Trim().ToLowerInvariant();
         _operationMode = string.Equals(appConfiguration.OperationMode, "developer", StringComparison.OrdinalIgnoreCase) ? "developer" : "production";
+        // Debug-only bypasses must never leak into production mode.
+        _allowSnMismatchForDebug = _operationMode == "developer" && appConfiguration.TestPlan.AllowSnMismatchForDebug;
         _testModeConfiguration = appConfiguration.TestModes.TryGetValue(_testProfileMode, out var modeConfiguration)
             ? modeConfiguration
             : new TestModeConfiguration();
