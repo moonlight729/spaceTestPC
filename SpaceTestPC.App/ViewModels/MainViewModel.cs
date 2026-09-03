@@ -22,9 +22,9 @@ public sealed class MainViewModel : ObservableObject
     private static readonly IReadOnlyList<TestPlanItem> AllTestPlan =
     [
         new() { Id = "board_state" }, new() { Id = "hdmi" }, new() { Id = "keys" }, new() { Id = "lcd" },
-        new() { Id = "wifi" }, new() { Id = "bluetooth" }, new() { Id = "fingerprint" },
+        new() { Id = "wifi" }, new() { Id = "bluetooth" },
         new() { Id = "battery_management" }, new() { Id = "typec_fast_charge" }, new() { Id = "tf" }, new() { Id = "emmc" }, new() { Id = "ddr" }, new() { Id = "typec_camera" }, new() { Id = "usb2" }, new() { Id = "usb3" },
-        new() { Id = "pcba_test_points" }, new() { Id = "ethernet_led" }, new() { Id = "indicator_led" }, new() { Id = "fan" }, new() { Id = "otg" }, new() { Id = "reset_button" }
+        new() { Id = "pcba_test_points" }, new() { Id = "ethernet_led" }, new() { Id = "indicator_led" }, new() { Id = "fan" }
     ];
 
     private const string BoardStateItemName = "板状态";
@@ -3485,6 +3485,12 @@ public sealed class MainViewModel : ObservableObject
         var plan = enabled.Count > 0
             ? AllTestPlan.Where(item => enabled.Contains(item.Id)).ToList()
             : AllTestPlan.Where(item => !disabled.Contains(item.Id)).ToList();
+
+        // PCBA test-point acquisition is not part of the finished-product flow.
+        if (string.Equals(mode, "finished_product", StringComparison.OrdinalIgnoreCase))
+        {
+            plan.RemoveAll(item => string.Equals(item.Id, "pcba_test_points", StringComparison.OrdinalIgnoreCase));
+        }
 
         if (modeConfiguration?.TestOrder is { Length: > 0 } order)
         {
