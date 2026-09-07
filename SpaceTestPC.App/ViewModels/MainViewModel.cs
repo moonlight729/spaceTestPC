@@ -1731,23 +1731,27 @@ public sealed class MainViewModel : ObservableObject
         {
             AppendLog("ADB/sys.get_versions request sent.");
             var versions = await client.GetBoardVersionsAsync(SessionId, CurrentSn);
-            UbootVersion = string.IsNullOrWhiteSpace(versions.UbootVersion) ? "--" : versions.UbootVersion;
-            KernelVersion = string.IsNullOrWhiteSpace(versions.KernelVersion) ? "--" : versions.KernelVersion;
-            RootfsVersion = string.IsNullOrWhiteSpace(versions.RootfsVersion) ? "--" : versions.RootfsVersion;
-            Gen1AppVersion = string.IsNullOrWhiteSpace(versions.Gen1AppVersion) ? "--" : versions.Gen1AppVersion;
+            UbootVersion = SimplifyVersion(versions.UbootVersion);
+            KernelVersion = SimplifyVersion(versions.KernelVersion);
+            RootfsVersion = SimplifyVersion(versions.RootfsVersion);
+            Gen1AppVersion = SimplifyVersion(versions.Gen1AppVersion);
             AppendLog($"Board versions loaded: U-Boot={UbootVersion}, Kernel={KernelVersion}, RootFS={RootfsVersion}, Gen1App={Gen1AppVersion}");
 
             if (_versionValidation.Enabled)
             {
                 var mismatches = new List<string>();
-                if (!string.Equals(UbootVersion, _versionValidation.Uboot, StringComparison.Ordinal))
-                    mismatches.Add($"U-Boot 实际 {UbootVersion}，要求 {_versionValidation.Uboot}");
-                if (!string.Equals(KernelVersion, _versionValidation.Kernel, StringComparison.Ordinal))
-                    mismatches.Add($"Kernel 实际 {KernelVersion}，要求 {_versionValidation.Kernel}");
-                if (!string.Equals(RootfsVersion, _versionValidation.Rootfs, StringComparison.Ordinal))
-                    mismatches.Add($"RootFS 实际 {RootfsVersion}，要求 {_versionValidation.Rootfs}");
-                if (!string.Equals(Gen1AppVersion, _versionValidation.Gen1App, StringComparison.Ordinal))
-                    mismatches.Add($"Gen1 App 实际 {Gen1AppVersion}，要求 {_versionValidation.Gen1App}");
+                var expectedUboot = SimplifyVersion(_versionValidation.Uboot);
+                var expectedKernel = SimplifyVersion(_versionValidation.Kernel);
+                var expectedRootfs = SimplifyVersion(_versionValidation.Rootfs);
+                var expectedGen1App = SimplifyVersion(_versionValidation.Gen1App);
+                if (!string.Equals(UbootVersion, expectedUboot, StringComparison.Ordinal))
+                    mismatches.Add($"U-Boot 实际 {UbootVersion}，要求 {expectedUboot}");
+                if (!string.Equals(KernelVersion, expectedKernel, StringComparison.Ordinal))
+                    mismatches.Add($"Kernel 实际 {KernelVersion}，要求 {expectedKernel}");
+                if (!string.Equals(RootfsVersion, expectedRootfs, StringComparison.Ordinal))
+                    mismatches.Add($"RootFS 实际 {RootfsVersion}，要求 {expectedRootfs}");
+                if (!string.Equals(Gen1AppVersion, expectedGen1App, StringComparison.Ordinal))
+                    mismatches.Add($"Gen1 App 实际 {Gen1AppVersion}，要求 {expectedGen1App}");
                 if (!versions.Gen1AppInstalled) mismatches.Add("Gen1 App 未正常安装");
                 if (mismatches.Count > 0)
                     throw new InvalidDataException(string.Join("；", mismatches));
@@ -1782,6 +1786,14 @@ public sealed class MainViewModel : ObservableObject
         parameters.TryGetValue(key, out var value) && value is JsonElement element && element.ValueKind == JsonValueKind.String
             ? element.GetString()?.Trim() ?? string.Empty
             : value?.ToString()?.Trim() ?? string.Empty;
+
+    private static string SimplifyVersion(string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version)) return "--";
+        var trimmed = version.Trim();
+        var suffixIndex = trimmed.IndexOf('-');
+        return suffixIndex > 0 ? trimmed[..suffixIndex] : trimmed;
+    }
 
     private static bool GetConfigurationBoolean(IReadOnlyDictionary<string, object?> parameters, string key, bool fallback) =>
         parameters.TryGetValue(key, out var value) && value is JsonElement element && element.ValueKind is JsonValueKind.True or JsonValueKind.False

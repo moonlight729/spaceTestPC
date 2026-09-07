@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:converters="clr-namespace:SpaceTestPC.App.Converters"
         mc:Ignorable="d"
         Title="{Binding WindowTitle}"
         Icon="{DynamicResource WindowIcon}"
@@ -26,6 +27,13 @@
             </DrawingImage.Drawing>
         </DrawingImage>
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+        <converters:StatusTextBrushConverter x:Key="StatusTextBrushConverter" />
+        <Style x:Key="StatusBarText" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="Normal" />
+            <Setter Property="Foreground" Value="#475467" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
         <Style TargetType="TextBlock">
             <Setter Property="Foreground" Value="#1D2939" />
         </Style>
@@ -425,27 +433,27 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Foreground="#475467" FontWeight="SemiBold" Text="{Binding StatusBarRunState}" />
+                    <TextBlock Style="{StaticResource StatusBarText}" Foreground="{Binding StatusBarRunState, Converter={StaticResource StatusTextBrushConverter}}" Text="{Binding StatusBarRunState}" />
                     <TextBlock Margin="14,0" Foreground="#CBD5E1" Text="|" />
-                    <TextBlock Foreground="#667085" Text="{Binding StatusBarProgress}" />
+                    <TextBlock Style="{StaticResource StatusBarText}" Text="{Binding StatusBarProgress}" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                    <TextBlock Foreground="#667085" Text="{Binding StatusBarSn}" />
+                    <TextBlock Style="{StaticResource StatusBarText}" Text="{Binding StatusBarSn}" />
                     <TextBlock Margin="14,0" Foreground="#CBD5E1" Text="|" />
-                    <TextBlock Foreground="#667085" Text="{Binding StatusBarElapsedTime}" />
+                    <TextBlock Style="{StaticResource StatusBarText}" Text="{Binding StatusBarElapsedTime}" />
                     <TextBlock Margin="14,0" Foreground="#CBD5E1" Text="|" />
-                    <TextBlock Foreground="#175CD3" FontWeight="SemiBold" Text="{Binding StatusBarConnection}" />
+                    <TextBlock Style="{StaticResource StatusBarText}" Foreground="{Binding StatusBarConnection, Converter={StaticResource StatusTextBrushConverter}}" Text="{Binding StatusBarConnection}" />
                     <TextBlock Margin="14,0" Foreground="#CBD5E1" Text="|" />
-                    <TextBlock Foreground="#175CD3" FontWeight="SemiBold" Text="{Binding StatusBarBluetooth}" />
+                    <TextBlock Style="{StaticResource StatusBarText}" Foreground="{Binding StatusBarBluetooth, Converter={StaticResource StatusTextBrushConverter}}" Text="{Binding StatusBarBluetooth}" />
                     <TextBlock Margin="14,0" Foreground="#CBD5E1" Text="|" />
-                    <TextBlock Foreground="#667085" Text="{Binding StatusBarJxTvm}" />
+                    <TextBlock Style="{StaticResource StatusBarText}" Foreground="{Binding StatusBarJxTvm, Converter={StaticResource StatusTextBrushConverter}}" Text="{Binding StatusBarJxTvm}" />
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Foreground="#15803D" Text="{Binding StatusBarDatabase}" />
+                    <TextBlock Style="{StaticResource StatusBarText}" Foreground="{Binding StatusBarDatabase, Converter={StaticResource StatusTextBrushConverter}}" Text="{Binding StatusBarDatabase}" />
                     <TextBlock Margin="12,0" Foreground="#CBD5E1" Text="|" />
-                    <TextBlock Foreground="#15803D" Text="{Binding StatusBarLog}" />
+                    <TextBlock Style="{StaticResource StatusBarText}" Foreground="{Binding StatusBarLog, Converter={StaticResource StatusTextBrushConverter}}" Text="{Binding StatusBarLog}" />
                     <TextBlock Margin="12,0" Foreground="#CBD5E1" Text="|" />
-                    <TextBlock Foreground="#667085" Text="{Binding StatusBarCurrentTime}" />
+                    <TextBlock Style="{StaticResource StatusBarText}" Text="{Binding StatusBarCurrentTime}" />
                 </StackPanel>
             </Grid>
         </Border>
