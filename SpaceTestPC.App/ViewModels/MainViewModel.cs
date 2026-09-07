@@ -45,6 +45,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly Jk5506Service? _jk5506Service;
     private readonly JxTvmService? _jxTvmService;
     private readonly BluetoothBroadcasterService? _bluetoothBroadcasterService;
+    private readonly VersionValidationSettings _versionValidation;
     private readonly Dictionary<string, bool> _voltagePhaseResults = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, IReadOnlyDictionary<string, object?>> _hostDecisionData = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _voltageControlCommands = new(StringComparer.OrdinalIgnoreCase);
@@ -193,6 +194,13 @@ public sealed class MainViewModel : ObservableObject
         _connectionMode = ParseConnectionMode(appConfiguration.PcbaConnection.Mode);
         _testProfileMode = string.IsNullOrWhiteSpace(appConfiguration.TestMode) ? "finished_product" : appConfiguration.TestMode.Trim().ToLowerInvariant();
         _operationMode = string.Equals(appConfiguration.OperationMode, "developer", StringComparison.OrdinalIgnoreCase) ? "developer" : "production";
+        var versionParameters = GetTestParameters(appConfiguration, "board_state", _testProfileMode);
+        _versionValidation = new VersionValidationSettings(
+            GetConfigurationBoolean(versionParameters, "versionValidationEnabled", true),
+            GetConfigurationString(versionParameters, "expectedUbootVersion"),
+            GetConfigurationString(versionParameters, "expectedKernelVersion"),
+            GetConfigurationString(versionParameters, "expectedRootfsVersion"),
+            GetConfigurationString(versionParameters, "expectedGen1AppVersion"));
         // Debug-only bypasses must never leak into production mode.
         _allowSnMismatchForDebug = _operationMode == "developer" && appConfiguration.TestPlan.AllowSnMismatchForDebug;
         _testModeConfiguration = appConfiguration.TestModes.TryGetValue(_testProfileMode, out var modeConfiguration)
@@ -363,6 +371,9 @@ public sealed class MainViewModel : ObservableObject
     public string UbootVersion { get; private set; } = "--";
     public string KernelVersion { get; private set; } = "--";
     public string RootfsVersion { get; private set; } = "--";
+    public string Gen1AppVersion { get; private set; } = "--";
+    public string VersionValidationStatus { get; private set; } = "版本校验：待检测";
+    public System.Windows.Media.Brush VersionValidationForeground { get; private set; } = System.Windows.Media.Brushes.Gray;
 
     public string BoardState
     {
@@ -847,6 +858,10 @@ public sealed class MainViewModel : ObservableObject
         _rootSessionId = SessionId;
         _attemptNo = 1;
         _latestBoardState = null;
+        VersionValidationStatus = "版本校验：待检测";
+        VersionValidationForeground = System.Windows.Media.Brushes.Gray;
+        RaisePropertyChanged(nameof(VersionValidationStatus));
+        RaisePropertyChanged(nameof(VersionValidationForeground));
         _testResultSourceSessions.Clear();
         SetRetestLifecycleActive(false);
         LastResult = "SN scanned";
@@ -1708,6 +1723,10 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task LoadBoardVersionsAsync(IPcbaCommandClient client)
     {
+        VersionValidationStatus = "版本校验：检测中";
+        VersionValidationForeground = System.Windows.Media.Brushes.DodgerBlue;
+        RaisePropertyChanged(nameof(VersionValidationStatus));
+        RaisePropertyChanged(nameof(VersionValidationForeground));
         try
         {
             AppendLog("ADB/sys.get_versions request sent.");
@@ -1715,18 +1734,59 @@ public sealed class MainViewModel : ObservableObject
             UbootVersion = string.IsNullOrWhiteSpace(versions.UbootVersion) ? "--" : versions.UbootVersion;
             KernelVersion = string.IsNullOrWhiteSpace(versions.KernelVersion) ? "--" : versions.KernelVersion;
             RootfsVersion = string.IsNullOrWhiteSpace(versions.RootfsVersion) ? "--" : versions.RootfsVersion;
-            AppendLog($"Board versions loaded: U-Boot={UbootVersion}, Kernel={KernelVersion}, RootFS={RootfsVersion}");
+            Gen1AppVersion = string.IsNullOrWhiteSpace(versions.Gen1AppVersion) ? "--" : versions.Gen1AppVersion;
+            AppendLog($"Board versions loaded: U-Boot={UbootVersion}, Kernel={KernelVersion}, RootFS={RootfsVersion}, Gen1App={Gen1AppVersion}");
+
+            if (_versionValidation.Enabled)
+            {
+                var mismatches = new List<string>();
+                if (!string.Equals(UbootVersion, _versionValidation.Uboot, StringComparison.Ordinal))
+                    mismatches.Add($"U-Boot 实际 {UbootVersion}，要求 {_versionValidation.Uboot}");
+                if (!string.Equals(KernelVersion, _versionValidation.Kernel, StringComparison.Ordinal))
+                    mismatches.Add($"Kernel 实际 {KernelVersion}，要求 {_versionValidation.Kernel}");
+                if (!string.Equals(RootfsVersion, _versionValidation.Rootfs, StringComparison.Ordinal))
+                    mismatches.Add($"RootFS 实际 {RootfsVersion}，要求 {_versionValidation.Rootfs}");
+                if (!string.Equals(Gen1AppVersion, _versionValidation.Gen1App, StringComparison.Ordinal))
+                    mismatches.Add($"Gen1 App 实际 {Gen1AppVersion}，要求 {_versionValidation.Gen1App}");
+                if (!versions.Gen1AppInstalled) mismatches.Add("Gen1 App 未正常安装");
+                if (mismatches.Count > 0)
+                    throw new InvalidDataException(string.Join("；", mismatches));
+            }
+
+            VersionValidationStatus = _versionValidation.Enabled ? "版本校验：通过" : "版本校验：未启用";
+            VersionValidationForeground = _versionValidation.Enabled ? System.Windows.Media.Brushes.ForestGreen : System.Windows.Media.Brushes.Gray;
         }
         catch (Exception ex)
         {
-            UbootVersion = KernelVersion = RootfsVersion = "--";
+            VersionValidationStatus = $"版本校验失败：{ex.Message}";
+            VersionValidationForeground = System.Windows.Media.Brushes.Firebrick;
             AppendLog($"Version query failed: {ex.Message}");
+            RaisePropertyChanged(nameof(UbootVersion));
+            RaisePropertyChanged(nameof(KernelVersion));
+            RaisePropertyChanged(nameof(RootfsVersion));
+            RaisePropertyChanged(nameof(Gen1AppVersion));
+            RaisePropertyChanged(nameof(VersionValidationStatus));
+            RaisePropertyChanged(nameof(VersionValidationForeground));
+            throw;
         }
 
         RaisePropertyChanged(nameof(UbootVersion));
         RaisePropertyChanged(nameof(KernelVersion));
         RaisePropertyChanged(nameof(RootfsVersion));
+        RaisePropertyChanged(nameof(Gen1AppVersion));
+        RaisePropertyChanged(nameof(VersionValidationStatus));
+        RaisePropertyChanged(nameof(VersionValidationForeground));
     }
+
+    private static string GetConfigurationString(IReadOnlyDictionary<string, object?> parameters, string key) =>
+        parameters.TryGetValue(key, out var value) && value is JsonElement element && element.ValueKind == JsonValueKind.String
+            ? element.GetString()?.Trim() ?? string.Empty
+            : value?.ToString()?.Trim() ?? string.Empty;
+
+    private static bool GetConfigurationBoolean(IReadOnlyDictionary<string, object?> parameters, string key, bool fallback) =>
+        parameters.TryGetValue(key, out var value) && value is JsonElement element && element.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? element.GetBoolean()
+            : value is bool boolean ? boolean : fallback;
 
     private async Task<BoardState> EnsureBoardSnAsync(IPcbaCommandClient client, BoardState state)
     {
