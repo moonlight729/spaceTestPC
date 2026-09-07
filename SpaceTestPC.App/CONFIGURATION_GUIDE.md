@@ -211,8 +211,7 @@ Recovery 按键示例：
 "testParameters": {
   "fan": {
     "method": "tach_auto",
-    "pwmPath": "/sys/class/hwmon/hwmon12/pwm1",
-    "tachPath": "/sys/class/hwmon/hwmon12/tach_rpm",
+    "hwmonRoot": "/sys/bus/platform/drivers/pwm-fan/fan1/hwmon",
     "startValue": 100,
     "stopValue": 0,
     "tachSettleMs": 1000
