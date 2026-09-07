@@ -134,6 +134,7 @@ public sealed class MainViewModel : ObservableObject
     private bool _applicationUpgradeCheckCompleted;
     private bool _applicationUpgradeCheckInProgress;
     private string _connectionStatus = "连接：未连接";
+    private string _bluetoothConnectionStatus = "蓝牙：未启用";
     private string _hostApplicationMd5 = string.Empty;
     private string _localUpgradeBinaryPath = string.Empty;
     private bool _upgradePackageReady;
@@ -164,6 +165,10 @@ public sealed class MainViewModel : ObservableObject
         _jxTvmService = jxTvmService;
         if (_jxTvmService is not null) _jxTvmService.Log = AppendLog;
         _bluetoothBroadcasterService = bluetoothBroadcasterService;
+        if (_bluetoothBroadcasterService?.IsEnabled == true)
+        {
+            _bluetoothConnectionStatus = "蓝牙：检测中";
+        }
         var appConfiguration = configuration ?? new AppConfiguration();
         if (appConfiguration.TestPlan.TestParameters.TryGetValue("wifi", out var wifiParameters))
         {
@@ -487,6 +492,7 @@ public sealed class MainViewModel : ObservableObject
     public string StatusBarLog => "日志：正常";
     public string StatusBarJxTvm => $"电压检测仪：{JxTvmStatus}";
     public string StatusBarConnection => _connectionStatus;
+    public string StatusBarBluetooth => _bluetoothConnectionStatus;
     public string StatusBarCurrentTime => DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss");
     public int TestOverviewColumns { get; }
     public string SnPolicyModeName => _allowSnMismatchForDebug ? "开发模式" : "生产模式";
@@ -3202,8 +3208,25 @@ public sealed class MainViewModel : ObservableObject
         }
         if (_bluetoothBroadcasterService is not null)
         {
-            try { await _bluetoothBroadcasterService.ConfigureAsync(); AppendLog("Bluetooth broadcaster configured."); }
-            catch (Exception ex) { AppendLog($"Bluetooth broadcaster setup failed: {ex.Message}"); }
+            if (!_bluetoothBroadcasterService.IsEnabled)
+            {
+                _bluetoothConnectionStatus = "蓝牙：未启用";
+            }
+            else
+            {
+                try
+                {
+                    await _bluetoothBroadcasterService.ConfigureAsync();
+                    _bluetoothConnectionStatus = "蓝牙：已连接";
+                    AppendLog("Bluetooth broadcaster configured.");
+                }
+                catch (Exception ex)
+                {
+                    _bluetoothConnectionStatus = "蓝牙：通信异常";
+                    AppendLog($"Bluetooth broadcaster setup failed: {ex.Message}");
+                }
+            }
+            RaisePropertyChanged(nameof(StatusBarBluetooth));
         }
         await LoadRecentSessionsAsync();
     }

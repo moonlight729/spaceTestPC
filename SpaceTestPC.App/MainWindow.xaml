@@ -434,6 +434,8 @@
                     <TextBlock Margin="14,0" Foreground="#CBD5E1" Text="|" />
                     <TextBlock Foreground="#175CD3" FontWeight="SemiBold" Text="{Binding StatusBarConnection}" />
                     <TextBlock Margin="14,0" Foreground="#CBD5E1" Text="|" />
+                    <TextBlock Foreground="#175CD3" FontWeight="SemiBold" Text="{Binding StatusBarBluetooth}" />
+                    <TextBlock Margin="14,0" Foreground="#CBD5E1" Text="|" />
                     <TextBlock Foreground="#667085" Text="{Binding StatusBarJxTvm}" />
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">

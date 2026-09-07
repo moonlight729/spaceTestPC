@@ -8,6 +8,7 @@ public sealed class BluetoothBroadcasterService
 {
     private readonly BluetoothBroadcasterConfiguration _configuration;
     public BluetoothBroadcasterService(BluetoothBroadcasterConfiguration configuration) => _configuration = configuration;
+    public bool IsEnabled => _configuration.Enabled;
 
     public Task ConfigureAsync(CancellationToken cancellationToken = default) => Task.Run(() =>
     {
