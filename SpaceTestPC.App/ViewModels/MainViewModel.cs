@@ -265,7 +265,12 @@ public sealed class MainViewModel : ObservableObject
         TestSelections = new ObservableCollection<TestSelectionItemViewModel>(_testPlan
             .Where(item => !item.Skip)
             .Select(item => new TestSelectionItemViewModel(item.Id, GetTestDisplayName(item.Id), true, OnTestSelectionChanged)));
-        LoadSavedTestSelection();
+        // Saved selections are developer-only. Production must always present
+        // every applicable test as selected, regardless of prior developer use.
+        if (IsDeveloperMode)
+            LoadSavedTestSelection();
+        else
+            foreach (var item in TestSelections) item.IsSelected = true;
 
         ScanCommand = new AsyncRelayCommand(() => HandleScanAsync(isMockSession: false), () => !string.IsNullOrWhiteSpace(ScannerInput) && HasSelectedTests && !_isSessionRunning && !_isRetestLifecycleActive);
         StartMockSessionCommand = new RelayCommand(StartMockSession);
@@ -752,6 +757,10 @@ public sealed class MainViewModel : ObservableObject
 
     private IReadOnlyList<TestPlanItem> GetSelectedTestPlan()
     {
+        // Production mode is fixed: always execute the complete active plan.
+        if (!IsDeveloperMode)
+            return _testPlan;
+
         var selectedIds = TestSelections
             .Where(item => item.IsSelected)
             .Select(item => item.TestId)
@@ -3527,6 +3536,22 @@ public sealed class MainViewModel : ObservableObject
         var mode = string.IsNullOrWhiteSpace(configuration.TestMode) ? "finished_product" : configuration.TestMode.Trim();
         var modeConfiguration = configuration.TestModes.TryGetValue(mode, out var configuredMode) ? configuredMode : null;
         var isDeveloperMode = string.Equals(configuration.OperationMode, "developer", StringComparison.OrdinalIgnoreCase);
+        if (!isDeveloperMode)
+        {
+            // Production mode is never filtered by developer selections or
+            // enabled/disabled/skipped lists: run every test applicable to the
+            // selected product mode.
+            var productionPlan = AllTestPlan.ToList();
+            if (string.Equals(mode, "finished_product", StringComparison.OrdinalIgnoreCase))
+                productionPlan.RemoveAll(item => string.Equals(item.Id, "pcba_test_points", StringComparison.OrdinalIgnoreCase));
+            return productionPlan.Select(item => new TestPlanItem
+            {
+                Id = item.Id,
+                Skip = false,
+                SkipReason = null,
+                Parameters = GetTestParameters(configuration, item.Id, mode)
+            }).ToArray();
+        }
         var enabledSource = isDeveloperMode && modeConfiguration is not null && modeConfiguration.EnabledTests.Length > 0
             ? modeConfiguration.EnabledTests
             : isDeveloperMode ? configuration.TestPlan.EnabledTests : Array.Empty<string>();
