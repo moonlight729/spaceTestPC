@@ -63,7 +63,6 @@
     "remoteBinaryPath": "/vendor/originflow/bin/spacetest3576",
     "serviceName": "pcba-test.service",
     "autoUpgradeDelaySeconds": 1,
-    "applicationVersion": "",
     "sshUser": "originflow",
     // Required when TCP OTA uses password authentication. Prefer SSH keys in production if available.
     "sshPassword": "",

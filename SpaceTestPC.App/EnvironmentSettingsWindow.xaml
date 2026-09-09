@@ -79,11 +79,9 @@
                 <Grid Margin="12">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                    <CheckBox x:Name="VersionValidationEnabledCheckBox" Grid.ColumnSpan="2" Margin="0,4,0,12" Content="启用设备版本校验"/>
                     <TextBlock Grid.Row="1" Style="{StaticResource LabelStyle}" Text="U-Boot 版本"/><TextBox x:Name="ExpectedUbootVersionTextBox" Grid.Row="1" Grid.Column="1"/>
                     <TextBlock Grid.Row="2" Style="{StaticResource LabelStyle}" Text="Kernel 版本"/><TextBox x:Name="ExpectedKernelVersionTextBox" Grid.Row="2" Grid.Column="1"/>
                     <TextBlock Grid.Row="3" Style="{StaticResource LabelStyle}" Text="RootFS 版本"/><TextBox x:Name="ExpectedRootfsVersionTextBox" Grid.Row="3" Grid.Column="1"/>
-                    <TextBlock Grid.Row="4" Style="{StaticResource LabelStyle}" Text="Gen1 App 版本"/><TextBox x:Name="ExpectedGen1AppVersionTextBox" Grid.Row="4" Grid.Column="1"/>
                     <TextBlock Grid.Row="5" Grid.ColumnSpan="2" Margin="0,14,0,0" Foreground="#667085" TextWrapping="Wrap" Text="启用后四项版本均须精确匹配，否则板状态校验失败并立即中止测试。"/>
                 </Grid>
             </TabItem>

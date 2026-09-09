@@ -30,12 +30,7 @@ public sealed record EnvironmentSettingsData(
     FastChargeSettings PcbaFastCharge,
     VersionValidationSettings Versions);
 
-public sealed record VersionValidationSettings(
-    bool Enabled,
-    string Uboot,
-    string Kernel,
-    string Rootfs,
-    string Gen1App);
+public sealed record VersionValidationSettings(string Uboot, string Kernel, string Rootfs);
 
 public sealed record FastChargeSettings(
     int CurrentMinMa,
@@ -166,11 +161,9 @@ public sealed class EnvironmentConfigurationService
         ethernetLed["phaseDurationMs"] = ethernetLedObservationMs;
         parameters["ethernet_led"] = ethernetLed;
         var boardState = parameters["board_state"] as JsonObject ?? new JsonObject();
-        boardState["versionValidationEnabled"] = versions.Enabled;
         boardState["expectedUbootVersion"] = versions.Uboot.Trim();
         boardState["expectedKernelVersion"] = versions.Kernel.Trim();
         boardState["expectedRootfsVersion"] = versions.Rootfs.Trim();
-        boardState["expectedGen1AppVersion"] = versions.Gen1App.Trim();
         parameters["board_state"] = boardState;
         testPlan["testParameters"] = parameters;
         root["testPlan"] = testPlan;
@@ -267,11 +260,9 @@ public sealed class EnvironmentConfigurationService
     {
         var settings = root["testPlan"]?["testParameters"]?["board_state"];
         return new VersionValidationSettings(
-            settings?["versionValidationEnabled"]?.GetValue<bool>() ?? true,
             settings?["expectedUbootVersion"]?.GetValue<string>() ?? string.Empty,
             settings?["expectedKernelVersion"]?.GetValue<string>() ?? string.Empty,
-            settings?["expectedRootfsVersion"]?.GetValue<string>() ?? string.Empty,
-            settings?["expectedGen1AppVersion"]?.GetValue<string>() ?? string.Empty);
+            settings?["expectedRootfsVersion"]?.GetValue<string>() ?? string.Empty);
     }
 
     private static int ReadModeOrGlobalInt(JsonObject? modeSettings, JsonObject? globalSettings, string name, int fallback) =>

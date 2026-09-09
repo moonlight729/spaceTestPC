@@ -53,11 +53,9 @@ public partial class EnvironmentSettingsWindow : Window
         LoadBatterySettings("Pcba", _current.PcbaBattery);
         LoadFastChargeSettings("Finished", _current.FinishedProductFastCharge);
         LoadFastChargeSettings("Pcba", _current.PcbaFastCharge);
-        VersionValidationEnabledCheckBox.IsChecked = _current.Versions.Enabled;
         ExpectedUbootVersionTextBox.Text = _current.Versions.Uboot;
         ExpectedKernelVersionTextBox.Text = _current.Versions.Kernel;
         ExpectedRootfsVersionTextBox.Text = _current.Versions.Rootfs;
-        ExpectedGen1AppVersionTextBox.Text = _current.Versions.Gen1App;
 
         LoadAdapters(_current.AdapterId, _current.LocalIp);
         UpdateSummary();
@@ -234,14 +232,9 @@ public partial class EnvironmentSettingsWindow : Window
             var wifiMinRssi = RssiValue(WifiMinRssiTextBox, "Wi-Fi");
             var bluetoothMinRssi = RssiValue(BluetoothMinRssiTextBox, "蓝牙");
             var isPcba = string.Equals(mode, "pcba", StringComparison.OrdinalIgnoreCase);
-            var versions = new VersionValidationSettings(
-                VersionValidationEnabledCheckBox.IsChecked == true,
-                ExpectedUbootVersionTextBox.Text.Trim(),
-                ExpectedKernelVersionTextBox.Text.Trim(),
-                ExpectedRootfsVersionTextBox.Text.Trim(),
-                ExpectedGen1AppVersionTextBox.Text.Trim());
-            if (versions.Enabled && new[] { versions.Uboot, versions.Kernel, versions.Rootfs, versions.Gen1App }.Any(string.IsNullOrWhiteSpace))
-                throw new InvalidDataException("启用版本校验后，四项期望版本均不能为空。");
+            var versions = new VersionValidationSettings(ExpectedUbootVersionTextBox.Text.Trim(), ExpectedKernelVersionTextBox.Text.Trim(), ExpectedRootfsVersionTextBox.Text.Trim());
+            if (new[] { versions.Uboot, versions.Kernel, versions.Rootfs }.Any(string.IsNullOrWhiteSpace))
+                throw new InvalidDataException("版本校验要求 U-Boot、Kernel、RootFS 三项具体版本均不能为空。");
             _service.Save(
                 mode,
                 operationMode,

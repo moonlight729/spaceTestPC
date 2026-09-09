@@ -196,11 +196,9 @@ public sealed class MainViewModel : ObservableObject
         _operationMode = string.Equals(appConfiguration.OperationMode, "developer", StringComparison.OrdinalIgnoreCase) ? "developer" : "production";
         var versionParameters = GetTestParameters(appConfiguration, "board_state", _testProfileMode);
         _versionValidation = new VersionValidationSettings(
-            GetConfigurationBoolean(versionParameters, "versionValidationEnabled", true),
             GetConfigurationString(versionParameters, "expectedUbootVersion"),
             GetConfigurationString(versionParameters, "expectedKernelVersion"),
-            GetConfigurationString(versionParameters, "expectedRootfsVersion"),
-            GetConfigurationString(versionParameters, "expectedGen1AppVersion"));
+            GetConfigurationString(versionParameters, "expectedRootfsVersion"));
         // Debug-only bypasses must never leak into production mode.
         _allowSnMismatchForDebug = _operationMode == "developer" && appConfiguration.TestPlan.AllowSnMismatchForDebug;
         _testModeConfiguration = appConfiguration.TestModes.TryGetValue(_testProfileMode, out var modeConfiguration)
@@ -1077,35 +1075,10 @@ public sealed class MainViewModel : ObservableObject
             if (deviceInfo is null)
                 throw new InvalidOperationException("ADB device is not ready.", lastError);
             _deviceApplicationMd5 = deviceInfo.Md5;
-            if (!string.IsNullOrWhiteSpace(_upgradeConfiguration.ApplicationVersion))
-            {
-                try
-                {
-                    var versionTimer = Stopwatch.StartNew();
-                    var versionInfo = await client.GetApplicationVersionAsync();
-                    AppendLog($"Upgrade timing: device version elapsed={versionTimer.ElapsedMilliseconds}ms");
-                    _deviceApplicationVersion = versionInfo.Version;
-                    _deviceApplicationVersionAvailable = versionInfo.VersionAvailable && !string.IsNullOrWhiteSpace(versionInfo.Version);
-                }
-                catch (Exception ex)
-                {
-                    _deviceApplicationVersion = string.Empty;
-                    _deviceApplicationVersionAvailable = false;
-                    AppendLog($"Upgrade timing: device version failed={ex.Message}");
-                }
-            }
-            else
-            {
-                _deviceApplicationVersion = string.Empty;
-                _deviceApplicationVersionAvailable = false;
-                AppendLog("Upgrade timing: version check skipped because applicationVersion is empty.");
-            }
-            var versionCheckEnabled = !string.IsNullOrWhiteSpace(_upgradeConfiguration.ApplicationVersion) && _deviceApplicationVersionAvailable;
             var md5Matches = string.Equals(_hostApplicationMd5, _deviceApplicationMd5, StringComparison.OrdinalIgnoreCase);
-            var versionMatches = !versionCheckEnabled || string.Equals(_upgradeConfiguration.ApplicationVersion, _deviceApplicationVersion, StringComparison.OrdinalIgnoreCase);
-            AppendLog($"Application identity: hostVersion={_upgradeConfiguration.ApplicationVersion}, deviceVersion={_deviceApplicationVersion}, versionAvailable={_deviceApplicationVersionAvailable}, hostMd5={_hostApplicationMd5}, deviceMd5={_deviceApplicationMd5}, md5Match={md5Matches}, versionMatch={versionMatches}");
+            AppendLog($"Application identity: hostMd5={_hostApplicationMd5}, deviceMd5={_deviceApplicationMd5}, md5Match={md5Matches}; application version check disabled.");
             AppendLog($"Upgrade timing: check total before decision={upgradeCheckTimer.ElapsedMilliseconds}ms");
-            if (md5Matches && versionMatches)
+            if (md5Matches)
             {
                 _applicationUpgradeCheckCompleted = true;
                 upgradeResult?.ApplyLocalResult(TestItemState.Passed, "设备程序已是最新，无需升级。", new Dictionary<string, object?>
@@ -1737,28 +1710,23 @@ public sealed class MainViewModel : ObservableObject
             Gen1AppVersion = SimplifyVersion(versions.Gen1AppVersion);
             AppendLog($"Board versions loaded: U-Boot={UbootVersion}, Kernel={KernelVersion}, RootFS={RootfsVersion}, Gen1App={Gen1AppVersion}");
 
-            if (_versionValidation.Enabled)
             {
                 var mismatches = new List<string>();
                 var expectedUboot = SimplifyVersion(_versionValidation.Uboot);
                 var expectedKernel = SimplifyVersion(_versionValidation.Kernel);
                 var expectedRootfs = SimplifyVersion(_versionValidation.Rootfs);
-                var expectedGen1App = SimplifyVersion(_versionValidation.Gen1App);
                 if (!string.Equals(UbootVersion, expectedUboot, StringComparison.Ordinal))
                     mismatches.Add($"U-Boot 实际 {UbootVersion}，要求 {expectedUboot}");
                 if (!string.Equals(KernelVersion, expectedKernel, StringComparison.Ordinal))
                     mismatches.Add($"Kernel 实际 {KernelVersion}，要求 {expectedKernel}");
                 if (!string.Equals(RootfsVersion, expectedRootfs, StringComparison.Ordinal))
                     mismatches.Add($"RootFS 实际 {RootfsVersion}，要求 {expectedRootfs}");
-                if (!string.Equals(Gen1AppVersion, expectedGen1App, StringComparison.Ordinal))
-                    mismatches.Add($"Gen1 App 实际 {Gen1AppVersion}，要求 {expectedGen1App}");
-                if (!versions.Gen1AppInstalled) mismatches.Add("Gen1 App 未正常安装");
                 if (mismatches.Count > 0)
                     throw new InvalidDataException(string.Join("；", mismatches));
             }
 
-            VersionValidationStatus = _versionValidation.Enabled ? "版本校验：通过" : "版本校验：未启用";
-            VersionValidationForeground = _versionValidation.Enabled ? System.Windows.Media.Brushes.ForestGreen : System.Windows.Media.Brushes.Gray;
+            VersionValidationStatus = "版本校验：通过";
+            VersionValidationForeground = System.Windows.Media.Brushes.ForestGreen;
         }
         catch (Exception ex)
         {
