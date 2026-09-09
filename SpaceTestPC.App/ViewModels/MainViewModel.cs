@@ -3536,22 +3536,9 @@ public sealed class MainViewModel : ObservableObject
         var mode = string.IsNullOrWhiteSpace(configuration.TestMode) ? "finished_product" : configuration.TestMode.Trim();
         var modeConfiguration = configuration.TestModes.TryGetValue(mode, out var configuredMode) ? configuredMode : null;
         var isDeveloperMode = string.Equals(configuration.OperationMode, "developer", StringComparison.OrdinalIgnoreCase);
-        if (!isDeveloperMode)
-        {
-            // Production mode is never filtered by developer selections or
-            // enabled/disabled/skipped lists: run every test applicable to the
-            // selected product mode.
-            var productionPlan = AllTestPlan.ToList();
-            if (string.Equals(mode, "finished_product", StringComparison.OrdinalIgnoreCase))
-                productionPlan.RemoveAll(item => string.Equals(item.Id, "pcba_test_points", StringComparison.OrdinalIgnoreCase));
-            return productionPlan.Select(item => new TestPlanItem
-            {
-                Id = item.Id,
-                Skip = false,
-                SkipReason = null,
-                Parameters = GetTestParameters(configuration, item.Id, mode)
-            }).ToArray();
-        }
+        // Production mode ignores enabled/disabled/skipped filters, but keeps
+        // the configured test order below. Empty sources naturally produce the
+        // complete AllTestPlan.
         var enabledSource = isDeveloperMode && modeConfiguration is not null && modeConfiguration.EnabledTests.Length > 0
             ? modeConfiguration.EnabledTests
             : isDeveloperMode ? configuration.TestPlan.EnabledTests : Array.Empty<string>();
