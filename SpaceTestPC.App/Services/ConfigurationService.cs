@@ -67,9 +67,10 @@ public sealed class ConfigurationService
                 return;
             }
 
-            // Mode files define the authoritative test sequence and skipped
-            // items. Preserve explicit values saved in appsettings.json, but
-            // fill them from the mode template when they are missing.
+            // Mode files define the authoritative test sequence, skipped items
+            // and disabled items. Preserve explicit values saved in
+            // appsettings.json, but fill them from the mode template when they
+            // are missing.
             if (currentMode.TestOrder.Length == 0 && selectedMode.TestOrder.Length > 0)
             {
                 currentMode.TestOrder = selectedMode.TestOrder;
@@ -78,6 +79,11 @@ public sealed class ConfigurationService
             if (currentMode.SkippedTests.Count == 0 && selectedMode.SkippedTests.Count > 0)
             {
                 currentMode.SkippedTests = new Dictionary<string, string>(selectedMode.SkippedTests, StringComparer.OrdinalIgnoreCase);
+            }
+
+            if (currentMode.DisabledTests.Length == 0 && selectedMode.DisabledTests.Length > 0)
+            {
+                currentMode.DisabledTests = selectedMode.DisabledTests;
             }
 
             // The mode file is a template. Values saved through the settings

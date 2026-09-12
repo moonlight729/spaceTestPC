@@ -3536,13 +3536,14 @@ public sealed class MainViewModel : ObservableObject
         var mode = string.IsNullOrWhiteSpace(configuration.TestMode) ? "finished_product" : configuration.TestMode.Trim();
         var modeConfiguration = configuration.TestModes.TryGetValue(mode, out var configuredMode) ? configuredMode : null;
         var isDeveloperMode = string.Equals(configuration.OperationMode, "developer", StringComparison.OrdinalIgnoreCase);
-        // Production mode ignores enabled/disabled/skipped filters, but keeps
-        // the configured test order below. Empty sources naturally produce the
-        // complete AllTestPlan.
+        // The active mode block is the authoritative source for that mode, so its
+        // disabledTests must apply in production as well. The global testPlan.*
+        // filters stay developer-only, the configured test order below is always
+        // honoured, and empty sources naturally produce the complete AllTestPlan.
         var enabledSource = isDeveloperMode && modeConfiguration is not null && modeConfiguration.EnabledTests.Length > 0
             ? modeConfiguration.EnabledTests
             : isDeveloperMode ? configuration.TestPlan.EnabledTests : Array.Empty<string>();
-        var disabledSource = isDeveloperMode && modeConfiguration is not null && modeConfiguration.DisabledTests.Length > 0
+        var disabledSource = modeConfiguration is not null && modeConfiguration.DisabledTests.Length > 0
             ? modeConfiguration.DisabledTests
             : isDeveloperMode ? configuration.TestPlan.DisabledTests : Array.Empty<string>();
         var skippedSource = isDeveloperMode && modeConfiguration is not null
