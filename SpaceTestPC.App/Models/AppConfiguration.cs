@@ -47,6 +47,10 @@ public sealed class TestModeConfiguration
 {
     public string DisplayName { get; set; } = string.Empty;
     public string DatabaseName { get; set; } = string.Empty;
+    // 扫码 SN 要求的长度；<= 0 时使用内置默认值 20。
+    public int SnLength { get; set; }
+    // 扫码失败时展示给操作员的要求说明；留空时按 SnLength 自动生成。
+    public string SnRuleDescription { get; set; } = string.Empty;
     public string[] EnabledTests { get; set; } = [];
     public string[] DisabledTests { get; set; } = [];
     public string[] TestOrder { get; set; } = [];

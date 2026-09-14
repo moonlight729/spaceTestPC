@@ -86,6 +86,17 @@ public sealed class ConfigurationService
                 currentMode.DisabledTests = selectedMode.DisabledTests;
             }
 
+            if (currentMode.SnLength <= 0 && selectedMode.SnLength > 0)
+            {
+                currentMode.SnLength = selectedMode.SnLength;
+            }
+
+            if (string.IsNullOrWhiteSpace(currentMode.SnRuleDescription) &&
+                !string.IsNullOrWhiteSpace(selectedMode.SnRuleDescription))
+            {
+                currentMode.SnRuleDescription = selectedMode.SnRuleDescription;
+            }
+
             // The mode file is a template. Values saved through the settings
             // dialog in the active appsettings.json must take precedence.
             foreach (var parameterGroup in selectedMode.TestParameters)

@@ -4,6 +4,8 @@
     "pcba": {
       "displayName": "PCBA 测试",
       "databaseName": "space-test-pcba.db",
+      // 扫码 SN 要求的长度；<= 0 时使用内置默认值 20。
+      "snLength": 17,
       "enabledTests": [],
       "disabledTests": [],
       "skippedTests": {
@@ -14,6 +16,8 @@
     "finished_product": {
       "displayName": "整机测试",
       "databaseName": "space-test-finished-product.db",
+      // 扫码 SN 要求的长度；<= 0 时使用内置默认值 20。
+      "snLength": 20,
       "enabledTests": [],
       "disabledTests": [],
       "skippedTests": {

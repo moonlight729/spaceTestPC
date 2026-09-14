@@ -17,7 +17,7 @@ public sealed class MainViewModel : ObservableObject
     public event EventHandler<string>? ScanValidationFailed;
     public event EventHandler? BatteryDischargePreparationRequested;
     public event EventHandler? ChargerNotConnectedRequested;
-    private const int RequiredSnLength = 20;
+    private const int DefaultSnLength = 20;
     private static bool UseUnifiedSessionProtocol => true;
     private static readonly IReadOnlyList<TestPlanItem> AllTestPlan =
     [
@@ -58,6 +58,8 @@ public sealed class MainViewModel : ObservableObject
     private readonly TestLifecycleConfiguration _testLifecycleConfiguration;
     private readonly TestModeConfiguration _testModeConfiguration;
     private readonly string _testProfileMode;
+    private readonly int _snLength;
+    private readonly string _snRuleDescription;
     private bool _loadingTestSelection;
     private readonly string _operationMode;
     private readonly PcbaConnectionMode _connectionMode;
@@ -204,6 +206,11 @@ public sealed class MainViewModel : ObservableObject
         _testModeConfiguration = appConfiguration.TestModes.TryGetValue(_testProfileMode, out var modeConfiguration)
             ? modeConfiguration
             : new TestModeConfiguration();
+        // 扫码 SN 规则按测试模式生效：PCBA 17 位、整机 20 位，均可在 appsettings 中调整。
+        _snLength = _testModeConfiguration.SnLength > 0 ? _testModeConfiguration.SnLength : DefaultSnLength;
+        _snRuleDescription = string.IsNullOrWhiteSpace(_testModeConfiguration.SnRuleDescription)
+            ? $"{_snLength} 位英文字母或数字"
+            : _testModeConfiguration.SnRuleDescription.Trim();
         _keyCountdownTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _keyCountdownTimer.Tick += (_, _) =>
         {
@@ -827,15 +834,15 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
-        if (sn.Length != RequiredSnLength || sn.Any(character => !char.IsLetterOrDigit(character)))
+        if (sn.Length != _snLength || sn.Any(character => !char.IsLetterOrDigit(character)))
         {
-            var reason = sn.Length != RequiredSnLength
-                ? $"SN 长度必须为 {RequiredSnLength} 个字符，当前为 {sn.Length} 个字符。"
+            var reason = sn.Length != _snLength
+                ? $"SN 长度必须为 {_snLength} 个字符，当前为 {sn.Length} 个字符。"
                 : "SN 只能包含英文字母和数字。";
-            AppendLog($"Scan rejected: {sn} ({reason})");
+            AppendLog($"Scan rejected: mode={_testProfileMode}, requiredLength={_snLength}, sn={sn}, reason={reason}");
             OperatorInstruction = "SN 格式不正确，请重新扫描。";
             UpdateDebugOutput();
-            ScanValidationFailed?.Invoke(this, $"SN 扫码错误\n\n当前 SN：{sn}\n{reason}\n\n请检查条码后重新扫描。\n要求：20 位英文字母或数字。"
+            ScanValidationFailed?.Invoke(this, $"SN 扫码错误\n\n当前 SN：{sn}\n{reason}\n\n请检查条码后重新扫描。\n要求：{_snRuleDescription}。"
             );
             return;
         }
