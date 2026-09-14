@@ -130,14 +130,30 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         string localBinaryPath, string expectedMd5, string serviceName, string remoteBinaryPath,
         CancellationToken cancellationToken = default)
     {
-        if (ShouldUseSshScpUpgrade())
+        // P1-5: never push a missing, empty, or non-ELF package.
+        var localValidationError = ValidateLocalBinary(localBinaryPath, expectedMd5);
+        if (localValidationError is not null)
         {
-            return await UpgradeApplicationOverSshScpAsync(localBinaryPath, expectedMd5, serviceName, remoteBinaryPath, cancellationToken);
+            return new ApplicationUpgradeResult { Message = localValidationError };
         }
 
-        var remoteNewPath = remoteBinaryPath + ".new";
-        var remoteBackupPath = remoteBinaryPath + ".bak";
-        var hasBackup = false;
+        // P0-2/P0-3: capture the pre-upgrade MD5 so backups and rollbacks can be verified.
+        var preMd5 = await GetPreUpgradeMd5Async(remoteBinaryPath, cancellationToken);
+
+        return ShouldUseSshScpUpgrade()
+            ? await UpgradeApplicationOverSshScpAsync(localBinaryPath, expectedMd5, serviceName, remoteBinaryPath, preMd5, cancellationToken)
+            : await UpgradeApplicationOverAdbAsync(localBinaryPath, expectedMd5, serviceName, remoteBinaryPath, preMd5, cancellationToken);
+    }
+
+    private async Task<ApplicationUpgradeResult> UpgradeApplicationOverAdbAsync(
+        string localBinaryPath,
+        string expectedMd5,
+        string serviceName,
+        string remoteBinaryPath,
+        string preMd5,
+        CancellationToken cancellationToken)
+    {
+        var stagingPath = remoteBinaryPath + ".upgrade-staging";
         var totalTimer = Stopwatch.StartNew();
         var timing = new List<string>();
         try
@@ -146,34 +162,28 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
             if (!string.Equals(localMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
                 return new ApplicationUpgradeResult { Message = "Local application MD5 changed before upload." };
 
+            // P0-1: push straight into the target directory so the swap is a same-filesystem rename.
             var timer = Stopwatch.StartNew();
-            await RunAdbAsync($"push {Quote(localBinaryPath)} {Quote(remoteNewPath)}", cancellationToken);
+            await RunAdbAsync($"push {Quote(localBinaryPath)} {Quote(stagingPath)}", cancellationToken);
             timing.Add($"push={timer.ElapsedMilliseconds}ms");
 
             timer.Restart();
-            var upgradeScript = string.Join("; ",
-                "set -e",
-                $"chmod 755 {Quote(remoteNewPath)}",
-                $"uploaded_md5=$(md5sum {Quote(remoteNewPath)} | awk '{{print $1}}')",
-                $"[ \"$uploaded_md5\" = \"{expectedMd5}\" ]",
-                $"systemctl stop {Quote(serviceName)}",
-                $"if [ -f {Quote(remoteBinaryPath)} ]; then cp -p {Quote(remoteBinaryPath)} {Quote(remoteBackupPath)}; fi",
-                $"mv -f {Quote(remoteNewPath)} {Quote(remoteBinaryPath)}",
-                $"chmod 755 {Quote(remoteBinaryPath)}",
-                $"systemctl start {Quote(serviceName)}",
-                $"for i in $(seq 1 20); do systemctl is-active --quiet {Quote(serviceName)} && break; sleep 0.1; done",
-                $"systemctl is-active --quiet {Quote(serviceName)}",
-                $"final_md5=$(md5sum {Quote(remoteBinaryPath)} | awk '{{print $1}}')",
-                "printf 'UPLOADED_MD5=%s\\nFINAL_MD5=%s\\n' \"$uploaded_md5\" \"$final_md5\"");
-            var upgradeOutput = await RunAdbAsync($"shell sh -c {Quote(upgradeScript)}", cancellationToken);
+            var upgradeScript = BuildRemoteUpgradeScript(serviceName, remoteBinaryPath, stagingPath, expectedMd5);
+            var upgradeOutput = await RunAdbAsync($"shell {Quote(EncodeRemoteScriptForAdb(upgradeScript))}", cancellationToken);
             timing.Add($"remoteUpgrade={timer.ElapsedMilliseconds}ms");
+
             var uploadedMd5 = ParseTaggedMd5(upgradeOutput, "UPLOADED_MD5");
-            var finalMd5 = ParseTaggedMd5(upgradeOutput, "FINAL_MD5");
             if (!string.Equals(uploadedMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
                 return new ApplicationUpgradeResult { Message = "Uploaded application MD5 verification failed." };
-            hasBackup = true;
+
+            var finalMd5 = ParseTaggedMd5(upgradeOutput, "FINAL_MD5");
             if (!string.Equals(finalMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Final application MD5 verification failed.");
+
+            // P1-4: functional health check, not just systemctl is-active.
+            timer.Restart();
+            await VerifyApplicationFunctionalAsync(cancellationToken);
+            timing.Add($"functionalCheck={timer.ElapsedMilliseconds}ms");
 
             timing.Add($"total={totalTimer.ElapsedMilliseconds}ms");
             return new ApplicationUpgradeResult
@@ -185,19 +195,8 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         }
         catch (Exception ex)
         {
-            try
-            {
-                await RunAdbAsync($"shell systemctl stop {Quote(serviceName)}", cancellationToken);
-                if (hasBackup)
-                    await RunAdbAsync($"shell mv -f {Quote(remoteBackupPath)} {Quote(remoteBinaryPath)}", cancellationToken);
-                await RunAdbAsync($"shell chmod 755 {Quote(remoteBinaryPath)}", cancellationToken);
-                await RunAdbAsync($"shell systemctl start {Quote(serviceName)}", cancellationToken);
-            }
-            catch (Exception rollbackError)
-            {
-                return new ApplicationUpgradeResult { Message = $"Upgrade failed: {ex.Message}; rollback failed: {rollbackError.Message}; Timing: {string.Join(", ", timing)}, total={totalTimer.ElapsedMilliseconds}ms" };
-            }
-            return new ApplicationUpgradeResult { Message = $"Upgrade failed and was rolled back: {ex.Message}; Timing: {string.Join(", ", timing)}, total={totalTimer.ElapsedMilliseconds}ms" };
+            var rollbackNote = await TryRollbackOverAdbAsync(serviceName, remoteBinaryPath, preMd5, cancellationToken);
+            return new ApplicationUpgradeResult { Message = BuildFailureMessage(ex, rollbackNote, timing, totalTimer) };
         }
     }
 
@@ -223,12 +222,11 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         string expectedMd5,
         string serviceName,
         string remoteBinaryPath,
+        string preMd5,
         CancellationToken cancellationToken)
     {
         var remoteFileName = Path.GetFileName(remoteBinaryPath);
-        var remoteNewPath = $"/tmp/{remoteFileName}.{Guid.NewGuid():N}.new";
-        var remoteBackupPath = remoteBinaryPath + ".bak";
-        var hasBackup = false;
+        var uploadedPath = $"/tmp/{remoteFileName}.{Guid.NewGuid():N}.new";
         var totalTimer = Stopwatch.StartNew();
         var timing = new List<string>();
 
@@ -242,39 +240,30 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
             }
 
             var timer = Stopwatch.StartNew();
-            await RunScpAsync(localBinaryPath, host, remoteNewPath, cancellationToken);
+            await RunScpAsync(localBinaryPath, host, uploadedPath, cancellationToken);
             timing.Add($"scp={timer.ElapsedMilliseconds}ms");
 
             timer.Restart();
-            var upgradeScript = string.Join("; ",
-                "set -e",
-                $"chmod 755 {ShellQuote(remoteNewPath)}",
-                $"uploaded_md5=$(md5sum {ShellQuote(remoteNewPath)} | awk '{{print $1}}')",
-                $"[ \"$uploaded_md5\" = \"{expectedMd5}\" ]",
-                $"systemctl stop {ShellQuote(serviceName)}",
-                $"if [ -f {ShellQuote(remoteBinaryPath)} ]; then cp -p {ShellQuote(remoteBinaryPath)} {ShellQuote(remoteBackupPath)}; fi",
-                $"mv -f {ShellQuote(remoteNewPath)} {ShellQuote(remoteBinaryPath)}",
-                $"chmod 755 {ShellQuote(remoteBinaryPath)}",
-                $"systemctl start {ShellQuote(serviceName)}",
-                $"for i in $(seq 1 20); do systemctl is-active --quiet {ShellQuote(serviceName)} && break; sleep 0.1; done",
-                $"systemctl is-active --quiet {ShellQuote(serviceName)}",
-                $"final_md5=$(md5sum {ShellQuote(remoteBinaryPath)} | awk '{{print $1}}')",
-                "printf 'UPLOADED_MD5=%s\\nFINAL_MD5=%s\\n' \"$uploaded_md5\" \"$final_md5\"");
+            var upgradeScript = BuildRemoteUpgradeScript(serviceName, remoteBinaryPath, uploadedPath, expectedMd5);
             var upgradeOutput = await RunSshAsync(BuildPrivilegedRemoteCommand(upgradeScript), cancellationToken, host);
             timing.Add($"remoteUpgrade={timer.ElapsedMilliseconds}ms");
 
             var uploadedMd5 = ParseTaggedMd5(upgradeOutput, "UPLOADED_MD5");
-            var finalMd5 = ParseTaggedMd5(upgradeOutput, "FINAL_MD5");
             if (!string.Equals(uploadedMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
             {
                 return new ApplicationUpgradeResult { Message = "Uploaded application MD5 verification failed." };
             }
 
-            hasBackup = true;
+            var finalMd5 = ParseTaggedMd5(upgradeOutput, "FINAL_MD5");
             if (!string.Equals(finalMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException("Final application MD5 verification failed.");
             }
+
+            // P1-4: functional health check, not just systemctl is-active.
+            timer.Restart();
+            await VerifyApplicationFunctionalAsync(cancellationToken);
+            timing.Add($"functionalCheck={timer.ElapsedMilliseconds}ms");
 
             timing.Add($"total={totalTimer.ElapsedMilliseconds}ms");
             return new ApplicationUpgradeResult
@@ -286,24 +275,214 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
         }
         catch (Exception ex)
         {
+            string? rollbackNote;
             try
             {
                 var host = await ResolveTcpHostAsync(cancellationToken);
-                await RunSshAsync(BuildPrivilegedRemoteCommand($"systemctl stop {ShellQuote(serviceName)}"), cancellationToken, host);
-                if (hasBackup)
-                {
-                    await RunSshAsync(BuildPrivilegedRemoteCommand($"mv -f {ShellQuote(remoteBackupPath)} {ShellQuote(remoteBinaryPath)}"), cancellationToken, host);
-                }
-                await RunSshAsync(BuildPrivilegedRemoteCommand($"chmod 755 {ShellQuote(remoteBinaryPath)}"), cancellationToken, host);
-                await RunSshAsync(BuildPrivilegedRemoteCommand($"systemctl start {ShellQuote(serviceName)}"), cancellationToken, host);
+                rollbackNote = await TryRollbackOverSshAsync(serviceName, remoteBinaryPath, preMd5, host, cancellationToken);
             }
-            catch (Exception rollbackError)
+            catch (Exception resolveError)
             {
-                return new ApplicationUpgradeResult { Message = $"Upgrade failed: {ex.Message}; rollback failed: {rollbackError.Message}; Timing: {string.Join(", ", timing)}, total={totalTimer.ElapsedMilliseconds}ms" };
+                rollbackNote = $"Rollback failed: {resolveError.Message}.";
             }
 
-            return new ApplicationUpgradeResult { Message = $"Upgrade failed and was rolled back: {ex.Message}; Timing: {string.Join(", ", timing)}, total={totalTimer.ElapsedMilliseconds}ms" };
+            return new ApplicationUpgradeResult { Message = BuildFailureMessage(ex, rollbackNote, timing, totalTimer) };
         }
+    }
+
+    private const string EmptyFileMd5 = "d41d8cd98f00b204e9800998ecf8427e";
+
+    private static bool IsEmptyFileMd5(string md5) =>
+        string.Equals(md5.Trim(), EmptyFileMd5, StringComparison.OrdinalIgnoreCase);
+
+    private static bool HasValidPreviousVersion(string preMd5) =>
+        !string.IsNullOrWhiteSpace(preMd5) && !IsEmptyFileMd5(preMd5);
+
+    // P1-5: the local package must be a plausible ELF executable before anything is uploaded.
+    private static string? ValidateLocalBinary(string localBinaryPath, string expectedMd5)
+    {
+        if (string.IsNullOrWhiteSpace(expectedMd5) || IsEmptyFileMd5(expectedMd5))
+            return "Refusing to upgrade: the expected MD5 is empty, which means the local application package is missing or an empty file.";
+
+        var info = new FileInfo(localBinaryPath);
+        if (!info.Exists || info.Length < 16 * 1024)
+            return $"Refusing to upgrade: local application is missing or suspiciously small ({(info.Exists ? info.Length : 0)} bytes, minimum {16 * 1024}).";
+
+        using var stream = File.OpenRead(localBinaryPath);
+        var magic = new byte[4];
+        var read = 0;
+        while (read < magic.Length)
+        {
+            var count = stream.Read(magic, read, magic.Length - read);
+            if (count <= 0) break;
+            read += count;
+        }
+
+        if (read != magic.Length || magic[0] != 0x7F || magic[1] != (byte)'E' || magic[2] != (byte)'L' || magic[3] != (byte)'F')
+            return "Refusing to upgrade: local application is not a valid ELF executable.";
+
+        return null;
+    }
+
+    // P0-2/P0-3: read the device MD5 before upgrading; empty means "no healthy previous version".
+    private async Task<string> GetPreUpgradeMd5Async(string remoteBinaryPath, CancellationToken cancellationToken)
+    {
+        var info = await GetApplicationMd5Async(remoteBinaryPath, cancellationToken);
+        var md5 = (info.Md5 ?? string.Empty).Trim();
+        if (md5.Length == 0 || IsEmptyFileMd5(md5))
+        {
+            return string.Empty;
+        }
+
+        return md5.ToLowerInvariant();
+    }
+
+    // Remote upgrade script shared by both transports. Hardened rules:
+    //   P0-1: the new binary is staged next to the target so the final swap is an atomic rename.
+    //   P0-2: the running binary is backed up and the copy is MD5-verified before the service is touched.
+    //   P1-5: the uploaded package must be a non-empty ELF executable with the expected MD5.
+    //   P1-4: the service must stay active for the full check window after the restart.
+    private static string BuildRemoteUpgradeScript(
+        string serviceName,
+        string remoteBinaryPath,
+        string uploadedPath,
+        string expectedMd5)
+    {
+        return string.Join("\n", new[]
+        {
+            "set -eu",
+            $"target={ShellQuote(remoteBinaryPath)}",
+            $"uploaded={ShellQuote(uploadedPath)}",
+            $"staging={ShellQuote(remoteBinaryPath + ".upgrade-staging")}",
+            $"backup={ShellQuote(remoteBinaryPath + ".bak")}",
+            $"service={ShellQuote(serviceName)}",
+            $"expected_md5={ShellQuote(expectedMd5)}",
+            "[ -s \"$uploaded\" ]",
+            "magic=$(head -c 4 \"$uploaded\" | od -An -tx1 | tr -d ' \\n')",
+            "[ \"$magic\" = \"7f454c46\" ]",
+            "uploaded_md5=$(md5sum \"$uploaded\" | awk '{print $1}')",
+            "[ \"$uploaded_md5\" = \"$expected_md5\" ]",
+            "pre_md5=$(md5sum \"$target\" 2>/dev/null | awk '{print $1}' || true)",
+            "if [ \"$uploaded\" != \"$staging\" ]; then cp -f \"$uploaded\" \"$staging\"; fi",
+            "chmod 755 \"$staging\"",
+            "staging_md5=$(md5sum \"$staging\" | awk '{print $1}')",
+            "[ \"$staging_md5\" = \"$uploaded_md5\" ]",
+            "has_backup=0",
+            $"if [ -n \"$pre_md5\" ] && [ \"$pre_md5\" != {ShellQuote(EmptyFileMd5)} ]; then",
+            "  cp -f \"$target\" \"$backup\"",
+            "  backup_md5=$(md5sum \"$backup\" | awk '{print $1}')",
+            "  [ \"$backup_md5\" = \"$pre_md5\" ] || { echo BACKUP_VERIFY_FAILED; exit 41; }",
+            "  has_backup=1",
+            "fi",
+            "systemctl stop \"$service\"",
+            "mv -f \"$staging\" \"$target\"",
+            "chmod 755 \"$target\"",
+            "systemctl start \"$service\"",
+            "service_ok=0",
+            "for _ in $(seq 1 100); do systemctl is-active --quiet \"$service\" && { service_ok=1; break; }; sleep 0.1; done",
+            "[ \"$service_ok\" = 1 ]",
+            "final_md5=$(md5sum \"$target\" | awk '{print $1}')",
+            "printf 'PRE_MD5=%s\\nUPLOADED_MD5=%s\\nFINAL_MD5=%s\\nHAS_BACKUP=%s\\n' \"$pre_md5\" \"$uploaded_md5\" \"$final_md5\" \"$has_backup\"",
+            "rm -f \"$uploaded\""
+        });
+    }
+
+    // P0-3: rollback only restores a backup that still matches the pre-upgrade MD5.
+    private static string BuildRemoteRollbackScript(string serviceName, string remoteBinaryPath, string expectedPreMd5)
+    {
+        return string.Join("\n", new[]
+        {
+            "set -eu",
+            $"target={ShellQuote(remoteBinaryPath)}",
+            $"backup={ShellQuote(remoteBinaryPath + ".bak")}",
+            $"service={ShellQuote(serviceName)}",
+            "systemctl stop \"$service\" 2>/dev/null || true",
+            $"if [ -n {ShellQuote(expectedPreMd5)} ] && [ -s \"$backup\" ]; then",
+            "  backup_md5=$(md5sum \"$backup\" | awk '{print $1}')",
+            $"  [ \"$backup_md5\" = {ShellQuote(expectedPreMd5)} ] || {{ echo NO_VALID_BACKUP; exit 42; }}",
+            "  mv -f \"$backup\" \"$target\"",
+            "  chmod 755 \"$target\"",
+            "  systemctl start \"$service\"",
+            "  service_ok=0",
+            "  for _ in $(seq 1 100); do systemctl is-active --quiet \"$service\" && { service_ok=1; break; }; sleep 0.1; done",
+            "  [ \"$service_ok\" = 1 ]",
+            "  printf 'ROLLBACK_MD5=%s\\n' \"$backup_md5\"",
+            "else",
+            "  echo NO_VALID_BACKUP",
+            "  exit 42",
+            "fi"
+        });
+    }
+
+    // Base64 transport keeps the script immune to ADB shell quote/expansion mangling.
+    private static string EncodeRemoteScriptForAdb(string script)
+    {
+        var base64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(script));
+        return $"echo {base64} | base64 -d | sh";
+    }
+
+    // P1-4: the upgraded service must answer a protocol query, not just report is-active.
+    private async Task VerifyApplicationFunctionalAsync(CancellationToken cancellationToken)
+    {
+        var command = new HostCommand { SessionId = "upgrade-verify", CommandGroup = "sys", Command = "get_version" };
+        var deadline = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * 15.0);
+        Exception? lastError = null;
+        while (Stopwatch.GetTimestamp() < deadline)
+        {
+            try
+            {
+                var payload = await SendCommandAsync(command, cancellationToken);
+                _ = DeserializeEnvelope<Dictionary<string, object?>>(payload);
+                return;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
+
+            await Task.Delay(500, cancellationToken);
+        }
+
+        throw new TimeoutException("Upgraded application did not answer a functional query in time.", lastError);
+    }
+
+    private async Task<string?> TryRollbackOverAdbAsync(
+        string serviceName, string remoteBinaryPath, string preMd5, CancellationToken cancellationToken)
+    {
+        if (!HasValidPreviousVersion(preMd5)) return null;
+        try
+        {
+            var rollbackScript = BuildRemoteRollbackScript(serviceName, remoteBinaryPath, preMd5);
+            await RunAdbAsync($"shell {Quote(EncodeRemoteScriptForAdb(rollbackScript))}", cancellationToken);
+            return "Rolled back to the previous application version.";
+        }
+        catch (Exception rollbackError)
+        {
+            return $"Rollback failed: {rollbackError.Message}.";
+        }
+    }
+
+    private async Task<string?> TryRollbackOverSshAsync(
+        string serviceName, string remoteBinaryPath, string preMd5, string host, CancellationToken cancellationToken)
+    {
+        if (!HasValidPreviousVersion(preMd5)) return null;
+        try
+        {
+            var rollbackScript = BuildRemoteRollbackScript(serviceName, remoteBinaryPath, preMd5);
+            await RunSshAsync(BuildPrivilegedRemoteCommand(rollbackScript), cancellationToken, host);
+            return "Rolled back to the previous application version.";
+        }
+        catch (Exception rollbackError)
+        {
+            return $"Rollback failed: {rollbackError.Message}.";
+        }
+    }
+
+    private static string BuildFailureMessage(Exception ex, string? rollbackNote, List<string> timing, Stopwatch totalTimer)
+    {
+        var rollbackText = rollbackNote
+            ?? "No healthy previous version existed on the device, so no rollback was performed.";
+        return $"Upgrade failed: {ex.Message}. {rollbackText} Timing: {string.Join(", ", timing)}, total={totalTimer.ElapsedMilliseconds}ms";
     }
 
     private async Task<string> RunSshAsync(string remoteCommand, CancellationToken cancellationToken, string? host = null)
