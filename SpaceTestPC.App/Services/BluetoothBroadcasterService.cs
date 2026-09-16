@@ -23,12 +23,13 @@ public sealed class BluetoothBroadcasterService
          *
          * Verified module settings:
          * - ROLE=0: phone/3576 visible advertising mode.
-         * - PWR=4: highest accepted transmit-power level on the current module.
+         * - PWR=4 is preferred where the module supports it. Some module
+         *   firmware rejects that level; retain its existing power in that case.
          * - SCANRSP=1: lets scanners receive the configured local name.
          * - RESET: required for name/scan-response changes to take effect.
-         */
+        */
         SendAndRequireOk(port, "AT+ROLE=0");
-        SendAndRequireOk(port, "AT+PWR=4");
+        TrySetTransmitPower(port, 4);
         SendAndRequireOk(port, $"AT+NAME={_configuration.BroadcastName}");
         SendAndRequireOk(port, "AT+SCANRSP=1");
         SendAndRequireOk(port, "AT+RESET");
@@ -84,6 +85,15 @@ public sealed class BluetoothBroadcasterService
         port.Write(command + "\r\n");
         var response = port.ReadLine();
         if (!response.Contains("+OK", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException($"Bluetooth module rejected {command}: {response}");
+    }
+
+    private static void TrySetTransmitPower(SerialPort port, int level)
+    {
+        port.DiscardInBuffer();
+        port.Write($"AT+PWR={level}\r\n");
+        // A rejected optional power level must not prevent the module from
+        // advertising under the configured test name.
+        _ = port.ReadLine();
     }
 
     private static string Query(SerialPort port, string command)
