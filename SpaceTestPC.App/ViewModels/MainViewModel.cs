@@ -331,11 +331,11 @@ public sealed class MainViewModel : ObservableObject
         var pcbaPointSpecs = new (string Name, double Min, double Max)[]
         {
             ("VBUSIN_VCC",        0,   200), ("ZERO_V_02",         0,   200), ("VCC_3V3_S3",      3100, 3500), ("VCC5V0_SYS",      4700, 5300),
-            ("VBUS5V0_TYPEC",     0,   200), ("VCC-RTC",        3100,  3500), ("VDD_NPU_S0",         0,  700), ("VCC_SYS",        10200,11800),
+            ("VBUS5V0_TYPEC",     0,   200), ("VCC-RTC",        3100,  3500), ("VDD_NPU_S0",         0,  700), ("VCC_SYS",        11000,13000),
             ("VDD2H_DDR_S3",   1020,  1180), ("VDD_GPU_S0",        0,   200), ("VDD_LOGIC_S0",     650,  950), ("VDD_CPU_LIT_S0",  600, 1000),
             ("VBUS5V0_TYPEC",     0,   200), ("VDD_CPU_BIG_S0", 600,  1000), ("VCC_2V0_PLDO_S3", 2100, 2500), ("VCC_1V8_S3",     1700, 1900),
             ("GND",               0,   200), ("ZERO_V_18",         0,  300), ("VBUS1_TYPEC",    4700, 5300), ("ZERO_V_20",         0,   300),
-            ("TXD",            3100,  3500), ("RXD",           3100,  3500), ("ZERO_V_23",         0,   300), ("VBAT_TS",           0,   300),
+            ("TXD",            3100,  3500), ("RXD",           3100,  3500), ("ZERO_V_23",         0,   300), ("VBAT_TS",        4300,  4700),
             ("VDD_DDR_S0",      650,   950), ("VDDQ_DDR_S0",    350,   650), ("ZERO_V_27",         0,  200), ("ZERO_V_28",         0,  200),
             ("CH29",              0,   200), ("CH30",             0,  200), ("CH31",              0,  200), ("CH32",             0,  200)
         };
