@@ -309,6 +309,7 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
         "usb3" => "USB3.0",
         "pcba_test_points" => "PCBA测试点",
         "indicator_led" => "指示灯",
+        "pcba_indicator_led" => "PCBA红蓝指示灯",
         "fan" => "风扇",
         _ => testId
     };
@@ -378,6 +379,7 @@ public sealed class SqliteDatabaseRepository : IDatabaseRepository
             ("usb3", _, _, _, 2900) => message,
             ("pcba_test_points", _, _, _, 2900) => message,
             ("indicator_led", _, _, _, 2900) => message,
+            ("pcba_indicator_led", _, _, _, 2900) => message,
             ("fan", _, _, _, 2900) => message,
 
             (_, _, _, "PASS", _) => $"{GetTestDisplayNameZh(testId)}测试通过",

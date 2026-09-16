@@ -24,7 +24,8 @@ public sealed class MainViewModel : ObservableObject
         new() { Id = "board_state" }, new() { Id = "hdmi" }, new() { Id = "keys" }, new() { Id = "lcd" },
         new() { Id = "wifi" }, new() { Id = "bluetooth" },
         new() { Id = "battery_management" }, new() { Id = "typec_fast_charge" }, new() { Id = "tf" }, new() { Id = "emmc" }, new() { Id = "ddr" }, new() { Id = "typec_camera" }, new() { Id = "usb2" }, new() { Id = "usb3" },
-        new() { Id = "pcba_test_points" }, new() { Id = "ethernet_led" }, new() { Id = "indicator_led" }, new() { Id = "fan" }
+        new() { Id = "pcba_test_points" }, new() { Id = "ethernet_led" }, new() { Id = "indicator_led" },
+        new() { Id = "pcba_indicator_led" }, new() { Id = "fan" }
     ];
 
     private const string BoardStateItemName = "板状态";
@@ -315,19 +316,28 @@ public sealed class MainViewModel : ObservableObject
             new("up", "上"), new("down", "下"), new("left", "左"), new("right", "右"), new("confirm", "确认")
         };
         if (_testProfileMode == "finished_product")
+        {
             DirectionalKeys.Add(new DirectionalKeyViewModel("recovery", "Recovery"));
+        }
+        else
+        {
+            DirectionalKeys.Add(new DirectionalKeyViewModel("maskrom", "MASKROM"));
+            DirectionalKeys.Add(new DirectionalKeyViewModel("recovery", "Recovery"));
+        }
         Usb2TestSteps = CreateUsbTestSteps();
         Usb3TestSteps = CreateUsbTestSteps();
+        // Channel order and ranges are sourced from 测试表.csv. Every physical
+        // channel is measured; unnamed 0 V checks use neutral identifiers.
         var pcbaPointSpecs = new (string Name, double Min, double Max)[]
         {
-            ("VDD_DDR_S0",720,730),("VDDQ_DDR_S0",505,510),("MASKROM",1610,1620),("5V",5000,5100),
-            ("TS",2500,2700),("2V",2200,2300),("VCC5V0_SYS",5000,5100),("VCC_1V8_S3",1800,1800),
-            ("VCC_3V3_S3",3200,3300),("GND",0,0),("VBUS5V0_TYPEC",19000,21000),("VDD2H_DDR_S3",1050,1050),
-            ("RECOVERY",1780,1780),("GND",0,0),("VDD_CPU_LIT_S0",710,710),("VBUS5V0_TYPEC",19000,21000),
-            ("VCC_SYS",6000,8950),("VDD_CPU_BIG_S0",710,710),("VDD_GPU_S0",0,710),("VCC-RTC",3300,3300),
-            ("VDD_LOGIC_S0",750,750),("VDD_NPU_S0",0,750),("VBUSIN_VCC",19000,21000),("RXD",3300,3300),
-            ("TXD",3300,3300),("BLED",0,2500),("RLED",0,1100),("GLED",0,2700),
-            ("LEDVDD",4650,4650),("VBUS1_TYPEC",5000,5000),("FAN-PWM",3300,3300),("FG",0,5000)
+            ("VBUSIN_VCC",        0,   200), ("ZERO_V_02",         0,   200), ("VCC_3V3_S3",      3100, 3500), ("VCC5V0_SYS",      4700, 5300),
+            ("VBUS5V0_TYPEC",     0,   200), ("VCC-RTC",        3100,  3500), ("VDD_NPU_S0",         0,  700), ("VCC_SYS",        10200,11800),
+            ("VDD2H_DDR_S3",   1020,  1180), ("VDD_GPU_S0",        0,   200), ("VDD_LOGIC_S0",     650,  950), ("VDD_CPU_LIT_S0",  600, 1000),
+            ("VBUS5V0_TYPEC",     0,   200), ("VDD_CPU_BIG_S0", 600,  1000), ("VCC_2V0_PLDO_S3", 2100, 2500), ("VCC_1V8_S3",     1700, 1900),
+            ("GND",               0,   200), ("ZERO_V_18",         0,  300), ("VBUS1_TYPEC",    4700, 5300), ("ZERO_V_20",         0,   300),
+            ("TXD",            3100,  3500), ("RXD",           3100,  3500), ("ZERO_V_23",         0,   300), ("VBAT_TS",           0,   300),
+            ("VDD_DDR_S0",      650,   950), ("VDDQ_DDR_S0",    350,   650), ("ZERO_V_27",         0,  200), ("ZERO_V_28",         0,  200),
+            ("CH29",              0,   200), ("CH30",             0,  200), ("CH31",              0,  200), ("CH32",             0,  200)
         };
         PcbaTestPoints = new ObservableCollection<PcbaTestPointViewModel>(pcbaPointSpecs.Select((spec, i) => new PcbaTestPointViewModel
         {
@@ -683,6 +693,7 @@ public sealed class MainViewModel : ObservableObject
         "ethernet_led" when _manualDecisionPhase == "operator_confirm_sequence" => "网口已恢复通信，请确认切换到 100M 后绿灯是否正常点亮。",
         "ethernet_led" => "请等待网口灯切换完成后再判定。",
         "indicator_led" => "请依次观察红灯、绿灯、蓝灯各亮 2 秒，最后确认绿灯正常后选择 PASS 或 FAIL。",
+        "pcba_indicator_led" => "请确认红灯和蓝灯已依次正常点亮，然后选择 PASS 或 FAIL。",
         "reset_button" => "请按下设备复位键，确认 LCD 屏幕已经息屏后选择 PASS 或 FAIL。",
         "fan" => "风扇正在自动检测，请等待下位机读取 tach_rpm 并返回结果。",
         _ => string.Empty
@@ -692,6 +703,7 @@ public sealed class MainViewModel : ObservableObject
         "lcd" => "LCD 通过",
         "ethernet_led" => "网口灯通过",
         "indicator_led" => "指示灯通过",
+        "pcba_indicator_led" => "红蓝灯通过",
         _ => "HDMI 通过"
     };
     public string ManualFailButtonText => _manualDecisionTestId switch
@@ -699,6 +711,7 @@ public sealed class MainViewModel : ObservableObject
         "lcd" => "LCD 失败",
         "ethernet_led" => "网口灯失败",
         "indicator_led" => "指示灯失败",
+        "pcba_indicator_led" => "红蓝灯失败",
         _ => "HDMI 失败"
     };
 
@@ -2001,14 +2014,15 @@ public sealed class MainViewModel : ObservableObject
         }
 
         var eventPhase = GetDataString(testEvent.Data, "phase", string.Empty);
-        // Indicator LED emits preliminary phases while it verifies that the
-        // charger cable is connected.  Those phases must not expose PASS/FAIL
-        // controls or the LED observation dialog yet.
+        // The PCBA red/blue test keeps PASS/FAIL available throughout its sequence.
         var indicatorReadyForManualDecision = testEvent.TestId != "indicator_led" ||
             eventPhase == "rgb_sequence" ||
             GetDataBoolean(testEvent.Data, "manualObserved");
+        var pcbaIndicatorReadyForManualDecision = testEvent.TestId != "pcba_indicator_led" ||
+            testEvent.Status == "running";
         var requiresManualDecision = testEvent.Status == "running" &&
             indicatorReadyForManualDecision &&
+            pcbaIndicatorReadyForManualDecision &&
             (testEvent.TestId != "ethernet_led" || eventPhase == "operator_confirm_sequence");
 
         if (testEvent.TestId == "indicator_led" && testEvent.Status == "running" && !indicatorReadyForManualDecision)
@@ -2042,8 +2056,8 @@ public sealed class MainViewModel : ObservableObject
         }
 
         if (requiresManualDecision &&
-            (testEvent.TestId is "hdmi" or "lcd" or "ethernet_led" or "reset_button" ||
-             testEvent.TestId == "indicator_led"))
+            (testEvent.TestId is "hdmi" or "lcd" or "ethernet_led" or "reset_button" or
+             "indicator_led" or "pcba_indicator_led"))
         {
             _manualDecisionSessionId = SessionId;
         }
@@ -2057,8 +2071,8 @@ public sealed class MainViewModel : ObservableObject
 
         _manualDecisionTestId = requiresManualDecision &&
             !_submittedManualDecisionTests.Contains(testEvent.TestId) &&
-            (testEvent.TestId is "hdmi" or "lcd" or "ethernet_led" or "reset_button" ||
-             testEvent.TestId == "indicator_led")
+            (testEvent.TestId is "hdmi" or "lcd" or "ethernet_led" or "reset_button" or
+             "indicator_led" or "pcba_indicator_led")
             ? testEvent.TestId
             : testEvent.Status is "passed" or "failed" && testEvent.TestId == _manualDecisionTestId
                     ? null
@@ -2107,7 +2121,7 @@ public sealed class MainViewModel : ObservableObject
             {
                 var phase = GetDataString(testEvent.Data, "phase", string.Empty);
                 var remainingMs = GetDataInt(testEvent.Data, "remainingMs");
-                if (string.Equals(phase, "recovery", StringComparison.OrdinalIgnoreCase))
+                if (phase is "maskrom" or "recovery")
                 {
                     var timeoutMs = GetDataInt(testEvent.Data, "timeoutMs");
                     var elapsedMs = GetDataInt(testEvent.Data, "elapsedMs");
@@ -2555,18 +2569,19 @@ public sealed class MainViewModel : ObservableObject
     private string BuildKeyTestInstruction(TestSessionEvent testEvent)
     {
         var phase = GetDataString(testEvent.Data, "phase", string.Empty);
-        if (string.Equals(phase, "recovery", StringComparison.OrdinalIgnoreCase))
+        if (phase is "maskrom" or "recovery")
         {
             var rawValue = GetDataInt(testEvent.Data, "rawValue");
             var stableCount = GetDataInt(testEvent.Data, "stableCount");
             var stableRequired = Math.Max(1, GetDataInt(testEvent.Data, "stableRequired"));
             var threshold = GetDataInt(testEvent.Data, "pressThreshold");
-            var recoveryRemainingSeconds = GetRemainingKeySeconds(testEvent);
+            var adcKeyName = string.Equals(phase, "maskrom", StringComparison.OrdinalIgnoreCase) ? "MASKROM" : "Recovery";
+            var adcRemainingSeconds = GetRemainingKeySeconds(testEvent);
             if (testEvent.Status == "passed")
-                return $"Recovery 按键通过：ADC={rawValue}，连续 {stableRequired} 次小于 {threshold}。";
+                return $"{adcKeyName} 按键通过：ADC={rawValue}，连续 {stableRequired} 次小于 {threshold}。";
             if (testEvent.Status == "failed")
-                return $"Recovery 按键失败：10 秒倒计时结束，未检测到 ADC 小于 {threshold}。";
-            return $"请按下 Recovery 按键；倒计时：{recoveryRemainingSeconds} 秒，当前 ADC={rawValue}，判定阈值 <{threshold}，稳定采样 {stableCount}/{stableRequired}。";
+                return $"{adcKeyName} 按键失败：倒计时结束，未检测到 ADC 小于 {threshold}。";
+            return $"请按下 {adcKeyName} 按键；倒计时：{adcRemainingSeconds} 秒，当前 ADC={rawValue}，判定阈值 <{threshold}，稳定采样 {stableCount}/{stableRequired}。";
         }
 
         var remainingSeconds = GetRemainingKeySeconds(testEvent);
@@ -2574,7 +2589,7 @@ public sealed class MainViewModel : ObservableObject
         {
             return _testProfileMode == "finished_product"
                 ? "六键测试通过：上、下、左、右、确认和 Recovery 均已识别。"
-                : "五键测试通过：上、下、左、右、确认均已识别。";
+                : "七键测试通过：上、下、左、右、确认、MASKROM 和 Recovery 均已识别。";
         }
 
         if (testEvent.Status == "failed")
@@ -2594,7 +2609,7 @@ public sealed class MainViewModel : ObservableObject
         var missingText = missing.Length == 0 ? "无" : string.Join("、", missing);
         return _testProfileMode == "finished_product"
             ? $"六键测试第一阶段：请在 {FormatKeyTimeoutSeconds()} 秒内依次按上、下、左、右、确认键。五键完成后再按 Recovery，底层将通过 ADC 判定。已识别：{detectedText}；剩余：{missingText}；倒计时：{remainingSeconds} 秒。"
-            : $"五键测试：请在 {FormatKeyTimeoutSeconds()} 秒内依次按上、下、左、右、确认键。已识别：{detectedText}；剩余：{missingText}；倒计时：{remainingSeconds} 秒。";
+            : $"七键测试第一阶段：请在 {FormatKeyTimeoutSeconds()} 秒内依次按上、下、左、右、确认键；之后依次按 MASKROM 和 Recovery，底层将通过 ADC 判定。已识别：{detectedText}；剩余：{missingText}；倒计时：{remainingSeconds} 秒。";
     }
 
     private int GetRemainingKeySeconds(TestSessionEvent testEvent)
@@ -2773,7 +2788,7 @@ public sealed class MainViewModel : ObservableObject
         "emmc" => "EMMC",
         "ddr" => "DDR",
         "hdmi" => "HDMI",
-        "keys" => _testProfileMode == "finished_product" ? "六键测试" : "五键测试",
+        "keys" => _testProfileMode == "finished_product" ? "六键测试" : "七键测试",
         "lcd" => "LCD",
         "reset_button" => "复位按键",
         "ethernet" => "网口",
@@ -2788,6 +2803,7 @@ public sealed class MainViewModel : ObservableObject
         "usb3" => "USB3.0 测试",
         "pcba_test_points" => "PCBA测试点",
         "indicator_led" => "指示灯板",
+        "pcba_indicator_led" => "PCBA红蓝指示灯",
         "fan" => "风扇",
         "otg" => "USB OTG口",
         "battery_management" => "板放电测试",
@@ -2829,32 +2845,42 @@ public sealed class MainViewModel : ObservableObject
 
     private void UpdateRecoveryKeyState(TestSessionEvent testEvent)
     {
-        var recovery = DirectionalKeys.FirstOrDefault(item => item.Id == "recovery");
-        if (recovery is null) return;
         var phase = GetDataString(testEvent.Data, "phase", string.Empty);
-        if (testEvent.Status == "passed" && string.Equals(phase, "recovery", StringComparison.OrdinalIgnoreCase))
+        if (phase is not ("maskrom" or "recovery")) return;
+        var adcKey = DirectionalKeys.FirstOrDefault(item => item.Id == phase);
+        if (adcKey is null) return;
+        if (testEvent.Status == "passed")
         {
-            recovery.IsChecking = false;
-            recovery.IsFailed = false;
-            recovery.IsDetected = true;
+            adcKey.IsChecking = false;
+            adcKey.IsFailed = false;
+            adcKey.IsDetected = true;
         }
-        else if (testEvent.Status == "failed" && (string.Equals(phase, "recovery", StringComparison.OrdinalIgnoreCase) || testEvent.ResultCode == 4003))
+        else if (testEvent.Status == "failed")
         {
-            recovery.IsChecking = false;
-            recovery.IsDetected = false;
-            recovery.IsFailed = true;
+            adcKey.IsChecking = false;
+            adcKey.IsDetected = false;
+            adcKey.IsFailed = true;
         }
-        else if (testEvent.Status == "running" && string.Equals(phase, "recovery", StringComparison.OrdinalIgnoreCase))
+        else if (testEvent.Status == "running")
         {
-            recovery.IsDetected = false;
-            recovery.IsFailed = false;
-            recovery.IsChecking = true;
+            if (GetDataBoolean(testEvent.Data, "adcDetected"))
+            {
+                adcKey.IsChecking = false;
+                adcKey.IsFailed = false;
+                adcKey.IsDetected = true;
+            }
+            else
+            {
+                adcKey.IsDetected = false;
+                adcKey.IsFailed = false;
+                adcKey.IsChecking = true;
+            }
         }
     }
 
     private static bool IsInitialKeyTestReport(IReadOnlyDictionary<string, object?> data)
     {
-        if (string.Equals(GetDataString(data, "phase", string.Empty), "recovery", StringComparison.OrdinalIgnoreCase))
+        if (GetDataString(data, "phase", string.Empty) is "maskrom" or "recovery")
         {
             return false;
         }
@@ -3504,6 +3530,7 @@ public sealed class MainViewModel : ObservableObject
         "usb2" => "检测完成，USB2.0 测试未通过。请检查 U 盘与 USB2.0 口后重新扫描当前 SN。",
         "usb3" => "检测完成，USB3.0 测试未通过。请检查 U 盘与 USB3.0 口后重新扫描当前 SN。",
         "indicator_led" => "检测完成，指示灯测试未通过。请检查指示灯状态后重新扫描当前 SN。",
+        "pcba_indicator_led" => "检测完成，PCBA 红蓝指示灯测试未通过。请检查灯珠和控制信号后重新扫描当前 SN。",
         "fan" => "检测完成，风扇测试未通过。请检查风扇与供电后重新扫描当前 SN。",
         "fingerprint" => "检测完成，指纹测试未通过。请检查指纹模组后重新扫描当前 SN。",
         "pcba_test_points" => "检测完成，PCBA 测试点未通过。请检查测试点电压后重新扫描当前 SN。",
@@ -3573,6 +3600,7 @@ public sealed class MainViewModel : ObservableObject
         if (string.Equals(mode, "finished_product", StringComparison.OrdinalIgnoreCase))
         {
             plan.RemoveAll(item => string.Equals(item.Id, "pcba_test_points", StringComparison.OrdinalIgnoreCase));
+            plan.RemoveAll(item => string.Equals(item.Id, "pcba_indicator_led", StringComparison.OrdinalIgnoreCase));
         }
 
         if (modeConfiguration?.TestOrder is { Length: > 0 } order)
@@ -3632,6 +3660,12 @@ public sealed class MainViewModel : ObservableObject
             result.TryAdd("chargerRequiredStatus", "Charging");
             result.TryAdd("chargerCheckTimeoutMs", 0);
             result.TryAdd("chargerCheckPollIntervalMs", 250);
+        }
+        if (testId == "pcba_indicator_led")
+        {
+            result.TryAdd("phaseDurationMs", 2000);
+            result.TryAdd("cycleCount", 2);
+            result.TryAdd("manualDecisionTimeoutMs", 30000);
         }
         if (testId == "ethernet_led")
         {

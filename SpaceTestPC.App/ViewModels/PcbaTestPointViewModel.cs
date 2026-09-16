@@ -15,6 +15,12 @@ public sealed class PcbaTestPointViewModel : ObservableObject
     public string ValueDisplay => VoltageMv is null ? "--" : $"{VoltageMv:0.###} {Unit}";
     public string RangeDisplay => $"{MinMv:0.###} ~ {MaxMv:0.###} mV";
     public string StatusDisplay => Status switch { "passed" => "PASS", "failed" => "FAIL", "running" => "TEST", "error" => "ERROR", _ => "WAIT" };
+    /// <summary>
+    /// 1-based channel number for display, e.g. "通道 1", "通道 32".  Driven by the
+    /// 0-based <see cref="Channel"/> index so the UI can show the exact physical
+    /// channel that the JX-TVM station is probing.
+    /// </summary>
+    public string ChannelLabel => $"通道 {Channel + 1}";
     public string Background => Status switch { "passed" => "#16A34A", "failed" => "#DC2626", "running" => "#2563EB", "error" => "#344054", _ => "#E5E7EB" };
     public string Foreground => Status is "pending" ? "#344054" : "White";
     public void Reset() { VoltageMv = null; Status = "pending"; }

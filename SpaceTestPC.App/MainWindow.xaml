@@ -349,7 +349,8 @@
                                     <DataTemplate>
                                         <Border Margin="0,0,10,10" Padding="10" Background="{Binding Background}" CornerRadius="7">
                                             <StackPanel>
-                                                <Grid><TextBlock FontWeight="Bold" Foreground="{Binding Foreground}" Text="{Binding Name}"/><TextBlock HorizontalAlignment="Right" FontWeight="Bold" Foreground="{Binding Foreground}" Text="{Binding StatusDisplay}"/></Grid>
+                                                <TextBlock FontSize="11" Foreground="{Binding Foreground}" Text="{Binding ChannelLabel}"/>
+                                                <Grid Margin="0,2,0,0"><TextBlock FontWeight="Bold" Foreground="{Binding Foreground}" Text="{Binding Name}"/><TextBlock HorizontalAlignment="Right" FontWeight="Bold" Foreground="{Binding Foreground}" Text="{Binding StatusDisplay}"/></Grid>
                                                 <TextBlock Margin="0,7,0,0" FontSize="16" FontWeight="SemiBold" Foreground="{Binding Foreground}" Text="{Binding ValueDisplay}"/>
                                                 <TextBlock Margin="0,3,0,0" FontSize="11" Foreground="{Binding Foreground}" Text="{Binding RangeDisplay}"/>
                                             </StackPanel>

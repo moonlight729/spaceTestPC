@@ -156,6 +156,37 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                         }
                     };
                 }
+                if (string.Equals(GetParameterString(test.Parameters, "mode", "pcba"), "pcba", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var (key, path) in new[]
+                             {
+                                 ("maskrom", "/sys/devices/platform/2ae00000.adc/iio:device0/in_voltage0_raw"),
+                                 ("recovery", "/sys/devices/platform/2ae00000.adc/iio:device0/in_voltage1_raw")
+                             })
+                    {
+                        await Task.Delay(GetMockRunningDelay(test.Id), cancellationToken);
+                        detectedKeys.Add(key);
+                        yield return new TestSessionEvent
+                        {
+                            Event = "test.report",
+                            TestId = test.Id,
+                            Status = key == "recovery" ? "passed" : "running",
+                            Message = $"ADC key detected: {key}",
+                            Data = new Dictionary<string, object?>
+                            {
+                                ["phase"] = key,
+                                ["adcPath"] = path,
+                                ["rawValue"] = 0,
+                                ["pressThreshold"] = 100,
+                                ["stableCount"] = 3,
+                                ["stableRequired"] = 3,
+                                ["adcDetected"] = true,
+                                ["detectedKeys"] = detectedKeys.ToArray(),
+                                ["expectedKeys"] = new[] { "up", "down", "left", "right", "confirm", "maskrom", "recovery" }
+                            }
+                        };
+                    }
+                }
             }
             else if (test.Id == "fingerprint")
             {
@@ -249,6 +280,58 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 {
                     yield return new TestSessionEvent { Event = "test.report", TestId = test.Id, Status = "failed", ResultCode = 3910, Message = "Operator confirmed Ethernet LEDs fail" };
                     yield return new TestSessionEvent { Event = "session.completed", TestId = test.Id, Status = "failed", ResultCode = 3015, Message = "Mock session stopped after Ethernet LED failure" };
+                    yield break;
+                }
+            }
+            else if (test.Id == "pcba_indicator_led")
+            {
+                // Mirror the new RED↔BLUE alternating flow so the mock stays
+                // in sync with the board-side indicator_led runner.
+                foreach (var (currentLed, cycleIndex) in new[]
+                         {
+                             ("red", 1), ("blue", 1), ("red", 2), ("blue", 2)
+                         })
+                {
+                    yield return new TestSessionEvent
+                    {
+                        Event = "test.report",
+                        TestId = test.Id,
+                        Status = "running",
+                        Message = currentLed == "red" ? "Red LED is on; observe for 2 seconds" : "Blue LED is on; observe for 2 seconds",
+                        Data = new Dictionary<string, object?>
+                        {
+                            ["displayMode"] = "red_blue_alternating",
+                            ["phase"] = "show_color",
+                            ["requiresOperatorDecision"] = true,
+                            ["currentLed"] = currentLed,
+                            ["phaseDurationMs"] = 2000,
+                            ["cycleCount"] = 2,
+                            ["cycleIndex"] = cycleIndex,
+                            ["phaseIndex"] = currentLed == "red" ? 1 : 2,
+                            ["phaseCount"] = 2,
+                            ["measureRequest"] = true
+                        }
+                    };
+                }
+                yield return new TestSessionEvent
+                {
+                    Event = "test.report",
+                    TestId = test.Id,
+                    Status = "running",
+                    Message = "Confirm the PCBA red/blue LED sequence",
+                    Data = new Dictionary<string, object?>
+                    {
+                        ["phase"] = "awaiting_operator",
+                        ["displayMode"] = "red_blue_alternating",
+                        ["manualObserved"] = true,
+                        ["requiresOperatorDecision"] = true,
+                        ["cycleCount"] = 2
+                    }
+                };
+                if (!await WaitForManualDecisionAsync(test.Id, cancellationToken))
+                {
+                    yield return new TestSessionEvent { Event = "test.report", TestId = test.Id, Status = "failed", ResultCode = 4501, Message = "Voltage verification failed" };
+                    yield return new TestSessionEvent { Event = "session.completed", TestId = test.Id, Status = "failed", ResultCode = 4501, Message = "Mock session stopped after voltage verification failure" };
                     yield break;
                 }
             }
@@ -738,6 +821,7 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                     .ToArray();
                 break;
             case "indicator_led":
+            case "pcba_indicator_led":
                 data["voltageMeter"] = true;
                 data["channelsOk"] = true;
                 data["voltageMv"] = 3300;
@@ -949,6 +1033,7 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
         "usb3" => "USB3.0 record loaded",
         "pcba_test_points" => "PCBA test point voltages are in range",
         "indicator_led" => "Indicator LED board voltage passed",
+        "pcba_indicator_led" => "Operator confirmed PCBA red/blue LEDs pass",
         "fan" => "Fan speed passed",
         "otg" => "USB OTG disk read/write passed",
         "battery_management" => "Battery discharge test passed",

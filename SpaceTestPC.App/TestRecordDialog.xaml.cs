@@ -35,6 +35,7 @@ public partial class TestRecordDialog : Window
         "typec_camera" => "Type-C 摄像头",
         "tf" => "TF 卡",
         "indicator_led" => "指示灯板",
+        "pcba_indicator_led" => "PCBA红蓝指示灯",
         "fan" => "风扇",
         "otg" => "USB OTG",
         "battery_management" => "板放电测试",
