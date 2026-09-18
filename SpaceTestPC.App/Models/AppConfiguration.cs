@@ -133,7 +133,7 @@ public sealed class JxTvmConfiguration
 
 /// <summary>
 /// One row of the PCBA voltage table: 1-based <see cref="Channel"/> plus the accepted
-/// range in mV.  Built-in defaults mirror 测试表.csv (min = 设定阈值 - 允许偏差,
+/// range in mV.  Built-in defaults mirror 电压检测仪设置\测试表.csv (min = 设定阈值 - 允许偏差,
 /// max = 设定阈值 + 允许偏差).
 /// </summary>
 public sealed class PcbaTestPointSpec

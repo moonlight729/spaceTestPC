@@ -152,7 +152,7 @@ public sealed class MainViewModel : ObservableObject
 
     private const int PcbaChannelCount = 32;
     /// <summary>
-    /// Fallback limits mirroring 测试表.csv: every row is "设定阈值 ± 允许偏差"
+    /// Fallback limits mirroring 电压检测仪设置\测试表.csv: every row is "设定阈值 ± 允许偏差"
     /// converted to mV (min = 阈值 - 偏差, max = 阈值 + 偏差).  The CSV carries no net
     /// names, so the channel labels keep the board-side order and never change with a
     /// new 测试表.  `jxTvm.channels` in appsettings.json overrides them per channel,
@@ -160,14 +160,14 @@ public sealed class MainViewModel : ObservableObject
     /// </summary>
     private static readonly (string Name, double Min, double Max)[] DefaultPcbaPointSpecs =
     [
-        ("VBUSIN_VCC",     -100,   300), ("ZERO_V_02",       -100,   300), ("VCC_3V3_S3",      3100,  3500), ("VCC5V0_SYS",      4700,  5700),
-        ("VBUS5V0_TYPEC",  -100,   300), ("VCC-RTC",         3100,  3500), ("VDD_NPU_S0",      -100,   300), ("VCC_SYS",        11400, 12600),
-        ("VDD2H_DDR_S3",    900,  1300), ("VDD_GPU_S0",      -100,   300), ("VDD_LOGIC_S0",     650,   950), ("VDD_CPU_LIT_S0",  650,   950),
-        ("VBUS5V0_TYPEC",  -100,   300), ("VDD_CPU_BIG_S0",   650,   950), ("VCC_2V0_PLDO_S3", 2100,  2500), ("VCC_1V8_S3",     1650,  1950),
-        ("GND",            -100,   300), ("ZERO_V_18",       -100,   300), ("VBUS1_TYPEC",     4700,  5700), ("ZERO_V_20",      -100,   300),
+        ("VBUSIN_VCC",     -100,   300), ("ZERO_V_02",       -100,   300), ("VCC_3V3_S3",      3100,  3500), ("VCC5V0_SYS",      4900,  5500),
+        ("VBUS5V0_TYPEC",  -100,   300), ("VCC-RTC",         3100,  3500), ("VDD_NPU_S0",         0,  1400), ("VCC_SYS",        11000, 13000),
+        ("VDD2H_DDR_S3",    900,  1300), ("VDD_GPU_S0",      -100,   300), ("VDD_LOGIC_S0",     600,  1000), ("VDD_CPU_LIT_S0",  600,  1000),
+        ("VBUS5V0_TYPEC",     0,   200), ("VDD_CPU_BIG_S0",   600,  1000), ("VCC_2V0_PLDO_S3", 2100,  2500), ("VCC_1V8_S3",     1600,  2000),
+        ("GND",            -100,   300), ("ZERO_V_18",       -100,   300), ("VBUS1_TYPEC",     4800,  5600), ("ZERO_V_20",      -100,   300),
         ("TXD",             3100,  3500), ("RXD",             3100,  3500), ("ZERO_V_23",       -100,   300), ("VBAT_TS",        4200,  4800),
-        ("VDD_DDR_S0",       600,  1000), ("VDDQ_DDR_S0",      300,   700), ("ZERO_V_27",       -100,   300), ("ZERO_V_28",      -100,   300),
-        ("CH29",           -100,   300), ("CH30",           -100,   300), ("CH31",           -100,   300), ("CH32",           -100,   300)
+        ("VDD_DDR_S0",       600,  1000), ("VDDQ_DDR_S0",      350,   650), ("ZERO_V_27",       -100,   300), ("ZERO_V_28",      -100,   300),
+        ("CH29",           -100,   300), ("CH30",           -100,   300), ("CH31",              0,   400), ("CH32",              0,   400)
     ];
 
     public MainViewModel(
@@ -354,7 +354,7 @@ public sealed class MainViewModel : ObservableObject
         PcbaTestPoints = new ObservableCollection<PcbaTestPointViewModel>(
             BuildPcbaTestPoints(appConfiguration.JxTvm.Channels, out var configuredChannelCount));
         AppendLog($"PCBA voltage table: {configuredChannelCount} channel(s) from appsettings jxTvm.channels, " +
-                  $"{PcbaChannelCount - configuredChannelCount} from the built-in 测试表.csv defaults.");
+                  $"{PcbaChannelCount - configuredChannelCount} from the built-in 电压检测仪设置\\测试表.csv defaults.");
         SelectedTestResult = TestResults.FirstOrDefault();
         TestOverviewColumns = Math.Max(1, TestItems.Count);
 

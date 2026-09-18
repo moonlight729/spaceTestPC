@@ -35,7 +35,7 @@
     // max = 设定阈值 + 允许偏差). Listed channels override the built-in defaults,
     // so a new 测试表 only needs this file, no rebuild.
     "channels": [
-      // { "channel": 8, "name": "VCC_SYS", "minMv": 11400, "maxMv": 12600 }
+      // { "channel": 8, "name": "VCC_SYS", "minMv": 11000, "maxMv": 13000 }
     ]
   },
   "bluetoothBroadcaster": {

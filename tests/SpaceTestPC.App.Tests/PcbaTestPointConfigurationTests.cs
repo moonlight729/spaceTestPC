@@ -7,7 +7,7 @@ namespace SpaceTestPC.App.Tests;
 /// <summary>
 /// The 32-channel limits live in appsettings.json (jxTvm.channels) so a new 测试表 can be
 /// applied without rebuilding. These tests make sure the shipped config still binds and
-/// still carries the ranges from 测试表.csv.
+/// still carries the ranges from 电压检测仪设置\测试表.csv.
 /// </summary>
 public sealed class PcbaTestPointConfigurationTests
 {
@@ -27,16 +27,20 @@ public sealed class PcbaTestPointConfigurationTests
     }
 
     [Theory]
-    // 测试表.csv rows: 设定阈值 ± 允许偏差, converted to mV.
+    // 电压检测仪设置\测试表.csv rows: 设定阈值 ± 允许偏差, converted to mV.
     [InlineData(1, -100, 300)]
-    [InlineData(8, 11400, 12600)]
+    [InlineData(4, 4900, 5500)]
+    [InlineData(7, 0, 1400)]
+    [InlineData(8, 11000, 13000)]
     [InlineData(9, 900, 1300)]
     [InlineData(10, -100, 300)]
-    [InlineData(16, 1650, 1950)]
-    [InlineData(19, 4700, 5700)]
+    [InlineData(13, 0, 200)]
+    [InlineData(16, 1600, 2000)]
+    [InlineData(19, 4800, 5600)]
     [InlineData(24, 4200, 4800)]
     [InlineData(25, 600, 1000)]
-    [InlineData(26, 300, 700)]
+    [InlineData(26, 350, 650)]
+    [InlineData(31, 0, 400)]
     public void ShippedConfiguration_UsesCsvVoltageLimits(int channel, double minMv, double maxMv)
     {
         var spec = Assert.Single(Configuration.JxTvm.Channels, item => item.Channel == channel);
