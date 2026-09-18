@@ -154,6 +154,12 @@ PCBA 示例：
 ]
 ```
 
+当前 PCBA 模式默认禁用 `battery_management`：放电电流由**外部仪表**（万用表/电子负载）人工判定，
+上位机不自动采样判定。需要恢复时，把 `battery_management` 从模式下的 `disabledTests` 删除即可。
+
+> 注意：不要用 `skippedTests` 代替。跳过项仍会发给 3576 并上报 `skipped`，板端会把会话判定为
+> `Session incomplete with N skipped test(s)`（整机结果 Fail）。只有 `disabledTests` 才是不测试。
+
 ### 5.3 跳过测试项
 
 `skippedTests` 会保留测试项显示，但运行时标记为 `SKIPPED`，不计入最终失败判定：
