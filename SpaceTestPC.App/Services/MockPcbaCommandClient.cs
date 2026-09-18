@@ -806,19 +806,10 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
                 data["channelCount"] = channelCount;
                 data["passedCount"] = channelCount;
                 data["failedPoints"] = Array.Empty<int>();
-                data["defaultMinMv"] = GetParameterInt(test.Parameters, "defaultMinMv", 0);
-                data["defaultMaxMv"] = GetParameterInt(test.Parameters, "defaultMaxMv", 5000);
-                data["points"] = Enumerable.Range(1, channelCount)
-                    .Select(index => new Dictionary<string, object?>
-                    {
-                        ["index"] = index,
-                        ["name"] = $"TP{index:D2}",
-                        ["voltageMv"] = 3300,
-                        ["minMv"] = GetParameterInt(test.Parameters, "defaultMinMv", 0),
-                        ["maxMv"] = GetParameterInt(test.Parameters, "defaultMaxMv", 5000),
-                        ["passed"] = true
-                    })
-                    .ToArray();
+                // Like the real board runner, the mock only reports summary counts. It must
+                // not ship "points" with hard-coded voltages or minMv/maxMv, because the host
+                // would then overwrite the limits configured in jxTvm.channels with 0~5000 mV.
+                data["points"] = Array.Empty<Dictionary<string, object?>>();
                 break;
             case "indicator_led":
             case "pcba_indicator_led":

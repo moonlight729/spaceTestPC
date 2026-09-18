@@ -50,6 +50,11 @@ public sealed class MainViewModel : ObservableObject
     private readonly Dictionary<string, bool> _voltagePhaseResults = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, IReadOnlyDictionary<string, object?>> _hostDecisionData = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _voltageControlCommands = new(StringComparer.OrdinalIgnoreCase);
+    // The PCBA point sweep must stay below the board timeout that guards
+    // wait_test_decision() (30 s), otherwise the board reports "measurement timed out"
+    // while the host is still reading and writes its values afterwards.
+    private const int PcbaMeasurementBudgetMs = 20000;
+    private readonly SemaphoreSlim _pcbaMeasurementGate = new(1, 1);
     private readonly DispatcherTimer _keyCountdownTimer;
     private readonly IReadOnlyList<TestPlanItem> _testPlan;
     private readonly IReadOnlyDictionary<string, int> _testItemIndexes;
@@ -144,6 +149,26 @@ public sealed class MainViewModel : ObservableObject
     private bool _upgradePackageReady;
     private bool _batteryPreparationPromptActive;
     private bool _isTfRemovalPromptVisible;
+
+    private const int PcbaChannelCount = 32;
+    /// <summary>
+    /// Fallback limits mirroring 测试表.csv: every row is "设定阈值 ± 允许偏差"
+    /// converted to mV (min = 阈值 - 偏差, max = 阈值 + 偏差).  The CSV carries no net
+    /// names, so the channel labels keep the board-side order and never change with a
+    /// new 测试表.  `jxTvm.channels` in appsettings.json overrides them per channel,
+    /// so updating the 测试表 no longer requires a rebuild.
+    /// </summary>
+    private static readonly (string Name, double Min, double Max)[] DefaultPcbaPointSpecs =
+    [
+        ("VBUSIN_VCC",     -100,   300), ("ZERO_V_02",       -100,   300), ("VCC_3V3_S3",      3100,  3500), ("VCC5V0_SYS",      4700,  5700),
+        ("VBUS5V0_TYPEC",  -100,   300), ("VCC-RTC",         3100,  3500), ("VDD_NPU_S0",      -100,   300), ("VCC_SYS",        11400, 12600),
+        ("VDD2H_DDR_S3",    900,  1300), ("VDD_GPU_S0",      -100,   300), ("VDD_LOGIC_S0",     650,   950), ("VDD_CPU_LIT_S0",  650,   950),
+        ("VBUS5V0_TYPEC",  -100,   300), ("VDD_CPU_BIG_S0",   650,   950), ("VCC_2V0_PLDO_S3", 2100,  2500), ("VCC_1V8_S3",     1650,  1950),
+        ("GND",            -100,   300), ("ZERO_V_18",       -100,   300), ("VBUS1_TYPEC",     4700,  5700), ("ZERO_V_20",      -100,   300),
+        ("TXD",             3100,  3500), ("RXD",             3100,  3500), ("ZERO_V_23",       -100,   300), ("VBAT_TS",        4200,  4800),
+        ("VDD_DDR_S0",       600,  1000), ("VDDQ_DDR_S0",      300,   700), ("ZERO_V_27",       -100,   300), ("ZERO_V_28",      -100,   300),
+        ("CH29",           -100,   300), ("CH30",           -100,   300), ("CH31",           -100,   300), ("CH32",           -100,   300)
+    ];
 
     public MainViewModel(
         IScannerService scannerService,
@@ -326,23 +351,10 @@ public sealed class MainViewModel : ObservableObject
         }
         Usb2TestSteps = CreateUsbTestSteps();
         Usb3TestSteps = CreateUsbTestSteps();
-        // Channel order and ranges are sourced from 测试表.csv. Every physical
-        // channel is measured; unnamed 0 V checks use neutral identifiers.
-        var pcbaPointSpecs = new (string Name, double Min, double Max)[]
-        {
-            ("VBUSIN_VCC",        0,   200), ("ZERO_V_02",         0,   200), ("VCC_3V3_S3",      3100, 3500), ("VCC5V0_SYS",      4700, 5300),
-            ("VBUS5V0_TYPEC",     0,   200), ("VCC-RTC",        3100,  3500), ("VDD_NPU_S0",         0, 1400), ("VCC_SYS",        11000,13000),
-            ("VDD2H_DDR_S3",   1020,  1180), ("VDD_GPU_S0",        0,   200), ("VDD_LOGIC_S0",     650,  950), ("VDD_CPU_LIT_S0",  600, 1000),
-            ("VBUS5V0_TYPEC",     0,   200), ("VDD_CPU_BIG_S0", 600,  1000), ("VCC_2V0_PLDO_S3", 2100, 2500), ("VCC_1V8_S3",     1700, 1900),
-            ("GND",               0,   200), ("ZERO_V_18",         0,  300), ("VBUS1_TYPEC",    4700, 5300), ("ZERO_V_20",         0,   300),
-            ("TXD",            3100,  3500), ("RXD",           3100,  3500), ("ZERO_V_23",         0,   300), ("VBAT_TS",        4300,  4700),
-            ("VDD_DDR_S0",      650,   950), ("VDDQ_DDR_S0",    350,   650), ("ZERO_V_27",         0,  200), ("ZERO_V_28",         0,  200),
-            ("CH29",              0,   200), ("CH30",             0,  200), ("CH31",              0,  200), ("CH32",             0,  200)
-        };
-        PcbaTestPoints = new ObservableCollection<PcbaTestPointViewModel>(pcbaPointSpecs.Select((spec, i) => new PcbaTestPointViewModel
-        {
-            Id = $"TP{i + 1:00}", Name = spec.Name, Channel = i, MinMv = spec.Min, MaxMv = spec.Max
-        }));
+        PcbaTestPoints = new ObservableCollection<PcbaTestPointViewModel>(
+            BuildPcbaTestPoints(appConfiguration.JxTvm.Channels, out var configuredChannelCount));
+        AppendLog($"PCBA voltage table: {configuredChannelCount} channel(s) from appsettings jxTvm.channels, " +
+                  $"{PcbaChannelCount - configuredChannelCount} from the built-in 测试表.csv defaults.");
         SelectedTestResult = TestResults.FirstOrDefault();
         TestOverviewColumns = Math.Max(1, TestItems.Count);
 
@@ -1955,6 +1967,32 @@ public sealed class MainViewModel : ObservableObject
             }
         }
 
+        if (testEvent.TestId == "pcba_test_points" && testEvent.Status is "passed" or "failed" &&
+            _hostDecisionData.TryGetValue(testEvent.TestId, out var pcbaHostData))
+        {
+            // The host performs the PCBA voltage measurement, so the per-channel results
+            // only exist here.  Merge them into the terminal report so the failing
+            // channels and their measured values are shown in the summary and persisted
+            // with the session record.
+            var merged = pcbaHostData.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in testEvent.Data)
+            {
+                merged[pair.Key] = pair.Value;
+            }
+
+            var failureSummary = GetDataString(merged, "failureSummary", string.Empty);
+            testEvent = new TestSessionEvent
+            {
+                Event = testEvent.Event,
+                TestId = testEvent.TestId,
+                Status = testEvent.Status,
+                ResultCode = testEvent.ResultCode,
+                Message = failureSummary.Length == 0 ? testEvent.Message : $"{testEvent.Message}；{failureSummary}",
+                Timestamp = testEvent.Timestamp,
+                Data = merged
+            };
+        }
+
         var result = TestResults.FirstOrDefault(item => item.TestId == testEvent.TestId);
         if (testEvent.TestId == "hdmi")
         {
@@ -2265,36 +2303,139 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task HandlePcbaTestPointsMeasurementAsync(TestSessionEvent testEvent)
     {
-        if (_activeSessionClient is null || _jxTvmService is null || !_jxTvmService.IsEnabled) return;
+        if (_jxTvmService is null || !_jxTvmService.IsEnabled)
+        {
+            AppendLog("JX-TVM PCBA measurement skipped: JX-TVM service is unavailable or disabled.");
+            return;
+        }
+
+        if (_activeSessionClient is null)
+        {
+            AppendLog($"JX-TVM PCBA measurement skipped: session={SessionId} has no active PCBA connection.");
+            return;
+        }
+
+        var sessionId = SessionId;
+        var client = _activeSessionClient;
+        AppendLog($"JX-TVM PCBA measurement requested: session={sessionId}, channels={PcbaTestPoints.Count}");
+        if (!await _pcbaMeasurementGate.WaitAsync(PcbaMeasurementBudgetMs))
+        {
+            AppendLog("JX-TVM PCBA measurement skipped: another PCBA measurement is still running.");
+            return;
+        }
+
         try
         {
-            AppendLog("JX-TVM PCBA measurement start: COM3, registers=1233-1264");
-            var values = await _jxTvmService.ReadAllChannelVoltagesMvAsync();
+            using var budget = new CancellationTokenSource(PcbaMeasurementBudgetMs);
+            AppendLog($"JX-TVM PCBA measurement start: registers=1233-1264, budget={PcbaMeasurementBudgetMs}ms");
+            var readings = await _jxTvmService.ReadAllChannelVoltagesMvAsync(budget.Token);
             var failed = 0;
-            for (var i = 0; i < values.Length && i < PcbaTestPoints.Count; i++)
+            var failedPoints = new List<int>();
+            var failureDetails = new List<string>();
+            var measuredPoints = new List<Dictionary<string, object?>>();
+            for (var i = 0; i < readings.Length && i < PcbaTestPoints.Count; i++)
             {
                 var point = PcbaTestPoints[i];
-                var pass = values[i] >= point.MinMv && values[i] <= point.MaxMv;
-                if (!pass) failed++;
-                point.Apply(values[i], pass ? "passed" : "failed");
-                AppendLog($"JX-TVM channel[{i + 1}] {point.Name}: {values[i]}mV, range={point.MinMv}-{point.MaxMv}, {(pass ? "PASS" : "FAIL")}");
+                var reading = readings[i];
+                var passed = reading.IsValid && reading.ValueMv >= point.MinMv && reading.ValueMv <= point.MaxMv;
+                var status = !reading.IsValid ? "error" : passed ? "passed" : "failed";
+                point.Apply(reading.IsValid ? reading.ValueMv : null, status);
+                if (!passed)
+                {
+                    failed++;
+                    failedPoints.Add(i + 1);
+                    failureDetails.Add(reading.IsValid
+                        ? $"通道{i + 1} {point.Name}: {reading.ValueMv}mV（范围 {point.MinMv}-{point.MaxMv}mV）"
+                        : $"通道{i + 1} {point.Name}: 读取失败 {reading.Error}");
+                }
+
+                AppendLog($"JX-TVM channel[{i + 1}] {point.Name}: {(reading.IsValid ? $"{reading.ValueMv}mV" : $"READ ERROR {reading.Error}")}, range={point.MinMv}-{point.MaxMv}, {status.ToUpperInvariant()}");
+                measuredPoints.Add(new Dictionary<string, object?>
+                {
+                    ["index"] = i + 1,
+                    ["name"] = point.Name,
+                    ["voltageMv"] = reading.IsValid ? reading.ValueMv : null,
+                    ["minMv"] = point.MinMv,
+                    ["maxMv"] = point.MaxMv,
+                    ["passed"] = passed,
+                    ["error"] = reading.IsValid ? null : reading.Error
+                });
             }
-            AppendLog($"JX-TVM PCBA measurement completed: channels=32 failed={failed}");
-            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, "pcba_test_points", failed == 0,
+
+            // Keep the per-channel results for the session record: the board never
+            // returns the measured voltages, so without this nothing about the failing
+            // channels survives the session.
+            var failureSummary = failed == 0
+                ? string.Empty
+                : $"失败 {failed}/{PcbaTestPoints.Count} 个测试点：" + string.Join("；", failureDetails);
+            _hostDecisionData["pcba_test_points"] = new Dictionary<string, object?>
+            {
+                ["channelCount"] = PcbaTestPoints.Count,
+                ["passedCount"] = PcbaTestPoints.Count - failed,
+                ["failedCount"] = failed,
+                ["failedPoints"] = failedPoints,
+                ["failureSummary"] = failureSummary,
+                ["measuredPoints"] = measuredPoints,
+                ["measurementSource"] = "host_jx_tvm_sweep"
+            };
+
+            AppendLog($"JX-TVM PCBA measurement completed: channels={PcbaTestPoints.Count}, failed={failed}");
+            if (failed > 0) AppendLog($"JX-TVM PCBA failure detail: {failureSummary}");
+            await SubmitPcbaDecisionAsync(client, sessionId, failed == 0,
                 failed == 0 ? "jx_tvm_measurement_passed" : "jx_tvm_voltage_out_of_range");
+        }
+        catch (OperationCanceledException)
+        {
+            AppendLog($"JX-TVM PCBA measurement timed out: budget={PcbaMeasurementBudgetMs}ms exceeded.");
+            MarkUnmeasuredPointsAsError();
+            await SubmitPcbaDecisionAsync(client, sessionId, false, "jx_tvm_measurement_timeout");
         }
         catch (Exception ex)
         {
             AppendLog($"JX-TVM PCBA measurement failed: {ex.GetType().Name}: {ex.Message}");
-            await _activeSessionClient.SubmitTestDecisionAsync(SessionId, "pcba_test_points", false, "jx_tvm_communication_error");
+            MarkUnmeasuredPointsAsError();
+            await SubmitPcbaDecisionAsync(client, sessionId, false, "jx_tvm_communication_error");
+        }
+        finally
+        {
+            _pcbaMeasurementGate.Release();
+        }
+    }
+
+    private void MarkUnmeasuredPointsAsError()
+    {
+        foreach (var point in PcbaTestPoints)
+        {
+            if (point.Status is "pending" or "running") point.Apply(null, "error");
+        }
+    }
+
+    private async Task SubmitPcbaDecisionAsync(IPcbaCommandClient client, string sessionId, bool passed, string reason)
+    {
+        try
+        {
+            await client.SubmitTestDecisionAsync(sessionId, "pcba_test_points", passed, reason);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"pcba_test_points decision submit failed: session={sessionId}, passed={passed}, reason={reason}, error={ex.GetType().Name}: {ex.Message}");
         }
     }
 
     private void UpdatePcbaTestPoints(TestSessionEvent testEvent)
     {
-        if (testEvent.Status == "running" && GetDataString(testEvent.Data, "phase", "") is "sampling" or "start")
+        // Clear every previous measurement as soon as a new sweep is requested.  The
+        // board does not send a "phase" field, so readyForHostDecision is what marks
+        // the start of a new host-driven measurement; without this the panel keeps the
+        // previous board's values when the sweep does not run.
+        if (testEvent.Status == "running" &&
+            (GetDataString(testEvent.Data, "phase", "") is "sampling" or "start" ||
+             GetDataBoolean(testEvent.Data, "readyForHostDecision")))
             foreach (var point in PcbaTestPoints) point.Reset();
-        if (!testEvent.Data.TryGetValue("points", out var raw) || raw is not JsonElement array || array.ValueKind != JsonValueKind.Array) return;
+        // "points" is the board payload; "measuredPoints" is the host sweep that was
+        // stored with a session record, so historic failures can be shown again.
+        if (!testEvent.Data.TryGetValue("points", out var raw) && !testEvent.Data.TryGetValue("measuredPoints", out raw)) return;
+        if (raw is not JsonElement array || array.ValueKind != JsonValueKind.Array) return;
         foreach (var item in array.EnumerateArray())
         {
             if (!item.TryGetProperty("index", out var idx) || !idx.TryGetInt32(out var index)) continue;
@@ -2308,6 +2449,38 @@ public sealed class MainViewModel : ObservableObject
             point.ApplyMetadata(name, minMv, maxMv);
             point.Apply(voltage, testEvent.Status == "running" ? "running" : passed ? "passed" : "failed");
         }
+    }
+
+    /// <summary>
+    /// Builds the 32-channel panel from the built-in CSV table, letting any row present in
+    /// <c>appsettings.json</c> → <c>jxTvm.channels</c> win for its channel.  <paramref name="overrideCount"/>
+    /// reports how many channels came from configuration so the source can be logged.
+    /// </summary>
+    private static IEnumerable<PcbaTestPointViewModel> BuildPcbaTestPoints(
+        IEnumerable<PcbaTestPointSpec> configuredChannels, out int overrideCount)
+    {
+        var overrides = configuredChannels
+            .Where(spec => spec.Channel >= 1 && spec.Channel <= PcbaChannelCount && spec.MinMv <= spec.MaxMv)
+            .GroupBy(spec => spec.Channel)
+            .ToDictionary(group => group.Key, group => group.Last());
+        overrideCount = overrides.Count;
+        return DefaultPcbaPointSpecs.Select((spec, i) =>
+        {
+            var channel = i + 1;
+            var name = spec.Name;
+            var min = spec.Min;
+            var max = spec.Max;
+            if (overrides.TryGetValue(channel, out var configured))
+            {
+                if (!string.IsNullOrWhiteSpace(configured.Name)) name = configured.Name;
+                min = configured.MinMv;
+                max = configured.MaxMv;
+            }
+            return new PcbaTestPointViewModel
+            {
+                Id = $"TP{channel:00}", Name = name, Channel = i, MinMv = min, MaxMv = max
+            };
+        });
     }
 
     private static string BuildUsbInstruction(TestSessionEvent testEvent)
@@ -3752,6 +3925,21 @@ public sealed class MainViewModel : ObservableObject
         foreach (var result in TestResults)
         {
             result.Reset();
+        }
+
+        // The detail grids keep their values until something overwrites them, so a new
+        // board or a re-test would otherwise show the previous run's measurements.
+        foreach (var point in PcbaTestPoints)
+        {
+            point.Reset();
+        }
+        foreach (var step in Usb2TestSteps)
+        {
+            step.Reset();
+        }
+        foreach (var step in Usb3TestSteps)
+        {
+            step.Reset();
         }
 
         SelectedTestResult = TestResults.FirstOrDefault();

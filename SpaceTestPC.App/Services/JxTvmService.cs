@@ -4,11 +4,22 @@ using SpaceTestPC.App.Models;
 
 namespace SpaceTestPC.App.Services;
 
+/// <summary>
+/// One channel reading of the 32-channel sweep.  A sweep must survive single-channel
+/// failures: an unreadable channel keeps its own diagnostics while the remaining
+/// channels are still measured, so <see cref="IsValid"/> distinguishes "the meter
+/// answered 0 mV" from "the meter did not answer at all".
+/// </summary>
+public sealed record JxTvmChannelReading(int Channel, int ValueMv, bool IsValid, string? Error);
+
 public sealed class JxTvmService
 {
     private const int BaudRate = 9600;
     private const byte SlaveAddress = 1;
     private const int TimeoutMs = 1000;
+    private const int WriteSettleDelayMs = 30;
+    private const int ResponseLength = 7;
+    private const int ChannelCount = 32;
     private readonly JxTvmConfiguration _configuration;
     public JxTvmService(JxTvmConfiguration configuration) => _configuration = configuration;
     public Action<string>? Log { get; set; }
@@ -39,35 +50,91 @@ public sealed class JxTvmService
         return (work, test, sampling);
     }
 
-    public async Task<int[]> ReadAllChannelVoltagesMvAsync(CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Reads every live channel.  The whole sweep runs on a worker thread so the UI
+    /// thread is never blocked by RS485 round-trips, and a failing channel is reported
+    /// per channel instead of aborting the sweep.
+    /// </summary>
+    public Task<JxTvmChannelReading[]> ReadAllChannelVoltagesMvAsync(CancellationToken cancellationToken = default) =>
+        Task.Run(() => ReadAllChannelsCoreAsync(cancellationToken), cancellationToken);
+
+    private async Task<JxTvmChannelReading[]> ReadAllChannelsCoreAsync(CancellationToken cancellationToken)
     {
-        var values = new int[32];
-        for (var i = 0; i < values.Length; i++)
+        var readings = new JxTvmChannelReading[ChannelCount];
+        for (var i = 0; i < readings.Length; i++)
         {
-            values[i] = await ReadChannelVoltageMvAsync(i + 1, cancellationToken);
+            var channel = i + 1;
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var value = await ReadChannelVoltageMvAsync(channel, cancellationToken).ConfigureAwait(false);
+                readings[i] = new JxTvmChannelReading(channel, value, true, null);
+            }
+            catch (Exception ex) when (ex is TimeoutException or IOException or InvalidOperationException or UnauthorizedAccessException or ArgumentOutOfRangeException or OverflowException)
+            {
+                readings[i] = new JxTvmChannelReading(channel, 0, false, ex.Message);
+                Log?.Invoke($"JX-TVM channel[{channel}] read failed: {ex.GetType().Name}: {ex.Message}");
+            }
         }
-        return values;
+        return readings;
     }
 
-    private Task<int> ReadRegisterAsync(ushort register, CancellationToken cancellationToken)
+    private async Task<int> ReadRegisterAsync(ushort register, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        using var port = new SerialPort(_configuration.PortName, BaudRate, Parity.None, 8, StopBits.One) { ReadTimeout = TimeoutMs, WriteTimeout = TimeoutMs };
+        using var port = new SerialPort(_configuration.PortName, BaudRate, Parity.None, 8, StopBits.One) { WriteTimeout = TimeoutMs };
         port.Open();
-        var request = BuildReadFrame(SlaveAddress, register, 1);
-        Log?.Invoke($"JX-TVM TX: {Convert.ToHexString(request)} register={register}");
-        port.DiscardInBuffer();
-        port.Write(request, 0, request.Length);
-        Thread.Sleep(30);
-        var response = new byte[7];
+        try
+        {
+            var request = BuildReadFrame(SlaveAddress, register, 1);
+            Log?.Invoke($"JX-TVM TX: {Convert.ToHexString(request)} register={register}");
+            port.DiscardInBuffer();
+            // SerialPort.ReadTimeout is not honoured reliably by async base-stream reads,
+            // so the whole transaction shares one explicit timeout budget.
+            using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutSource.CancelAfter(TimeoutMs);
+            try
+            {
+                await port.BaseStream.WriteAsync(request, 0, request.Length, timeoutSource.Token).ConfigureAwait(false);
+                await Task.Delay(WriteSettleDelayMs, timeoutSource.Token).ConfigureAwait(false);
+                var response = await ReadExactAsync(port.BaseStream, ResponseLength, timeoutSource.Token).ConfigureAwait(false);
+                return ParseRegisterResponse(register, response);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException($"JX-TVM did not return an RS485 Modbus response within {TimeoutMs} ms (register={register}).");
+            }
+        }
+        finally
+        {
+            if (port.IsOpen)
+            {
+                try { port.Close(); } catch (IOException) { }
+            }
+        }
+    }
+
+    private static async Task<byte[]> ReadExactAsync(Stream stream, int count, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[count];
         var total = 0;
-        while (total < response.Length) { var read = port.Read(response, total, response.Length - total); if (read == 0) throw new TimeoutException("JX-TVM did not return an RS485 Modbus response before the read timeout."); total += read; }
+        while (total < count)
+        {
+            var read = await stream.ReadAsync(buffer, total, count - total, cancellationToken).ConfigureAwait(false);
+            if (read <= 0) throw new TimeoutException("JX-TVM did not return an RS485 Modbus response before the read timeout.");
+            total += read;
+        }
+        return buffer;
+    }
+
+    private int ParseRegisterResponse(ushort register, byte[] response)
+    {
+        Log?.Invoke($"JX-TVM RX: {Convert.ToHexString(response)} register={register}");
         var expectedCrc = CalculateCrc(response.AsSpan(0, 5));
         var actualCrc = (ushort)(response[5] | (response[6] << 8));
-        Log?.Invoke($"JX-TVM RX: {Convert.ToHexString(response)} register={register}");
         if (response[0] != SlaveAddress || response[1] != 0x03 || response[2] != 2) throw new InvalidOperationException("Invalid JX-TVM voltage response.");
         if (expectedCrc != actualCrc) throw new InvalidOperationException($"JX-TVM CRC mismatch: expected=0x{expectedCrc:X4}, actual=0x{actualCrc:X4}");
-        return Task.FromResult((response[3] << 8) | response[4]);
+        return (response[3] << 8) | response[4];
     }
 
     private static byte[] BuildReadFrame(byte slave, ushort register, ushort count)

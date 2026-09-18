@@ -27,6 +27,17 @@
       }
     }
   },
+  "jxTvm": {
+    // On-board 32-channel voltage meter used for the PCBA test-point sweep.
+    "enabled": true,
+    "portName": "COM3",
+    // Optional per-channel limits in mV (from 测试表, min = 设定阈值 - 允许偏差,
+    // max = 设定阈值 + 允许偏差). Listed channels override the built-in defaults,
+    // so a new 测试表 only needs this file, no rebuild.
+    "channels": [
+      // { "channel": 8, "name": "VCC_SYS", "minMv": 11400, "maxMv": 12600 }
+    ]
+  },
   "bluetoothBroadcaster": {
     // Upper-PC BLE broadcaster. 3576 scans for this same name.
     "enabled": true,

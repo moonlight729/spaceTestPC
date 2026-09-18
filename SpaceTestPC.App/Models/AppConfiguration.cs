@@ -123,6 +123,25 @@ public sealed class JxTvmConfiguration
 {
     public bool Enabled { get; set; }
     public string PortName { get; set; } = "COM6";
+    /// <summary>
+    /// Per-channel voltage limits used to judge the 32-channel sweep.  Anything listed
+    /// here overrides the built-in CSV defaults for that channel, so a new 测试表 can be
+    /// applied by editing appsettings.json instead of rebuilding the app.
+    /// </summary>
+    public List<PcbaTestPointSpec> Channels { get; set; } = [];
+}
+
+/// <summary>
+/// One row of the PCBA voltage table: 1-based <see cref="Channel"/> plus the accepted
+/// range in mV.  Built-in defaults mirror 测试表.csv (min = 设定阈值 - 允许偏差,
+/// max = 设定阈值 + 允许偏差).
+/// </summary>
+public sealed class PcbaTestPointSpec
+{
+    public int Channel { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public double MinMv { get; set; }
+    public double MaxMv { get; set; }
 }
 
 public sealed class Jk5506Configuration
