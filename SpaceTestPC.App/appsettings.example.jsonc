@@ -126,8 +126,15 @@
       },
       "ethernet_led": {
         "interfaceName": "end0",
-        "waitCableTimeoutMs": 15000,
+        "waitCableTimeoutMs": 30000,
         "phaseDurationMs": 2000,
+        "settleMs": 2000,
+        "speedWaitTimeoutMs": 8000,
+        "speedRetryCount": 2,
+        "speedRetryIntervalMs": 1000,
+        "speedStableSamples": 3,
+        "carrierStableMs": 1000,
+        "reconnectDelayMs": 8000,
         "manualDecisionTimeoutMs": 15000,
         "timeoutMs": 15000
       },

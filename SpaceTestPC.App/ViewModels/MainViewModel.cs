@@ -2440,7 +2440,22 @@ public sealed class MainViewModel : ObservableObject
             return "网口灯测试完成。";
         }
 
-        return "网口灯测试失败，请检查网线、网口灯和 ethtool 切速率是否正常。";
+        var reason = GetDataString(testEvent.Data, "failureReason", string.Empty);
+        var expectedSpeed = GetDataInt(testEvent.Data, "expectedSpeedMbps");
+        var actualSpeed = GetDataInt(testEvent.Data, "actualSpeedMbps");
+        var speedText = expectedSpeed > 0
+            ? $"目标 {expectedSpeed} Mbps，实际 {(actualSpeed > 0 ? actualSpeed.ToString() : "未识别")} Mbps"
+            : string.Empty;
+        var retryHint = "请重新插紧网线后重新扫描当前 SN 重试。";
+        return reason switch
+        {
+            "speed_verify_failed" => $"网口灯测试失败：切速率后链路未在限定时间内稳定（{speedText}）。{retryHint}",
+            "ethtool_command_failed" => $"网口灯测试失败：ethtool 切换速率未生效。{retryHint}",
+            "ethernet_insert_timeout" => "网口灯测试失败：等待网线插入超时。请插好网线后重新扫描当前 SN。",
+            _ => string.IsNullOrWhiteSpace(speedText)
+                ? $"网口灯测试失败，请检查网线接触、网口灯和速率切换。{retryHint}"
+                : $"网口灯测试失败（{speedText}）。{retryHint}"
+        };
     }
 
     private static string BuildEthernetLedSequenceInstruction(IReadOnlyDictionary<string, object?> data)
@@ -3670,14 +3685,18 @@ public sealed class MainViewModel : ObservableObject
         if (testId == "ethernet_led")
         {
             result.TryAdd("interfaceName", "end0");
-            result.TryAdd("waitCableTimeoutMs", 15000);
-            result.TryAdd("cycleCount", 2);
+            result.TryAdd("waitCableTimeoutMs", 30000);
+            result.TryAdd("cycleCount", 1);
             result.TryAdd("phaseDurationMs", 2000);
             result.TryAdd("settleMs", 2000);
-            result.TryAdd("speedWaitTimeoutMs", 10000);
+            result.TryAdd("speedWaitTimeoutMs", 8000);
+            result.TryAdd("speedRetryCount", 2);
+            result.TryAdd("speedRetryIntervalMs", 1000);
+            result.TryAdd("speedStableSamples", 3);
+            result.TryAdd("carrierStableMs", 1000);
             result.TryAdd("manualDecisionTimeoutMs", 15000);
             result.TryAdd("timeoutMs", 15000);
-            result.TryAdd("reconnectDelayMs", 3000);
+            result.TryAdd("reconnectDelayMs", 8000);
         }
         if (testId == "emmc")
         {

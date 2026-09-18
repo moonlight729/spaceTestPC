@@ -13,6 +13,11 @@ namespace SpaceTestPC.App.Services;
 public sealed class AdbPcbaCommandClient : IPcbaCommandClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    // The RJ45 contact on the fixture is not always seated firmly, so the PHY can
+    // still be renegotiating when the planned Ethernet LED reconnect delay elapses.
+    private const int EthernetLedResumeConnectAttempts = 3;
+    private const int EthernetLedResumeConnectDelayMs = 3000;
+    private const int EthernetLedResumeConnectTimeoutMs = 6000;
     private readonly string _adbPath;
     private readonly string? _deviceSerial;
     private readonly int _localPort;
@@ -678,8 +683,12 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
 
         while (remainingTests.Length > 0)
         {
+            var isEthernetLedResume = reconnectAttempts > 0 &&
+                string.Equals(remainingTests[0].Id, "ethernet_led", StringComparison.OrdinalIgnoreCase);
             Log?.Invoke($"PCBA session connect attempt: session={sessionId}, sn={sn}, tests={string.Join(",", remainingTests.Select(item => item.Id))}.");
-            using var client = await ConnectPcbaAsync(cancellationToken);
+            using var client = isEthernetLedResume
+                ? await ConnectPcbaWithRetryAsync(EthernetLedResumeConnectAttempts, EthernetLedResumeConnectDelayMs, cancellationToken)
+                : await ConnectPcbaAsync(cancellationToken);
             await using var stream = client.GetStream();
             using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
 
@@ -1217,6 +1226,27 @@ public sealed class AdbPcbaCommandClient : IPcbaCommandClient
             Log?.Invoke($"PCBA TCP connect failed: host={host}, port={port}, error={ex.GetType().Name}: {ex.Message}.");
             client.Dispose();
             throw;
+        }
+    }
+
+    private async Task<TcpClient> ConnectPcbaWithRetryAsync(int maxAttempts, int delayMs, CancellationToken cancellationToken)
+    {
+        // A failed TCP connect never reaches the board, so retrying it cannot supersede
+        // the pending Ethernet LED resume session. Only the authoritative connection
+        // established here starts a session.
+        for (var attempt = 1; ; ++attempt)
+        {
+            using var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            connectTimeout.CancelAfter(EthernetLedResumeConnectTimeoutMs);
+            try
+            {
+                return await ConnectPcbaAsync(connectTimeout.Token);
+            }
+            catch (Exception ex) when (attempt < maxAttempts && !cancellationToken.IsCancellationRequested)
+            {
+                Log?.Invoke($"PCBA resume connect attempt {attempt}/{maxAttempts} failed: {ex.GetType().Name}: {ex.Message}; retrying in {delayMs}ms.");
+                await Task.Delay(delayMs, cancellationToken);
+            }
         }
     }
 
