@@ -1,5 +1,5 @@
-using SpaceTestPC.App.Models;
-using SpaceTestPC.App.Services;
+﻿using SpaceTestPC.Core.Models;
+using SpaceTestPC.Core.Services;
 
 var portName = args.Length > 0 ? args[0] : "COM5";
 var batteryVoltageMv = args.Length > 1 && int.TryParse(args[1], out var parsedVoltageMv) ? parsedVoltageMv : 7400;

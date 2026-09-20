@@ -1,4 +1,6 @@
 <Solution>
+  <Project Path="SpaceTestPC.Core\SpaceTestPC.Core.csproj" />
   <Project Path="SpaceTestPC.App\SpaceTestPC.App.csproj" />
+  <Project Path="SpaceTestPC.AgingStation\SpaceTestPC.AgingStation.csproj" />
   <Project Path="tests\SpaceTestPC.App.Tests\SpaceTestPC.App.Tests.csproj" />
 </Solution>

@@ -1,10 +1,10 @@
-using System.IO;
+﻿using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
-using SpaceTestPC.App.Services;
+using SpaceTestPC.Core.Services;
 using SpaceTestPC.App.ViewModels;
 
 namespace SpaceTestPC.App;
@@ -54,7 +54,7 @@ public partial class MainWindow : Window
         var mode = string.IsNullOrWhiteSpace(configuration.TestMode) ? "finished_product" : configuration.TestMode.Trim().ToLowerInvariant();
         var modeConfiguration = configuration.TestModes.TryGetValue(mode, out var configuredMode)
             ? configuredMode
-            : new Models.TestModeConfiguration();
+            : new SpaceTestPC.Core.Models.TestModeConfiguration();
         var databaseName = string.IsNullOrWhiteSpace(modeConfiguration.DatabaseName)
             ? mode == "finished_product" ? "space-test-finished-product.db" : "space-test-pcba.db"
             : modeConfiguration.DatabaseName;
@@ -205,7 +205,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void HistoryRecordFound(object? sender, Models.TestSessionRecord record)
+    private void HistoryRecordFound(object? sender, SpaceTestPC.Core.Models.TestSessionRecord record)
     {
         var dialog = new TestRecordDialog(record) { Owner = this };
         dialog.ShowDialog();

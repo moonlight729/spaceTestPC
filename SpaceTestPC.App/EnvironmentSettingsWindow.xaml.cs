@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.IO;
 using System.IO.Ports;
 using System.Windows;
@@ -6,7 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Media3D;
 using Microsoft.Win32;
-using SpaceTestPC.App.Services;
+using SpaceTestPC.Core.Services;
 
 namespace SpaceTestPC.App;
 
@@ -118,7 +118,7 @@ public partial class EnvironmentSettingsWindow : Window
         ProbeDeviceButton.Content = "探测中";
         try
         {
-            var configuration = new Models.PcbaConnectionConfiguration
+            var configuration = new SpaceTestPC.Core.Models.PcbaConnectionConfiguration
             {
                 Mode = "tcp",
                 Host = host,
@@ -127,7 +127,7 @@ public partial class EnvironmentSettingsWindow : Window
                 AdapterId = adapter.Id,
                 AdapterName = adapter.Name,
                 LocalIp = adapter.Address.ToString(),
-                Discovery = new Models.PcbaDiscoveryConfiguration
+                Discovery = new SpaceTestPC.Core.Models.PcbaDiscoveryConfiguration
                 {
                     Enabled = true,
                     Mode = "selectedAdapter",

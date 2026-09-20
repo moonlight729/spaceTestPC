@@ -1,4 +1,4 @@
-using SpaceTestPC.App.Models;
+﻿using SpaceTestPC.Core.Models;
 
 namespace SpaceTestPC.App.ViewModels;
 

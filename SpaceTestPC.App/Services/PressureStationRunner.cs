@@ -1,6 +1,6 @@
-using SpaceTestPC.App.Models;
+﻿using SpaceTestPC.Core.Models;
 
-namespace SpaceTestPC.App.Services;
+namespace SpaceTestPC.Core.Services;
 
 /// <summary>Independent, sequential pressure loop for one configured station.</summary>
 public sealed class PressureStationRunner

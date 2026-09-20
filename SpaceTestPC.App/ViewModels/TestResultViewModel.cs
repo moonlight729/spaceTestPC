@@ -1,5 +1,5 @@
-using System.Text.Json;
-using SpaceTestPC.App.Models;
+﻿using System.Text.Json;
+using SpaceTestPC.Core.Models;
 
 namespace SpaceTestPC.App.ViewModels;
 

@@ -1,5 +1,5 @@
-using SpaceTestPC.App.Models;
-using SpaceTestPC.App.Services;
+﻿using SpaceTestPC.Core.Models;
+using SpaceTestPC.Core.Services;
 
 var sessionId = $"live-probe-{DateTimeOffset.Now:yyyyMMddHHmmss}";
 var sn = "LIVE-PCBA-001";

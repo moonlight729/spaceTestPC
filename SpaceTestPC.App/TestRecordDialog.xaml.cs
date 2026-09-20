@@ -1,5 +1,5 @@
-using System.Windows;
-using SpaceTestPC.App.Models;
+﻿using System.Windows;
+using SpaceTestPC.Core.Models;
 
 namespace SpaceTestPC.App;
 

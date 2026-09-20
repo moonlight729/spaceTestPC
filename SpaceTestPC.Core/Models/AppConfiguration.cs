@@ -1,0 +1,179 @@
+﻿using System.Text.Json;
+
+namespace SpaceTestPC.Core.Models;
+
+public sealed class AppConfiguration
+{
+    public string TestMode { get; set; } = "finished_product";
+    public string OperationMode { get; set; } = "production";
+    public Dictionary<string, TestModeConfiguration> TestModes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public TestPlanConfiguration TestPlan { get; set; } = new();
+    public Jk5506Configuration Jk5506 { get; set; } = new();
+    public JxTvmConfiguration JxTvm { get; set; } = new();
+    public BluetoothBroadcasterConfiguration BluetoothBroadcaster { get; set; } = new();
+    public LoggingConfiguration Logging { get; set; } = new();
+    public UpgradeConfiguration Upgrade { get; set; } = new();
+    public TestLifecycleConfiguration TestLifecycle { get; set; } = new();
+    public PcbaConnectionConfiguration PcbaConnection { get; set; } = new();
+}
+
+public sealed class PcbaConnectionConfiguration
+{
+    public string Mode { get; set; } = "tcp";
+    public string Host { get; set; } = "auto";
+    public int Port { get; set; } = 19001;
+    public bool EthernetOnly { get; set; } = true;
+    public string AdapterId { get; set; } = string.Empty;
+    public string AdapterName { get; set; } = string.Empty;
+    public string LocalIp { get; set; } = string.Empty;
+    public string AdbPath { get; set; } = "adb";
+    public string AdbDeviceSerial { get; set; } = string.Empty;
+    public PcbaDiscoveryConfiguration Discovery { get; set; } = new();
+}
+
+public sealed class PcbaDiscoveryConfiguration
+{
+    public bool Enabled { get; set; } = true;
+    public string Mode { get; set; } = "selectedAdapter";
+    public string Subnet { get; set; } = "auto";
+    public string StartIp { get; set; } = string.Empty;
+    public string EndIp { get; set; } = string.Empty;
+    public int PingTimeoutMs { get; set; } = 300;
+    public int ConnectTimeoutMs { get; set; } = 500;
+    public int MaxParallel { get; set; } = 32;
+}
+
+public sealed class TestModeConfiguration
+{
+    public string DisplayName { get; set; } = string.Empty;
+    public string DatabaseName { get; set; } = string.Empty;
+    // 扫码 SN 要求的长度；<= 0 时使用内置默认值 20。
+    public int SnLength { get; set; }
+    // 扫码失败时展示给操作员的要求说明；留空时按 SnLength 自动生成。
+    public string SnRuleDescription { get; set; } = string.Empty;
+    public string[] EnabledTests { get; set; } = [];
+    public string[] DisabledTests { get; set; } = [];
+    public string[] TestOrder { get; set; } = [];
+    public Dictionary<string, string> SkippedTests { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, Dictionary<string, JsonElement>> TestParameters { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class TestLifecycleConfiguration
+{
+    public bool Enabled { get; set; } = true;
+    public string ServiceName { get; set; } = "gen1-app.service";
+    public bool PoweroffAfterTest { get; set; } = false;
+}
+
+public sealed class UpgradeConfiguration
+{
+    public bool Enabled { get; set; } = true;
+    public string Transport { get; set; } = "auto";
+    public string LocalBinaryPath { get; set; } = "spacetest3576";
+    public string RemoteBinaryPath { get; set; } = "/vendor/originflow/bin/spacetest3576";
+    public string ServiceName { get; set; } = "pcba-test.service";
+    public int AutoUpgradeDelaySeconds { get; set; } = 1;
+    public string ApplicationVersion { get; set; } = string.Empty;
+    public string SshUser { get; set; } = "originflow";
+    public string SshPassword { get; set; } = string.Empty;
+    public int SshPort { get; set; } = 22;
+    public string SshPath { get; set; } = "ssh";
+    public string ScpPath { get; set; } = "scp";
+}
+
+public sealed class ApplicationMd5Info
+{
+    public string AppName { get; init; } = string.Empty;
+    public string Path { get; init; } = string.Empty;
+    public string Md5 { get; init; } = string.Empty;
+    public string Service { get; init; } = string.Empty;
+    public string DeviceVersion { get; init; } = string.Empty;
+    public bool VersionAvailable { get; init; }
+}
+
+public sealed class ApplicationUpgradeResult
+{
+    public bool Success { get; init; }
+    public string Message { get; init; } = string.Empty;
+    public string FinalMd5 { get; init; } = string.Empty;
+}
+
+public sealed class ApplicationVersionInfo
+{
+    public string AppName { get; init; } = string.Empty;
+    public string Version { get; init; } = string.Empty;
+    public bool VersionAvailable { get; init; }
+    public string Path { get; init; } = string.Empty;
+}
+
+public sealed class LoggingConfiguration
+{
+    public bool FileEnabled { get; set; } = true;
+    public string FilePath { get; set; } = "logs/space-test-pc.log";
+}
+
+public sealed class BluetoothBroadcasterConfiguration
+{
+    public bool Enabled { get; set; } = true;
+    public string PortName { get; set; } = "COM6";
+    public string BroadcastName { get; set; } = "NODE_A_01";
+}
+
+public sealed class JxTvmConfiguration
+{
+    public bool Enabled { get; set; }
+    public string PortName { get; set; } = "COM6";
+    /// <summary>
+    /// Per-channel voltage limits used to judge the 32-channel sweep.  Anything listed
+    /// here overrides the built-in CSV defaults for that channel, so a new 测试表 can be
+    /// applied by editing appsettings.json instead of rebuilding the app.
+    /// </summary>
+    public List<PcbaTestPointSpec> Channels { get; set; } = [];
+}
+
+/// <summary>
+/// One row of the PCBA voltage table: 1-based <see cref="Channel"/> plus the accepted
+/// range in mV.  Built-in defaults mirror 电压检测仪设置\测试表.csv (min = 设定阈值 - 允许偏差,
+/// max = 设定阈值 + 允许偏差).
+/// </summary>
+public sealed class PcbaTestPointSpec
+{
+    public int Channel { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public double MinMv { get; set; }
+    public double MaxMv { get; set; }
+}
+
+public sealed class Jk5506Configuration
+{
+    public bool Enabled { get; set; } = true;
+    public string PortName { get; set; } = "COM5";
+    public int BaudRate { get; set; } = 115200;
+    public byte SlaveAddress { get; set; } = 1;
+    public int TimeoutMs { get; set; } = 1000;
+}
+
+public sealed class TestPlanConfiguration
+{
+    public bool AllowSnMismatchForDebug { get; set; }
+    public string[] EnabledTests { get; set; } = [];
+    public string[] DisabledTests { get; set; } = [];
+    public Dictionary<string, string> SkippedTests { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, Dictionary<string, JsonElement>> TestParameters { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public MockConfiguration Mock { get; set; } = new();
+    public ContinuousTestConfiguration Continuous { get; set; } = new();
+}
+
+public sealed class MockConfiguration
+{
+    public string? FailingTestId { get; set; }
+    public int RunningDelayMs { get; set; } = 2000;
+    public int ResultHoldMs { get; set; } = 1000;
+    public int BoardStateRunningDelayMs { get; set; } = 3000;
+    public int BoardStateResultHoldMs { get; set; } = 5000;
+}
+
+public sealed class ContinuousTestConfiguration
+{
+    public bool EnabledByDefault { get; set; }
+}

@@ -5,8 +5,8 @@ using System.Security.Cryptography;
 using System.IO;
 using System.Text.Json;
 using System.Windows.Threading;
-using SpaceTestPC.App.Models;
-using SpaceTestPC.App.Services;
+using SpaceTestPC.Core.Models;
+using SpaceTestPC.Core.Services;
 
 namespace SpaceTestPC.App.ViewModels;
 
