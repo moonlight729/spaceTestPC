@@ -82,7 +82,8 @@
                     <TextBlock Grid.Row="1" Style="{StaticResource LabelStyle}" Text="U-Boot 版本"/><TextBox x:Name="ExpectedUbootVersionTextBox" Grid.Row="1" Grid.Column="1"/>
                     <TextBlock Grid.Row="2" Style="{StaticResource LabelStyle}" Text="Kernel 版本"/><TextBox x:Name="ExpectedKernelVersionTextBox" Grid.Row="2" Grid.Column="1"/>
                     <TextBlock Grid.Row="3" Style="{StaticResource LabelStyle}" Text="RootFS 版本"/><TextBox x:Name="ExpectedRootfsVersionTextBox" Grid.Row="3" Grid.Column="1"/>
-                    <TextBlock Grid.Row="5" Grid.ColumnSpan="2" Margin="0,14,0,0" Foreground="#667085" TextWrapping="Wrap" Text="启用后四项版本均须精确匹配，否则板状态校验失败并立即中止测试。"/>
+                    <TextBlock Grid.Row="4" Style="{StaticResource LabelStyle}" Text="Gen1-APP 版本"/><TextBox x:Name="ExpectedGen1AppVersionTextBox" Grid.Row="4" Grid.Column="1" ToolTip="由 Gen1-APP 安装包版本提供，例如 0.4.7；版本号以第一个 - 之前的部分比对"/>
+                    <TextBlock Grid.Row="5" Grid.ColumnSpan="2" Margin="0,14,0,0" Foreground="#667085" TextWrapping="Wrap" Text="四项版本均须精确匹配，否则板状态校验失败并立即中止测试；Gen1-APP 未安装时同样判定失败。"/>
                 </Grid>
             </TabItem>
             <TabItem Header="升级与日志">

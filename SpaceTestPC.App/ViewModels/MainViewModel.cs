@@ -226,7 +226,8 @@ public sealed class MainViewModel : ObservableObject
         _versionValidation = new VersionValidationSettings(
             GetConfigurationString(versionParameters, "expectedUbootVersion"),
             GetConfigurationString(versionParameters, "expectedKernelVersion"),
-            GetConfigurationString(versionParameters, "expectedRootfsVersion"));
+            GetConfigurationString(versionParameters, "expectedRootfsVersion"),
+            GetConfigurationString(versionParameters, "expectedGen1AppVersion"));
         // Debug-only bypasses must never leak into production mode.
         _allowSnMismatchForDebug = _operationMode == "developer" && appConfiguration.TestPlan.AllowSnMismatchForDebug;
         _testModeConfiguration = appConfiguration.TestModes.TryGetValue(_testProfileMode, out var modeConfiguration)
@@ -1756,12 +1757,18 @@ public sealed class MainViewModel : ObservableObject
                 var expectedUboot = SimplifyVersion(_versionValidation.Uboot);
                 var expectedKernel = SimplifyVersion(_versionValidation.Kernel);
                 var expectedRootfs = SimplifyVersion(_versionValidation.Rootfs);
+                var expectedGen1App = SimplifyVersion(_versionValidation.Gen1App);
                 if (!string.Equals(UbootVersion, expectedUboot, StringComparison.Ordinal))
                     mismatches.Add($"U-Boot 实际 {UbootVersion}，要求 {expectedUboot}");
                 if (!string.Equals(KernelVersion, expectedKernel, StringComparison.Ordinal))
                     mismatches.Add($"Kernel 实际 {KernelVersion}，要求 {expectedKernel}");
                 if (!string.Equals(RootfsVersion, expectedRootfs, StringComparison.Ordinal))
                     mismatches.Add($"RootFS 实际 {RootfsVersion}，要求 {expectedRootfs}");
+                // Gen1-APP 版本号来自板端 deb 包，未安装时板上返回 unknown 且 gen1AppInstalled=false。
+                if (!versions.Gen1AppInstalled)
+                    mismatches.Add($"Gen1-APP 未安装（上报版本 {Gen1AppVersion}），要求 {expectedGen1App}");
+                else if (!string.Equals(Gen1AppVersion, expectedGen1App, StringComparison.Ordinal))
+                    mismatches.Add($"Gen1-APP 实际 {Gen1AppVersion}，要求 {expectedGen1App}");
                 if (mismatches.Count > 0)
                     throw new InvalidDataException(string.Join("；", mismatches));
             }

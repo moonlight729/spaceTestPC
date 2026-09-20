@@ -14,3 +14,4 @@ spacetest_wifi_fan_stress*_summary.txt
 SpaceTestPC.App/bin/
 SpaceTestPC.App/obj/
 SpaceTestPC.App/**/data/
+remote_stage/
