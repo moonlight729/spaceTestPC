@@ -30,6 +30,11 @@ public sealed class MainViewModel : ObservableObject
 
     private const string BoardStateItemName = "板状态";
     private const int BoardStateTimeoutSeconds = 10;
+    // The board SN is read from the board itself ("板端 SN") as soon as the wired
+    // link is up, without waiting for a scan. Polling stops while a session runs so
+    // it never competes with the test command stream.
+    private const int BoardSnPollIntervalSeconds = 2;
+    private const int BoardSnPollTimeoutSeconds = 3;
     private const string ApplicationUpgradeItemId = "application_upgrade";
     private const string BluetoothItemName = "蓝牙";
     private const string WifiItemName = "WiFi";
@@ -100,6 +105,11 @@ public sealed class MainViewModel : ObservableObject
     private string _voltageStatus = "Idle";
     private string _batteryStatus = "Idle";
     private string _jxTvmStatus = "未启用";
+    private string _boardSnFromBoard = "--";
+    private string _boardSnMatchStatus = "板端 SN：待读取";
+    private System.Windows.Media.Brush _boardSnMatchForeground = System.Windows.Media.Brushes.Gray;
+    private bool _boardSnLinkUp;
+    private bool _boardSnPollInProgress;
     private string _lastResult = "Waiting";
     private string _operatorInstruction = "请扫描产品 SN，系统将自动按顺序执行检测。";
     private string _debugOutput = "Waiting for scan...";
@@ -134,6 +144,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly DispatcherTimer _adbUpgradeMonitorTimer;
     private readonly DispatcherTimer _statusBarTimer;
     private readonly DispatcherTimer _tfRemovalPromptTimer;
+    private readonly DispatcherTimer _boardSnPollTimer;
     private readonly SemaphoreSlim _upgradeCheckGate = new(1, 1);
     private int _upgradeCountdownSeconds;
     private bool _isUpgradePromptVisible;
@@ -290,6 +301,14 @@ public sealed class MainViewModel : ObservableObject
             _tfRemovalPromptTimer.Stop();
             IsTfRemovalPromptVisible = false;
         };
+        _boardSnPollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(BoardSnPollIntervalSeconds) };
+        _boardSnPollTimer.Tick += async (_, _) => await PollBoardSnFromBoardAsync();
+        // ADB forwarding spawns an adb process per request, so idle polling is limited
+        // to TCP/Mock where a cheap socket call is enough to read the board SN.
+        if (_connectionMode != PcbaConnectionMode.AdbForward)
+        {
+            _boardSnPollTimer.Start();
+        }
         _isContinuousTestEnabled = appConfiguration.TestPlan.Continuous.EnabledByDefault;
         _testPlan = BuildActiveTestPlan(appConfiguration);
         _testItemIndexes = _testPlan
@@ -386,6 +405,8 @@ public sealed class MainViewModel : ObservableObject
                 StartPhaseOneCommand.NotifyCanExecuteChanged();
                 RaisePropertyChanged(nameof(StatusBarSn));
                 RaisePropertyChanged(nameof(StatusBarRunState));
+                RaisePropertyChanged(nameof(BoardSnMatchStatus));
+                RaisePropertyChanged(nameof(BoardSnMatchForeground));
             }
         }
     }
@@ -418,6 +439,35 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _testMode;
         private set => SetProperty(ref _testMode, value);
+    }
+
+    /// <summary>
+    /// SN stored inside the board itself, read through sys.get_board_state.
+    /// </summary>
+    public string BoardSnFromBoard
+    {
+        get => _boardSnFromBoard;
+        private set
+        {
+            if (SetProperty(ref _boardSnFromBoard, value))
+            {
+                RaisePropertyChanged(nameof(StatusBarSn));
+                RaisePropertyChanged(nameof(BoardSnMatchStatus));
+                RaisePropertyChanged(nameof(BoardSnMatchForeground));
+            }
+        }
+    }
+
+    public string BoardSnMatchStatus
+    {
+        get => _boardSnMatchStatus;
+        private set => SetProperty(ref _boardSnMatchStatus, value);
+    }
+
+    public System.Windows.Media.Brush BoardSnMatchForeground
+    {
+        get => _boardSnMatchForeground;
+        private set => SetProperty(ref _boardSnMatchForeground, value);
     }
 
     public string VoltageStatus
@@ -502,7 +552,7 @@ public sealed class MainViewModel : ObservableObject
         ? $"状态：{CurrentTestItem?.Name ?? "测试中"}"
         : string.IsNullOrWhiteSpace(CurrentSn) ? "状态：等待扫码" : "状态：就绪";
     public string StatusBarProgress => $"进度：{TestItems.Count(item => item.State is TestItemState.Passed or TestItemState.Failed or TestItemState.Skipped)} / {TestItems.Count}";
-    public string StatusBarSn => $"当前 SN：{(string.IsNullOrWhiteSpace(CurrentSn) ? "--" : CurrentSn)}";
+    public string StatusBarSn => $"当前 SN：{(string.IsNullOrWhiteSpace(CurrentSn) ? "--" : CurrentSn)}　|　板端 SN：{BoardSnFromBoard}";
     public string StatusBarElapsedTime
     {
         get
@@ -1717,6 +1767,9 @@ public sealed class MainViewModel : ObservableObject
             BoardState = "Waiting";
             TestMode = "Ready";
             ScannerInput = string.Empty;
+            BoardSnFromBoard = "--";
+            _boardSnLinkUp = false;
+            UpdateBoardSnMatchStatus();
             OperatorInstruction = "上一块记录已保存。请插入下一块并扫描 SN。";
             AppendLog("Ready for next board scan.");
             UpdateDebugOutput();
@@ -4018,6 +4071,101 @@ public sealed class MainViewModel : ObservableObject
         BoardId = state.BoardId;
         BoardState = BuildBoardStateDisplay(state.CurrentState, state.LastVerdict);
         TestMode = state.TestMode;
+        ApplyBoardSnFromBoard(state.BoardSn);
+    }
+
+    private void ApplyBoardSnFromBoard(string? boardSn)
+    {
+        BoardSnFromBoard = string.IsNullOrWhiteSpace(boardSn) ? "--" : boardSn.Trim();
+        UpdateBoardSnMatchStatus();
+    }
+
+    private void UpdateBoardSnMatchStatus()
+    {
+        if (!_boardSnLinkUp)
+        {
+            BoardSnMatchStatus = "板端 SN：未插网线/未连接";
+            BoardSnMatchForeground = System.Windows.Media.Brushes.Gray;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(BoardSnFromBoard) || BoardSnFromBoard == "--")
+        {
+            BoardSnMatchStatus = "板端 SN：未烧录";
+            BoardSnMatchForeground = System.Windows.Media.Brushes.OrangeRed;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(CurrentSn))
+        {
+            BoardSnMatchStatus = "板端 SN：已读取";
+            BoardSnMatchForeground = System.Windows.Media.Brushes.DodgerBlue;
+            return;
+        }
+
+        var matched = string.Equals(BoardSnFromBoard, CurrentSn, StringComparison.Ordinal);
+        BoardSnMatchStatus = matched
+            ? "板端 SN：与扫码一致"
+            : "板端 SN：与扫码不一致";
+        BoardSnMatchForeground = matched
+            ? System.Windows.Media.Brushes.ForestGreen
+            : System.Windows.Media.Brushes.OrangeRed;
+    }
+
+    private async Task PollBoardSnFromBoardAsync()
+    {
+        if (_boardSnPollInProgress || _isSessionRunning || _isRetestRunning)
+        {
+            return;
+        }
+
+        _boardSnPollInProgress = true;
+        try
+        {
+            var client = _pcbaCommandClientFactory.Create(_connectionMode);
+            var state = await client.GetBoardStateAsync("board-sn-poll", string.Empty)
+                .WaitAsync(TimeSpan.FromSeconds(BoardSnPollTimeoutSeconds));
+
+            var sn = string.IsNullOrWhiteSpace(state.BoardSn) ? string.Empty : state.BoardSn.Trim();
+            if (!_boardSnLinkUp || !string.Equals(BoardSnFromBoard, sn, StringComparison.Ordinal))
+            {
+                AppendLog($"Board SN polled from board: {(string.IsNullOrEmpty(sn) ? "(empty)" : sn)}");
+            }
+
+            _boardSnLinkUp = true;
+            ApplyBoardSnFromBoard(sn);
+        }
+        catch (Exception ex)
+        {
+            if (_boardSnLinkUp)
+            {
+                AppendLog($"Board SN polling lost the board link: {ex.Message}");
+            }
+
+            // Keep the last known SN on screen; only the link hint changes so the
+            // operator knows the cable or board service is gone.
+            _boardSnLinkUp = false;
+            UpdateBoardSnMatchStatus();
+        }
+        finally
+        {
+            _boardSnPollInProgress = false;
+        }
+    }
+
+    private async Task RefreshBoardSnFromBoardAsync(IPcbaCommandClient client)
+    {
+        try
+        {
+            var state = await GetBoardStateWithTimeoutAsync(client);
+            _boardSnLinkUp = true;
+            ApplyBoardSnFromBoard(state.BoardSn);
+            AppendLog($"Board SN read after ethernet link: {BoardSnFromBoard}");
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Board SN read after ethernet link failed: {ex.Message}");
+        }
     }
 
     private static string BuildBoardStateDisplay(string currentState, string lastVerdict)
@@ -4120,6 +4268,10 @@ public sealed class MainViewModel : ObservableObject
             var result = await client.ConnectEthernetAndPingAsync(SessionId, CurrentSn, BoardId, _ethernetRequest);
             var passed = result.Connected && result.Linked && result.PingOk;
             SetTestItemState(EthernetItemName, passed ? TestItemState.Passed : TestItemState.Failed);
+            if (passed)
+            {
+                await RefreshBoardSnFromBoardAsync(client);
+            }
             AppendLog(
                 passed
                     ? $"Ethernet test passed: ip={result.Ip}, avgDelay={result.AvgDelayMs}ms"
