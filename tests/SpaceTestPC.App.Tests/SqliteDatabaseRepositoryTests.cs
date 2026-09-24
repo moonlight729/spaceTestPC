@@ -25,9 +25,11 @@ public sealed class SqliteDatabaseRepositoryTests : IDisposable
         var history = await repository.GetLatestSessionBySnAsync("SN-001");
         Assert.NotNull(history);
         Assert.Equal("wifi", Assert.Single(history.TestResults).TestId);
-        var csv = await File.ReadAllTextAsync(Path.Combine(_root, "records", "SN-001.csv"));
+        // The per-SN CSV is named "<sn>_<testMode>.csv" and the default mode is pcba.
+        var csv = await File.ReadAllTextAsync(Path.Combine(_root, "records", "SN-001_pcba.csv"));
         Assert.Contains("session-1", csv);
-        Assert.Contains("wifi", csv);
+        // The CSV stores the localized display name for each test id.
+        Assert.Contains("Wi-Fi", csv);
     }
 
     [Fact]
@@ -36,7 +38,7 @@ public sealed class SqliteDatabaseRepositoryTests : IDisposable
         var databasePath = Path.Combine(_root, "stage1.db");
         var repository = new SqliteDatabaseRepository(databasePath);
         Directory.CreateDirectory(Path.Combine(_root, "records"));
-        var lockedCsv = Path.Combine(_root, "records", "LOCKED-SN.csv");
+        var lockedCsv = Path.Combine(_root, "records", "LOCKED-SN_pcba.csv");
 
         await using (new FileStream(lockedCsv, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
         {
@@ -47,7 +49,7 @@ public sealed class SqliteDatabaseRepositoryTests : IDisposable
 
         var lockedCsvText = await File.ReadAllTextAsync(lockedCsv);
         Assert.Contains("session-locked", lockedCsvText);
-        Assert.Contains("wifi", lockedCsvText);
+        Assert.Contains("Wi-Fi", lockedCsvText);
     }
 
     public void Dispose()

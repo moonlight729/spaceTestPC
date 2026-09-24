@@ -10,6 +10,18 @@ using SpaceTestPC.App.Services;
 
 namespace SpaceTestPC.App.ViewModels;
 
+/// <summary>
+/// Overall verdict shown on the FINAL RESULT card. Kept separate from the free-form
+/// <c>LastResult</c> text so every flow (full session, retest, history) writes the
+/// card through one strongly typed value instead of matching magic strings.
+/// </summary>
+public enum FinalVerdictKind
+{
+    Waiting,
+    Pass,
+    Fail
+}
+
 public sealed class MainViewModel : ObservableObject
 {
     public event EventHandler<TestItemViewModel>? SequenceAdvanceRequested;
@@ -111,6 +123,7 @@ public sealed class MainViewModel : ObservableObject
     private bool _boardSnLinkUp;
     private bool _boardSnPollInProgress;
     private string _lastResult = "Waiting";
+    private FinalVerdictKind _finalVerdictKind = FinalVerdictKind.Waiting;
     private string _operatorInstruction = "请扫描产品 SN，系统将自动按顺序执行检测。";
     private string _debugOutput = "Waiting for scan...";
     private TestResultViewModel? _selectedTestResult;
@@ -495,6 +508,34 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Single entry point for updating the run state text together with the FINAL RESULT card.
+    /// </summary>
+    private void SetLastResult(string text, FinalVerdictKind verdict)
+    {
+        var verdictChanged = _finalVerdictKind != verdict;
+        _finalVerdictKind = verdict;
+        SetProperty(ref _lastResult, text);
+        if (verdictChanged)
+        {
+            RaisePropertyChanged(nameof(FinalVerdictDisplay));
+            RaisePropertyChanged(nameof(FinalVerdictForeground));
+        }
+    }
+
+    private static FinalVerdictKind ToVerdictKind(string? sessionVerdict) =>
+        string.Equals(sessionVerdict, "Pass", StringComparison.OrdinalIgnoreCase)
+            ? FinalVerdictKind.Pass
+            : FinalVerdictKind.Fail;
+
+    private static FinalVerdictKind ToHistoryVerdictKind(string? sessionVerdict) =>
+        sessionVerdict switch
+        {
+            "Pass" => FinalVerdictKind.Pass,
+            "Fail" => FinalVerdictKind.Fail,
+            _ => FinalVerdictKind.Waiting
+        };
+
     public string OperatorInstruction
     {
         get => _operatorInstruction;
@@ -596,10 +637,10 @@ public sealed class MainViewModel : ObservableObject
     public string SnPolicyModeForeground => _allowSnMismatchForDebug ? "#F97316" : "#16A34A";
     public string SnPolicyModeBackground => _allowSnMismatchForDebug ? "#FFF7ED" : "#ECFDF3";
     public bool IsMockVisible => _allowSnMismatchForDebug;
-    public string FinalVerdictDisplay => LastResult switch
+    public string FinalVerdictDisplay => _finalVerdictKind switch
     {
-        "Stage 1 passed" => "PASS",
-        "Stage 1 failed" => "FAIL",
+        FinalVerdictKind.Pass => "PASS",
+        FinalVerdictKind.Fail => "FAIL",
         _ => "WAIT"
     };
     public string FinalVerdictForeground => FinalVerdictDisplay switch
@@ -954,7 +995,7 @@ public sealed class MainViewModel : ObservableObject
         RaisePropertyChanged(nameof(VersionValidationForeground));
         _testResultSourceSessions.Clear();
         SetRetestLifecycleActive(false);
-        LastResult = "SN scanned";
+        SetLastResult("SN scanned", FinalVerdictKind.Waiting);
         OperatorInstruction = "SN 已确认，正在自动执行检测。请保持产品连接稳定。";
         ScannerInput = string.Empty;
         ResetTestItems();
@@ -994,7 +1035,7 @@ public sealed class MainViewModel : ObservableObject
     {
         IsHistoryLoaded = true;
         HistorySummary = $"Latest record: {record.Session.FinalVerdict} 路 {record.Session.EndTime?.LocalDateTime:yyyy-MM-dd HH:mm:ss}";
-        LastResult = $"History: {record.Session.FinalVerdict}";
+        SetLastResult($"History: {record.Session.FinalVerdict}", ToHistoryVerdictKind(record.Session.FinalVerdict));
         OperatorInstruction = "Historical test result loaded. Review the details or select Re-test to start a new session.";
         if (record.BoardState is not null) ApplyBoardState(record.BoardState);
 
@@ -1036,14 +1077,14 @@ public sealed class MainViewModel : ObservableObject
             ApplyBoardState(state);
             await LoadBoardVersionsAsync(client);
             await EnsureBoardSnAsync(client, state);
-            LastResult = "Board state loaded";
+            SetLastResult("Board state loaded", FinalVerdictKind.Waiting);
             SetTestItemState(BoardStateItemName, TestItemState.Passed);
             AppendLog($"Board state loaded: {BoardId} / {BoardState}");
         }
         catch (Exception ex)
         {
             SetTestItemState(BoardStateItemName, TestItemState.Failed);
-            LastResult = "Board state failed";
+            SetLastResult("Board state failed", FinalVerdictKind.Fail);
             AppendLog($"Read board state failed: {ex.Message}");
         }
 
@@ -1058,7 +1099,7 @@ public sealed class MainViewModel : ObservableObject
             HistorySummary = string.Empty;
             SessionId = Guid.NewGuid().ToString("N");
             ResetTestItems();
-            LastResult = "Re-test started";
+            SetLastResult("Re-test started", FinalVerdictKind.Waiting);
             AppendLog($"Re-test requested for SN: {CurrentSn}");
         }
 
@@ -1070,7 +1111,7 @@ public sealed class MainViewModel : ObservableObject
         var upgradeClient = _pcbaCommandClientFactory.Create(_connectionMode);
         if (!await EnsureApplicationUpgradeAsync(upgradeClient))
         {
-            LastResult = "Application upgrade failed";
+            SetLastResult("Application upgrade failed", FinalVerdictKind.Fail);
             OperatorInstruction = "设备程序升级失败，测试未启动。";
             return;
         }
@@ -1262,7 +1303,7 @@ public sealed class MainViewModel : ObservableObject
         }
 
         AppendLog("Stage 1 started.");
-        LastResult = "Stage 1 running";
+        SetLastResult("Stage 1 running", FinalVerdictKind.Waiting);
         UpdateDebugOutput();
 
         var client = _pcbaCommandClientFactory.Create(_connectionMode);
@@ -1295,7 +1336,7 @@ public sealed class MainViewModel : ObservableObject
 
             if (!enteredTestMode)
             {
-                LastResult = "Stage 1 failed";
+                SetLastResult("Stage 1 failed", FinalVerdictKind.Fail);
                 return;
             }
 
@@ -1310,13 +1351,13 @@ public sealed class MainViewModel : ObservableObject
             }
 
             var stagePassed = bluetoothPassed && wifiPassed && ethernetPassed;
-            LastResult = stagePassed ? "Stage 1 passed" : "Stage 1 failed";
+            SetLastResult(stagePassed ? "Stage 1 passed" : "Stage 1 failed", stagePassed ? FinalVerdictKind.Pass : FinalVerdictKind.Fail);
             finalVerdict = stagePassed ? "Pass" : "Fail";
             OperatorInstruction = BuildSessionCompletionInstruction(stagePassed ? "Pass" : "Fail");
         }
         catch (Exception ex)
         {
-            LastResult = "Stage 1 failed";
+            SetLastResult("Stage 1 failed", FinalVerdictKind.Fail);
             OperatorInstruction = "通信异常，当前记录将保存。请重新连接 OTG/ADB 后继续扫描下一块。";
             AppendLog($"Stage 1 execution failed: {ex.Message}");
         }
@@ -1326,7 +1367,7 @@ public sealed class MainViewModel : ObservableObject
         }
 
         finalVerdict = ResolveFinalVerdict(finalVerdict);
-        LastResult = finalVerdict == "Pass" ? "Stage 1 passed" : "Stage 1 failed";
+        SetLastResult(finalVerdict == "Pass" ? "Stage 1 passed" : "Stage 1 failed", ToVerdictKind(finalVerdict));
         OperatorInstruction = BuildSessionCompletionInstruction(finalVerdict);
 
         var record = new TestSessionRecord
@@ -1380,14 +1421,14 @@ public sealed class MainViewModel : ObservableObject
         var selectedTestPlan = GetSelectedTestPlan();
         if (selectedTestPlan.Count == 0)
         {
-            LastResult = "No tests selected";
+            SetLastResult("No tests selected", FinalVerdictKind.Waiting);
             OperatorInstruction = "请至少选择一个测试点后再开始测试。";
             return;
         }
 
         ApplyTestSelectionToResults(selectedTestPlan);
         AppendLog($"Session start requested: mode={_connectionMode}, session={SessionId}, sn={CurrentSn}, tests={string.Join(",", selectedTestPlan.Select(item => item.Id))}");
-        LastResult = "Stage 1 running";
+        SetLastResult("Stage 1 running", FinalVerdictKind.Waiting);
         OperatorInstruction = "正在接收底层测试结果，请勿断开产品连接。";
 
         var client = _pcbaCommandClientFactory.Create(_connectionMode);
@@ -1444,7 +1485,7 @@ public sealed class MainViewModel : ObservableObject
                     {
                         ApplySessionFailureFallback(testEvent);
                     }
-                    LastResult = finalVerdict == "Pass" ? "Stage 1 passed" : "Stage 1 failed";
+                    SetLastResult(finalVerdict == "Pass" ? "Stage 1 passed" : "Stage 1 failed", ToVerdictKind(finalVerdict));
                     OperatorInstruction = BuildSessionCompletionInstruction(finalVerdict);
                     AppendLog($"Session completed: status={testEvent.Status}, code={testEvent.ResultCode}, message={testEvent.Message}");
                 }
@@ -1472,7 +1513,7 @@ public sealed class MainViewModel : ObservableObject
                     });
                 }
             }
-            LastResult = "Stage 1 aborted";
+            SetLastResult("Stage 1 aborted", FinalVerdictKind.Fail);
             OperatorInstruction = "测试已中断，记录为 ABORTED；请重新扫描后开始新的测试。";
             AppendLog($"Session exception: {ex.GetType().Name}: {ex.Message}");
         }
@@ -1487,7 +1528,8 @@ public sealed class MainViewModel : ObservableObject
         }
 
         finalVerdict = ResolveFinalVerdict(finalVerdict);
-        LastResult = finalVerdict == "Pass" ? "Stage 1 passed" : finalVerdict == "Aborted" ? "Stage 1 aborted" : "Stage 1 failed";
+        var unifiedText = finalVerdict == "Pass" ? "Stage 1 passed" : finalVerdict == "Aborted" ? "Stage 1 aborted" : "Stage 1 failed";
+        SetLastResult(unifiedText, finalVerdict == "Pass" ? FinalVerdictKind.Pass : FinalVerdictKind.Fail);
         if (!communicationInterrupted)
         {
             OperatorInstruction = BuildSessionCompletionInstruction(finalVerdict);
@@ -1662,7 +1704,7 @@ public sealed class MainViewModel : ObservableObject
         RefreshRetestAvailability();
         EndFailedBoardCommand.NotifyCanExecuteChanged();
         ScanCommand.NotifyCanExecuteChanged();
-        LastResult = finalVerdict == "Pass" ? "Retest passed" : "Retest completed with failures";
+        SetLastResult(finalVerdict == "Pass" ? "Retest passed" : "Retest completed with failures", ToVerdictKind(finalVerdict));
         OperatorInstruction = finalVerdict == "Pass"
             ? "所有测试项当前均已通过。请确认后点击“结束本机测试”。"
             : "仍有失败项目，可继续点击对应项目的“重新测试”；完成后点击“结束本机测试”。";

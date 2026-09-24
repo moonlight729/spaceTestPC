@@ -6,7 +6,7 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
 {
     public Task EnsureServiceStoppedAsync(string serviceName, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ShutdownDeviceAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-    private readonly string? _failingTestId;
+    private string? _failingTestId;
     private readonly MockConfiguration _mockConfiguration;
     private readonly ManualTestInteractionService? _manualTestInteractionService;
     private string _boardSn = string.Empty;
@@ -38,6 +38,12 @@ public sealed class MockPcbaCommandClient : IPcbaCommandClient
         _failingTestId = failingTestId ?? _mockConfiguration.FailingTestId;
         _manualTestInteractionService = manualTestInteractionService;
     }
+
+    /// <summary>
+    /// Removes the injected failure so a later retest of the same item reports a pass.
+    /// Used by the Mock flow verifier to simulate an operator fixing the fault.
+    /// </summary>
+    public void ClearInjectedFailure() => _failingTestId = null;
 
     public async IAsyncEnumerable<TestSessionEvent> RunSessionAsync(
         string sessionId,
